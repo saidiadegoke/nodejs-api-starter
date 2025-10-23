@@ -8,6 +8,7 @@ This directory contains comprehensive test suites for the RunCityGo backend API.
 
 - `auth.test.js` - Authentication and authorization tests
 - `rbac.test.js` - Role-Based Access Control tests
+- `orders.test.js` - Order management and lifecycle tests
 - `setup.js` - Global test configuration and setup
 - `cleanup-helper.js` - Test data cleanup utilities
 - `test-db-cleanup.js` - Direct database cleanup script
@@ -27,6 +28,11 @@ npm run test:auth
 ### RBAC Tests Only
 ```bash
 npm run test:rbac
+```
+
+### Order Tests Only
+```bash
+npm run test:orders
 ```
 
 ### Watch Mode (for development)
@@ -97,12 +103,27 @@ The test suite covers:
 - ✅ Combined permissions from multiple roles
 - ✅ Customer, Shopper, Dispatcher, Admin role testing
 
+### 6. Order Management
+- ✅ Order creation with location storage
+- ✅ Order listing with pagination and filtering
+- ✅ Order details retrieval
+- ✅ Order cancellation with validation
+- ✅ All order categories (groceries, electronics, documents, medicine, clothing, other)
+- ✅ Financial calculations (shopper fee, dispatcher fee, platform fee)
+- ✅ Reference photos (customer uploads via Files API)
+- ✅ Progress photos (shopper/dispatcher uploads)
+- ✅ Photo stage validation (item_found, receipt, handoff, delivery)
+- ✅ Authorization checks (customer vs shopper vs dispatcher)
+- ✅ Timeline tracking
+
 ## Test Data
 
 Tests use randomly generated data to avoid conflicts:
-- Phone numbers: `+234` + 10 random digits
-- Emails: `test{timestamp}{random}@example.com`
+- Phone numbers: `08` + 8 random digits (system adds `+234` country code)
+- Emails: `{prefix}-{timestamp}@test-{module}.com`
 - Passwords: `Test@123456` (meets validation requirements)
+- Locations: Mock GPS coordinates for Lagos, Nigeria
+- Files: Mock file metadata via `/api/files/batch` endpoint
 
 ### Test Data Cleanup
 
@@ -123,6 +144,8 @@ Tests use randomly generated data to avoid conflicts:
 - Users (with auth tokens)
 - Delivery addresses
 - Sessions/tokens
+- Orders (with cascading deletes to items, photos, timeline)
+- Files (uploaded via Files API)
 
 ## Environment
 

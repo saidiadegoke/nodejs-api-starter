@@ -18,7 +18,7 @@ Create a `.env` file in the root directory:
 
 ```env
 # Server Configuration
-PORT=3000
+PORT=3010
 NODE_ENV=development
 
 # Database Configuration
@@ -38,7 +38,7 @@ JWT_REFRESH_EXPIRES_IN=30d
 CORS_ORIGIN=http://localhost:3000,http://localhost:3001
 
 # API Base URL
-API_BASE_URL=http://localhost:3000/api
+API_BASE_URL=http://localhost:3010/api
 
 # Rate Limiting
 RATE_LIMIT_ENABLED=false
@@ -62,11 +62,22 @@ npm run migrate
 ```
 
 This will create all tables:
+
+**Migration 001 - Users & Auth:**
 - ✅ users, profiles
 - ✅ roles, permissions
 - ✅ user_roles, role_permissions, user_permissions
 - ✅ social_accounts, user_sessions
 - ✅ password_resets, verification_tokens
+
+**Migration 002 - Files, Locations, Orders:**
+- ✅ countries (with ISO codes and phone codes)
+- ✅ files (centralized file storage)
+- ✅ locations (centralized GPS & address storage)
+- ✅ user_addresses (multiple addresses per user)
+- ✅ orders, order_items
+- ✅ order_reference_photos, order_progress_photos
+- ✅ order_timeline, order_location_tracking
 
 ### 5. Seed Database
 ```bash
@@ -93,7 +104,7 @@ npm run dev
 npm start
 ```
 
-Server will run on: `http://localhost:3000`
+Server will run on: `http://localhost:3010`
 
 ### 7. Run Tests
 
@@ -108,6 +119,9 @@ npm run test:auth
 
 # Run RBAC tests only
 npm run test:rbac
+
+# Run Order tests only
+npm run test:orders
 
 # Watch mode for development
 npm run test:watch
@@ -191,11 +205,11 @@ npm run seed
 
 ### Port Already in Use
 ```bash
-# Find process using port 3000
-lsof -ti:3000
+# Find process using port 3010
+lsof -ti:3010
 
 # Kill process
-kill -9 $(lsof -ti:3000)
+kill -9 $(lsof -ti:3010)
 ```
 
 ### Migration Errors
@@ -222,22 +236,77 @@ npm run test:cleanup
 ## API Endpoints
 
 Once server is running, access:
-- API Info: `http://localhost:3000/api`
-- Health Check: `http://localhost:3000/api/health`
-- User Profile: `http://localhost:3000/api/users/me` (requires auth)
+- API Info: `http://localhost:3010/api`
+- Health Check: `http://localhost:3010/api/health`
+
+### Authentication Endpoints
+- Register: `POST http://localhost:3010/api/auth/register`
+- Login: `POST http://localhost:3010/api/auth/login`
+- Verify Phone: `POST http://localhost:3010/api/auth/verify-phone`
+
+### User Endpoints (requires auth)
+- Profile: `GET http://localhost:3010/api/users/me`
+- Addresses: `GET http://localhost:3010/api/users/me/addresses`
+
+### Order Endpoints (requires auth)
+- Create Order: `POST http://localhost:3010/api/orders`
+- List Orders: `GET http://localhost:3010/api/orders`
+- Order Details: `GET http://localhost:3010/api/orders/:id`
+
+### Public Endpoints
+- Countries: `GET http://localhost:3010/api/shared/countries`
 
 ## Next Steps
 
 1. ✅ Setup completed
 2. ✅ Database migrated and seeded
 3. ✅ Super admin created
-4. 🔄 Run tests to verify everything works
-5. 🚀 Start building features!
+4. ✅ Countries populated (Nigeria, US, UK, Ghana, Kenya, etc.)
+5. 🔄 Run tests to verify everything works
+6. 🚀 Start building features!
+
+## Testing the API
+
+### Quick API Test
+```bash
+# Test health endpoint
+curl http://localhost:3010/api/health
+
+# Register a new customer
+curl -X POST http://localhost:3010/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "phone": "08012345678",
+    "password": "Test@123456",
+    "first_name": "Test",
+    "last_name": "User",
+    "role": "customer"
+  }'
+
+# Login
+curl -X POST http://localhost:3010/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "test@example.com",
+    "password": "Test@123456"
+  }'
+
+# Get countries
+curl http://localhost:3010/api/shared/countries
+```
 
 ## Need Help?
 
 Check the test files for API usage examples:
-- `src/tests/auth.test.js` - Authentication examples
-- `src/tests/rbac.test.js` - RBAC examples
+- `src/tests/auth.test.js` - Authentication examples (30+ tests)
+- `src/tests/rbac.test.js` - RBAC examples (40+ tests)
+- `src/tests/orders.test.js` - Order management examples (30+ tests)
 - `src/tests/README.md` - Complete test documentation
+
+**Want to add a new module?** See `CONTRIBUTING.md` for step-by-step guide!
+
+## 📧 Support
+
+For questions or support, contact: info@runcitygo.com
 

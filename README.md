@@ -49,7 +49,7 @@ npm run seed
 npm run dev
 ```
 
-The API will be available at `http://localhost:3000/api`
+The API will be available at `http://localhost:3010/api`
 
 ## 📁 Project Structure
 
@@ -115,6 +115,22 @@ The application uses PostgreSQL with UUID primary keys and follows the RunCityGo
 - **password_resets** - Password reset tokens
 - **verification_tokens** - Email/phone verification tokens
 
+### Location & Address Tables
+- **countries** - Country reference data with ISO codes and phone codes
+- **locations** - Centralized location storage (GPS + address data)
+- **user_addresses** - User delivery addresses (references locations)
+
+### Order Management Tables
+- **orders** - Core order data with location references
+- **order_items** - Shopping items breakdown
+- **order_reference_photos** - Customer-uploaded reference photos
+- **order_progress_photos** - Service provider progress photos
+- **order_timeline** - Order status change history
+- **order_location_tracking** - Real-time GPS tracking
+
+### File Management
+- **files** - Centralized file metadata storage for all uploads
+
 ## 🔐 Authentication & Authorization
 
 The API implements a comprehensive RBAC (Role-Based Access Control) system:
@@ -142,31 +158,70 @@ npm run dev          # Start development server with nodemon
 npm start            # Start production server
 
 # Database
-npm run migrate      # Run all pending migrations
+npm run migrate      # Run all pending migrations (with version tracking)
 npm run seed         # Seed database with initial data
 
 # Testing
-npm test             # Run tests with coverage
+npm test             # Run all tests with coverage
+npm run test:auth    # Run authentication tests only
+npm run test:rbac    # Run RBAC tests only
+npm run test:orders  # Run order tests only
+npm run test:watch   # Run tests in watch mode
+npm run test:cleanup # Clean up test database
 ```
 
 ## 🛣️ API Endpoints
 
 ### Health Check
 - `GET /api/health` - Check API status
+- `GET /api` - API version information
+
+### Authentication
+- `POST /api/auth/register` - Register new user
+- `POST /api/auth/login` - Login user
+- `POST /api/auth/refresh-token` - Refresh access token
+- `POST /api/auth/logout` - Logout user
+- `POST /api/auth/verify-phone` - Verify phone with OTP
+- `POST /api/auth/resend-otp` - Resend OTP
+- `POST /api/auth/forgot-password` - Initiate password reset
+- `POST /api/auth/reset-password` - Reset password with code
+- `POST /api/auth/change-password` - Change password (authenticated)
 
 ### Users
-- `GET /api/users` - List all users (paginated)
-- `GET /api/users/:id` - Get user by ID
-- `POST /api/users` - Create new user
-- `PUT /api/users/:id` - Update user
-- `DELETE /api/users/:id` - Delete user
+- `GET /api/users/me` - Get current user profile
+- `PUT /api/users/me` - Update current user profile
+- `GET /api/users/me/addresses` - List user addresses
+- `POST /api/users/me/addresses` - Add delivery address
+- `PUT /api/users/me/addresses/:id` - Update address
+- `DELETE /api/users/me/addresses/:id` - Delete address
+
+### Orders
+- `POST /api/orders` - Create new order
+- `GET /api/orders` - List user's orders (with pagination)
+- `GET /api/orders/:id` - Get order details
+- `POST /api/orders/:id/cancel` - Cancel order
+- `POST /api/orders/:id/photos` - Upload progress photo
+- `POST /api/orders/:id/location` - Update order location
+- `GET /api/orders/:id/location` - Get current location
+- `GET /api/orders/:id/location/history` - Get location history
+
+### Files
+- `POST /api/files/upload` - Upload single file
+- `POST /api/files/batch` - Create files from metadata
+- `GET /api/files/:file_id` - Get file details
+- `DELETE /api/files/:file_id` - Delete file
+
+### Shared Resources
+- `GET /api/shared/countries` - List all countries
+- `GET /api/shared/countries/search` - Search countries
+- `GET /api/shared/countries/:id` - Get country by ID
 
 ## 🔧 Environment Variables
 
 See `.env.example` for all available configuration options.
 
 Key variables:
-- `PORT` - Server port (default: 3000)
+- `PORT` - Server port (default: 3010)
 - `NODE_ENV` - Environment (development/production)
 - `DB_*` - Database connection settings
 - `JWT_*` - JWT token configuration
@@ -213,10 +268,22 @@ For detailed API architecture and implementation guidelines, see:
 
 ## 🤝 Contributing
 
-1. Follow the modular architecture pattern
-2. Add tests for new features
-3. Update documentation as needed
-4. Follow the existing code style
+We welcome contributions! Please see our detailed contribution guide:
+
+**📖 [CONTRIBUTING.md](CONTRIBUTING.md)** - Complete guide to adding modules
+
+Quick checklist:
+1. Create a feature branch
+2. Follow the modular architecture pattern
+3. Add comprehensive tests (minimum 80% coverage)
+4. Update documentation
+5. Follow the code style guide
+6. Create descriptive pull request
+
+**Example modules to reference:**
+- `src/modules/auth/` - Authentication module
+- `src/modules/orders/` - Order management module
+- `src/modules/files/` - File management module
 
 ## 📄 License
 
@@ -224,5 +291,5 @@ MIT
 
 ## 📧 Contact
 
-For questions or support, contact: engineering@runcitygo.com
+For questions or support, contact: info@runcitygo.com
 
