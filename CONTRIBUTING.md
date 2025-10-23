@@ -18,16 +18,20 @@ Thank you for contributing to RunCityGo! This guide will help you add new featur
 ### 1. Create a Feature Branch
 
 ```bash
-# Update main branch
-git checkout main
-git pull origin main
+# Update development branch
+git checkout development
+git pull origin development
 
-# Create feature branch
+# Create feature branch from development
 # Format: feature/module-name or feature/feature-description
 git checkout -b feature/wallet-management
 
 # Or for bug fixes
 git checkout -b fix/order-cancellation-bug
+
+# Or for hotfixes (from main)
+git checkout main
+git checkout -b hotfix/critical-security-patch
 ```
 
 ### 2. Set Up Development Environment
@@ -1151,7 +1155,9 @@ git commit -m "docs(wallet): add wallet API documentation"
 # Push your branch
 git push origin feature/wallet-management
 
-# Create PR with:
+# Create Pull Request:
+# - Base branch: development (not main!)
+# - Compare branch: feature/wallet-management
 # - Clear title describing the feature
 # - Description of what was added
 # - List of API endpoints added
@@ -1159,9 +1165,27 @@ git push origin feature/wallet-management
 # - Any breaking changes
 ```
 
-### 4. PR Template
+### 4. Branch Strategy
+
+**Main Branches:**
+- `main` - Production-ready code
+- `development` - Integration branch for features
+
+**Feature Branches:**
+- Created from: `development`
+- Merged into: `development`
+- Naming: `feature/`, `fix/`, `test/`, `docs/`
+
+**Release Flow:**
+```
+feature/wallet → development → (release) → main
+```
+
+### 5. PR Template
 
 ```markdown
+**Base Branch:** `development`
+
 ## Description
 Added wallet management module with top-up and withdrawal functionality.
 
@@ -1180,24 +1204,41 @@ Added wallet management module with top-up and withdrawal functionality.
 - `GET /api/wallet/transactions` - Transaction history
 
 ## Test Coverage
+```bash
+npm run test:wallet
+```
 - 25 tests covering all endpoints
 - Role-based access control tested
 - Validation rules tested
 - Error scenarios covered
+- **All tests passing** ✅
 
-## Migration Required
-✅ Yes - Run `npm run migrate` after merging
+## Database Changes
+✅ **Migration Required** - Run `npm run migrate` after merging
+- Created `wallets` table
+- Created `wallet_transactions` table
 
 ## Breaking Changes
 ❌ None
 
+## How to Test
+```bash
+# Start server
+npm run dev
+
+# In another terminal, run tests
+npm run test:wallet
+```
+
 ## Checklist
 - [x] Code follows style guide
-- [x] Tests added and passing
-- [x] Documentation updated
-- [x] Migration file created
-- [x] No console.log() left in code
-- [x] Proper error handling
+- [x] Tests added and passing (25/25)
+- [x] Documentation updated (README, SETUP)
+- [x] Migration file created with proper indexes
+- [x] No console.log() or debugging code
+- [x] Proper error handling throughout
+- [x] RBAC middleware applied correctly
+- [x] Merged from `development` branch
 ```
 
 ---
