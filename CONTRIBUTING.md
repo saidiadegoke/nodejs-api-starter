@@ -1,6 +1,6 @@
-# Contributing to RunCityGo Backend
+# Contributing to OpinionPolls Backend
 
-Thank you for contributing to RunCityGo! This guide will help you add new features and modules following our architecture standards.
+Thank you for contributing to OpinionPolls! This guide will help you add new features and modules following our architecture standards.
 
 ## Table of Contents
 
@@ -1325,7 +1325,7 @@ const country = await CountryModel.getByIsoCode('NG');
 
 ## 📧 Contact
 
-For questions or support, contact: info@runcitygo.com
+For questions or support, contact: info@opinionpulse.org
 
 ---
 

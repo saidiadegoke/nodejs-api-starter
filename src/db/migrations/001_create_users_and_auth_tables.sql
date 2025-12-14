@@ -226,3 +226,4 @@ CREATE INDEX idx_verification_tokens_user ON verification_tokens(user_id);
 CREATE INDEX idx_verification_tokens_type ON verification_tokens(type);
 CREATE INDEX idx_verification_tokens_expires ON verification_tokens(expires_at);
 
+

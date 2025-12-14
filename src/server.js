@@ -3,7 +3,7 @@ const { port } = require('./config/env.config');
 const { logger } = require('./shared/utils/logger');
 const pool = require('./db/pool');
 
-const PORT = port || 3000;
+const PORT = port || 5010;
 
 // Test database connection before starting server
 const startServer = async () => {
@@ -14,7 +14,7 @@ const startServer = async () => {
     
     // Start server
     app.listen(PORT, () => {
-      logger.info(`🚀 RunCityGo API Server running on port ${PORT}`);
+      logger.info(`🚀 OpinionPulse API Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`API Documentation: http://localhost:${PORT}/api`);
     });
@@ -48,4 +48,5 @@ process.on('SIGINT', () => {
 });
 
 startServer();
+
 

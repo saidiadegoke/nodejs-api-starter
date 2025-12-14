@@ -48,8 +48,8 @@ class AuthService {
       throw new Error('Password must be at least 8 characters');
     }
     
-    if (!['customer', 'shopper', 'dispatcher'].includes(role)) {
-      throw new Error('Invalid role. Must be customer, shopper, or dispatcher');
+    if (!['user', 'b2b'].includes(role)) {
+      throw new Error('Invalid role. Must be user');
     }
     
     // Format phone number with country code

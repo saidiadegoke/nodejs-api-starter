@@ -11,8 +11,21 @@ const app = express();
 app.use(helmet());
 
 // CORS configuration
+const allowedOrigins = process.env.CORS_ORIGIN 
+  ? process.env.CORS_ORIGIN.split(',') 
+  : ['http://localhost:3000']; // Default
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, origin);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -35,7 +48,7 @@ app.use((req, res, next) => {
 });
 
 // API routes
-app.use('/api', routes);
+app.use('/', routes);
 
 // 404 handler
 app.use(notFoundHandler);
@@ -44,4 +57,5 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 module.exports = app;
+
 

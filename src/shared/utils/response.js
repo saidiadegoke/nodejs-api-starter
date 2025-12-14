@@ -43,3 +43,4 @@ const sendPaginated = (res, data, page, limit, total) => {
 
 module.exports = { sendSuccess, sendError, sendPaginated };
 
+

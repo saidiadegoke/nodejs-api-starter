@@ -5,6 +5,7 @@ const authRoutes = require('../modules/auth/routes');
 const users = require('../modules/users/routes');
 const filesRoutes = require('../modules/files/routes');
 const ordersRoutes = require('../modules/orders/routes');
+const pollsRoutes = require('../modules/polls/routes');
 const sharedRoutes = require('../modules/shared/routes');
 const testRoutes = require('./test-routes');
 
@@ -33,6 +34,7 @@ router.get('/', (req, res) => {
       users: '/api/users',
       files: '/api/files',
       orders: '/api/orders',
+      polls: '/api/polls',
       health: '/api/health'
     },
     features: {
@@ -52,6 +54,7 @@ router.use('/auth', authRoutes);
 router.use('/users', users);
 router.use('/files', filesRoutes);
 router.use('/orders', ordersRoutes);
+router.use('/polls', pollsRoutes);
 router.use('/shared', sharedRoutes);
 
 /**

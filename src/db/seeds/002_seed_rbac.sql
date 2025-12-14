@@ -1,5 +1,6 @@
 -- Insert default system roles
 INSERT INTO roles (name, display_name, description, is_system) VALUES
+('user', 'User', 'Regular user who creates polls', true),
 ('customer', 'Customer', 'Regular customer who creates orders', true),
 ('shopper', 'Shopper', 'Service provider who fulfills orders', true),
 ('dispatcher', 'Dispatcher', 'Delivery personnel', true),
