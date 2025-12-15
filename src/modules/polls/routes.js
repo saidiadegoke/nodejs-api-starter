@@ -72,6 +72,46 @@ router.get(
 );
 
 /**
+ * @route   GET /api/polls/feed
+ * @desc    Get polls feed (alias for backward compatibility)
+ * @access  Public (optionalAuth for user-specific data)
+ */
+router.get(
+  '/feed',
+  optionalAuth,
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('category').optional().trim(),
+    query('poll_type').optional().trim(),
+    query('status').optional().isIn(['active', 'closed', 'draft']).withMessage('Invalid status')
+  ],
+  validate,
+  PollController.getPollsFeed
+);
+
+/**
+ * @route   GET /api/polls/search
+ * @desc    Search polls with comprehensive criteria
+ * @access  Public (optionalAuth for user-specific data)
+ */
+router.get(
+  '/search',
+  optionalAuth,
+  [
+    query('q').optional().trim(),
+    query('category').optional().trim(),
+    query('poll_type').optional().trim(),
+    query('author').optional().trim(),
+    query('status').optional().isIn(['active', 'closed', 'draft']).withMessage('Invalid status'),
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100')
+  ],
+  validate,
+  PollController.searchPolls
+);
+
+/**
  * @route   GET /api/polls/trending
  * @desc    Get trending polls
  * @access  Public (optionalAuth for user-specific data)
@@ -85,6 +125,53 @@ router.get(
   ],
   validate,
   PollController.getTrendingPolls
+);
+
+// ==================== Sidebar Routes ====================
+
+/**
+ * @route   GET /api/polls/sidebar/trending-debates
+ * @desc    Get trending debates for sidebar
+ * @access  Public (optionalAuth for user-specific data)
+ */
+router.get(
+  '/sidebar/trending-debates',
+  optionalAuth,
+  [
+    query('limit').optional().isInt({ min: 1, max: 10 }).withMessage('Limit must be between 1 and 10')
+  ],
+  validate,
+  PollController.getTrendingDebates
+);
+
+/**
+ * @route   GET /api/polls/sidebar/rising
+ * @desc    Get rising polls for sidebar
+ * @access  Public (optionalAuth for user-specific data)
+ */
+router.get(
+  '/sidebar/rising',
+  optionalAuth,
+  [
+    query('limit').optional().isInt({ min: 1, max: 10 }).withMessage('Limit must be between 1 and 10')
+  ],
+  validate,
+  PollController.getRisingPolls
+);
+
+/**
+ * @route   GET /api/polls/sidebar/recommended
+ * @desc    Get recommended polls for sidebar
+ * @access  Public (optionalAuth, returns trending if not authenticated)
+ */
+router.get(
+  '/sidebar/recommended',
+  optionalAuth,
+  [
+    query('limit').optional().isInt({ min: 1, max: 10 }).withMessage('Limit must be between 1 and 10')
+  ],
+  validate,
+  PollController.getRecommendedPolls
 );
 
 /**
@@ -102,6 +189,17 @@ router.get(
   ],
   validate,
   PollController.getMyPolls
+);
+
+/**
+ * @route   GET /api/polls/me/stats
+ * @desc    Get user's poll statistics
+ * @access  Private
+ */
+router.get(
+  '/me/stats',
+  authenticate,
+  PollController.getMyPollStats
 );
 
 /**

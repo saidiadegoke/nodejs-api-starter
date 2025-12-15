@@ -3,13 +3,19 @@ const FileController = require('./controllers/file.controller');
 const { body } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
 const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const { uploadSingle, uploadMultiple } = require('../../shared/middleware/upload.middleware');
 
 /**
  * @route   POST /api/files/upload
  * @desc    Upload single file
  * @access  Private
  */
-router.post('/upload', requireAuth, FileController.uploadFile);
+router.post(
+  '/upload',
+  requireAuth,
+  uploadSingle('file'), // Multer middleware
+  FileController.uploadFile
+);
 
 /**
  * @route   POST /api/files/upload-base64
@@ -32,7 +38,12 @@ router.post(
  * @desc    Upload multiple files
  * @access  Private
  */
-router.post('/upload-batch', requireAuth, FileController.uploadBatch);
+router.post(
+  '/upload-batch',
+  requireAuth,
+  uploadMultiple('files', 10), // Multer middleware - max 10 files
+  FileController.uploadBatch
+);
 
 /**
  * @route   POST /api/files/batch
@@ -47,6 +58,25 @@ router.post('/batch', requireAuth, FileController.createFromMetadata);
  * @access  Private
  */
 router.get('/:file_id', requireAuth, FileController.getFile);
+
+/**
+ * @route   POST /api/files/upload-profile-photo
+ * @desc    Upload profile photo (convenience endpoint)
+ * @access  Private
+ */
+router.post(
+  '/upload-profile-photo',
+  requireAuth,
+  uploadSingle('profile_photo'),
+  FileController.uploadProfilePhoto
+);
+
+/**
+ * @route   GET /api/files/user-files
+ * @desc    Get user's uploaded files with filtering
+ * @access  Private
+ */
+router.get('/user-files', requireAuth, FileController.getUserFiles);
 
 /**
  * @route   DELETE /api/files/:file_id

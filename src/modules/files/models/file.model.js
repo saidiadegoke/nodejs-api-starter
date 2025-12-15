@@ -61,32 +61,50 @@ class FileModel {
   }
 
   /**
+   * Find files with pagination
+   */
+  static async findWithPagination(whereClause, params, offset, limit) {
+    // Get total count
+    const countQuery = `SELECT COUNT(*) FROM files WHERE ${whereClause}`;
+    const countResult = await pool.query(countQuery, params);
+    const total = parseInt(countResult.rows[0].count);
+
+    // Get paginated data
+    const dataQuery = `
+      SELECT * FROM files 
+      WHERE ${whereClause} 
+      ORDER BY created_at DESC 
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+    const dataResult = await pool.query(dataQuery, [...params, limit, offset]);
+
+    return {
+      data: dataResult.rows,
+      total
+    };
+  }
+
+  /**
    * Check if file is in use (referenced by other tables)
    */
   static async isInUse(fileId) {
-    // Check order reference photos
-    const refPhotos = await pool.query(
-      'SELECT 1 FROM order_reference_photos WHERE file_id = $1 LIMIT 1',
-      [fileId]
-    );
-    
-    if (refPhotos.rows.length > 0) return true;
-
-    // Check order progress photos
-    const progressPhotos = await pool.query(
-      'SELECT 1 FROM order_progress_photos WHERE file_id = $1 LIMIT 1',
-      [fileId]
-    );
-    
-    if (progressPhotos.rows.length > 0) return true;
-
-    // Check profile photos
+    // Check if used as profile photo
     const profilePhotos = await pool.query(
-      'SELECT 1 FROM profiles WHERE profile_photo_url = $1 LIMIT 1',
+      'SELECT 1 FROM users WHERE profile_photo_id = $1 LIMIT 1',
       [fileId]
     );
     
-    return profilePhotos.rows.length > 0;
+    if (profilePhotos.rows.length > 0) return true;
+
+    // Check if used in polls
+    const pollImages = await pool.query(
+      'SELECT 1 FROM poll_images WHERE file_id = $1 LIMIT 1',
+      [fileId]
+    );
+    
+    if (pollImages.rows.length > 0) return true;
+
+    return false;
   }
 }
 

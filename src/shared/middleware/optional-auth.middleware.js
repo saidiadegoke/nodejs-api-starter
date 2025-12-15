@@ -38,11 +38,6 @@ const optionalAuth = async (req, res, next) => {
         type: payload.type
       };
 
-      logger.debug('User optionally authenticated', {
-        user_id: payload.user_id,
-        roles: payload.roles,
-        path: req.path
-      });
     } catch (error) {
       // Token is invalid, but that's okay for optional auth
       // Just continue without user

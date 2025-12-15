@@ -6,6 +6,9 @@
 
 const PollCommentModel = require('../models/poll-comment.model');
 const PollModel = require('../models/poll.model');
+const NotificationService = require('../../notifications/services/notification.service');
+const UserActivityService = require('../../users/services/user-activity.service');
+const webSocketService = require('../../../shared/services/websocket.service');
 
 class PollCommentController {
   /**
@@ -47,6 +50,36 @@ class PollCommentController {
 
       // Fetch the complete comment with author info
       const commentWithAuthor = await PollCommentModel.getById(newComment.id);
+
+      try {
+        // Create notification for poll author (if not self-comment)
+        if (poll.user_id !== userId) {
+          const notification = await NotificationService.notifyPollComment(
+            poll_id,
+            poll.user_id,
+            userId,
+            poll.question || poll.title,
+            newComment.id
+          );
+
+          // Send real-time notification
+          if (notification) {
+            webSocketService.sendUserNotification(poll.user_id, notification);
+          }
+        }
+
+        // Create user activity
+        await UserActivityService.createCommentActivity(
+          userId,
+          poll_id,
+          newComment.id,
+          poll.question || poll.title,
+          comment
+        );
+      } catch (error) {
+        console.error('Error creating comment notification/activity:', error);
+        // Don't fail the main operation if notification/activity creation fails
+      }
 
       res.status(201).json({
         success: true,

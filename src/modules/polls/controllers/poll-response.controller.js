@@ -8,6 +8,7 @@
 const PollResponseService = require('../services/poll-response.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
+const webSocketService = require('../../../shared/services/websocket.service');
 
 class PollResponseController {
   /**
@@ -23,6 +24,15 @@ class PollResponseController {
       const responseData = req.body;
 
       const response = await PollResponseService.submitResponse(userId, poll_id, responseData);
+
+      // Get updated poll results and broadcast vote update
+      try {
+        const updatedResults = await PollResponseService.getPollResults(poll_id);
+        webSocketService.broadcastPollVoteUpdate(poll_id, updatedResults);
+      } catch (broadcastError) {
+        console.error('Failed to broadcast vote update:', broadcastError);
+        // Don't fail the request if broadcast fails
+      }
 
       sendSuccess(res, response, 'Response submitted successfully', CREATED);
     } catch (error) {
@@ -76,6 +86,15 @@ class PollResponseController {
       const userId = req.user.user_id;
 
       await PollResponseService.deleteResponse(userId, poll_id);
+
+      // Get updated poll results and broadcast vote update
+      try {
+        const updatedResults = await PollResponseService.getPollResults(poll_id);
+        webSocketService.broadcastPollVoteUpdate(poll_id, updatedResults);
+      } catch (broadcastError) {
+        console.error('Failed to broadcast vote update:', broadcastError);
+        // Don't fail the request if broadcast fails
+      }
 
       sendSuccess(res, null, 'Response deleted successfully', OK);
     } catch (error) {

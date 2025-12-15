@@ -6,7 +6,9 @@ const users = require('../modules/users/routes');
 const filesRoutes = require('../modules/files/routes');
 const ordersRoutes = require('../modules/orders/routes');
 const pollsRoutes = require('../modules/polls/routes');
+const notificationsRoutes = require('../modules/notifications/routes');
 const sharedRoutes = require('../modules/shared/routes');
+const websocketRoutes = require('../modules/websocket/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -15,7 +17,7 @@ const testRoutes = require('./test-routes');
 router.get('/health', (req, res) => {
   res.json({
     success: true,
-    message: 'RunCityGo API is running',
+    message: 'OpinionPulse API is running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
@@ -27,22 +29,25 @@ router.get('/health', (req, res) => {
 router.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'RunCityGo API v1.0',
+    message: 'OpinionPulse API v1.0',
     version: '1.0.0',
     endpoints: {
-      auth: '/api/auth',
-      users: '/api/users',
-      files: '/api/files',
-      orders: '/api/orders',
-      polls: '/api/polls',
-      health: '/api/health'
+      auth: '/auth',
+      users: '/users',
+      files: '/files',
+      orders: '/orders',
+      polls: '/polls',
+      notifications: '/notifications',
+      websocket: '/websocket',
+      health: '/health'
     },
     features: {
       authentication: 'JWT (access + refresh tokens)',
       authorization: 'RBAC (multiple roles per user)',
       file_storage: 'Centralized with multi-provider support',
       order_management: 'Full lifecycle with state machine',
-      real_time: 'WebSocket support (coming soon)'
+      poll_management: 'Real-time polls with WebSocket updates',
+      real_time: 'WebSocket support enabled'
     }
   });
 });
@@ -55,7 +60,9 @@ router.use('/users', users);
 router.use('/files', filesRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/polls', pollsRoutes);
+router.use('/notifications', notificationsRoutes);
 router.use('/shared', sharedRoutes);
+router.use('/websocket', websocketRoutes);
 
 /**
  * Test routes (for RBAC testing)

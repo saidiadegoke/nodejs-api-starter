@@ -133,11 +133,23 @@ class PollEngagementModel {
     const result = await pool.query(
       `SELECT
         p.*,
-        s.*,
+        s.responses,
+        s.comments,
+        s.likes,
+        s.shares,
+        s.reposts,
+        s.views,
+        u.id as author_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.profile_photo_url as profile_photo,
         pe.created_at as bookmarked_at
       FROM poll_engagements pe
       JOIN polls p ON pe.poll_id = p.id
       LEFT JOIN poll_stats s ON p.id = s.poll_id
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
       WHERE pe.user_id = $1
         AND pe.engagement_type = 'bookmark'
         AND p.deleted_at IS NULL

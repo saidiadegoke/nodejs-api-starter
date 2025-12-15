@@ -346,6 +346,379 @@ class PollModel {
 
     return result.rowCount > 0;
   }
+
+  /**
+   * Get trending debates - polls with high engagement velocity
+   *
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of trending debate polls
+   */
+  static async getTrendingDebates({ limit = 5, hours = 48 } = {}) {
+    const result = await pool.query(
+      `SELECT
+        p.*,
+        p.id as id,
+        s.responses,
+        s.comments,
+        s.likes,
+        s.shares,
+        s.reposts,
+        s.views,
+        u.id as author_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.profile_photo_url as profile_photo,
+        -- Calculate debate score: comments are weighted heavily as they indicate discussion
+        (COALESCE(s.comments, 0) * 5 + COALESCE(s.responses, 0) * 2 + COALESCE(s.likes, 0) + COALESCE(s.shares, 0) * 3) as debate_score,
+        -- Calculate engagement velocity (engagement per hour)
+        (COALESCE(s.comments, 0) * 5 + COALESCE(s.responses, 0) * 2 + COALESCE(s.likes, 0) + COALESCE(s.shares, 0) * 3) /
+          GREATEST(1, EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600) as velocity_score
+      FROM polls p
+      LEFT JOIN poll_stats s ON p.id = s.poll_id
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      WHERE p.deleted_at IS NULL
+        AND p.visibility = 'public'
+        AND p.status = 'active'
+        AND p.created_at > NOW() - INTERVAL '1 hour' * $1
+        AND p.poll_type IN ('yesno', 'multipleChoice', 'binaryWithExplanation', 'agreementDistribution', 'likertScale')
+        AND (COALESCE(s.responses, 0) >= 10 OR COALESCE(s.comments, 0) >= 3)
+      ORDER BY 
+        -- Prioritize polls with comments (debates) and good velocity
+        (COALESCE(s.comments, 0) * 5 + COALESCE(s.responses, 0) * 2 + COALESCE(s.likes, 0) + COALESCE(s.shares, 0) * 3) /
+        GREATEST(1, EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600) DESC,
+        s.comments DESC,
+        s.responses DESC
+      LIMIT $2`,
+      [hours, limit]
+    );
+
+    return result.rows;
+  }
+
+  /**
+   * Get trending debates with fallback strategy
+   *
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of trending debate polls
+   */
+  static async getTrendingDebatesWithFallback({ limit = 5 } = {}) {
+    // Try 48 hours first
+    let polls = await this.getTrendingDebates({ limit, hours: 48 });
+
+    // Fallback 1: Try 7 days if not enough
+    if (polls.length < limit) {
+      polls = await this.getTrendingDebates({ limit, hours: 168 });
+    }
+
+    // Fallback 2: Lower threshold if still not enough
+    if (polls.length < limit) {
+      const result = await pool.query(
+        `SELECT
+          p.*,
+          p.id as id,
+          s.responses,
+          s.comments,
+          s.likes,
+          s.shares,
+          s.reposts,
+          s.views,
+          u.id as author_id,
+          u.email,
+          prof.first_name,
+          prof.last_name,
+          prof.profile_photo_url as profile_photo,
+          (COALESCE(s.responses, 0) + COALESCE(s.comments, 0) + COALESCE(s.likes, 0) + COALESCE(s.shares, 0) * 2) as engagement_score
+        FROM polls p
+        LEFT JOIN poll_stats s ON p.id = s.poll_id
+        JOIN users u ON p.user_id = u.id
+        LEFT JOIN profiles prof ON u.id = prof.user_id
+        WHERE p.deleted_at IS NULL
+          AND p.visibility = 'public'
+          AND p.status = 'active'
+          AND p.created_at > NOW() - INTERVAL '7 days'
+          AND p.poll_type IN ('yesno', 'multipleChoice', 'binaryWithExplanation')
+          AND COALESCE(s.responses, 0) >= 20
+        ORDER BY engagement_score DESC
+        LIMIT $1`,
+        [limit]
+      );
+      polls = result.rows;
+    }
+
+    return polls;
+  }
+
+  /**
+   * Get rising polls - polls with sudden spike in activity
+   *
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of rising polls
+   */
+  static async getRising({ limit = 3 } = {}) {
+    const result = await pool.query(
+      `WITH recent_activity AS (
+        SELECT
+          poll_id,
+          COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as last_hour_count,
+          COUNT(*) FILTER (WHERE created_at BETWEEN NOW() - INTERVAL '2 hours' AND NOW() - INTERVAL '1 hour') as prev_hour_count
+        FROM engagement_events
+        WHERE created_at > NOW() - INTERVAL '12 hours'
+        GROUP BY poll_id
+      )
+      SELECT
+        p.*,
+        p.id as id,
+        s.responses,
+        s.comments,
+        s.likes,
+        s.shares,
+        s.reposts,
+        s.views,
+        u.id as author_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.profile_photo_url as profile_photo,
+        CASE
+          WHEN ra.prev_hour_count > 0
+          THEN ((ra.last_hour_count::float / ra.prev_hour_count::float - 1) * 100)::int
+          ELSE 100
+        END as growth_percentage,
+        ra.last_hour_count
+      FROM polls p
+      LEFT JOIN poll_stats s ON p.id = s.poll_id
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      JOIN recent_activity ra ON p.id = ra.poll_id
+      WHERE p.deleted_at IS NULL
+        AND p.visibility = 'public'
+        AND p.status = 'active'
+        AND p.created_at > NOW() - INTERVAL '12 hours'
+        AND ra.last_hour_count >= 5
+      ORDER BY
+        CASE
+          WHEN ra.prev_hour_count > 0
+          THEN ((ra.last_hour_count::float / ra.prev_hour_count::float - 1) * 100)::int
+          ELSE 100
+        END DESC,
+        ra.last_hour_count DESC
+      LIMIT $1`,
+      [limit]
+    );
+
+    return result.rows;
+  }
+
+  /**
+   * Get rising polls with fallback strategy
+   *
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of rising polls
+   */
+  static async getRisingWithFallback({ limit = 3 } = {}) {
+    // Try 12 hours first
+    let polls = await this.getRising({ limit });
+
+    // Fallback 1: Try 24 hours if not enough
+    if (polls.length < limit) {
+      const result = await pool.query(
+        `SELECT
+          p.*,
+          p.id as id,
+          s.responses,
+          s.comments,
+          s.likes,
+          s.shares,
+          s.reposts,
+          s.views,
+          u.id as author_id,
+          u.email,
+          prof.first_name,
+          prof.last_name,
+          prof.profile_photo_url as profile_photo
+        FROM polls p
+        LEFT JOIN poll_stats s ON p.id = s.poll_id
+        JOIN users u ON p.user_id = u.id
+        LEFT JOIN profiles prof ON u.id = prof.user_id
+        WHERE p.deleted_at IS NULL
+          AND p.visibility = 'public'
+          AND p.status = 'active'
+          AND p.created_at > NOW() - INTERVAL '24 hours'
+        ORDER BY p.created_at DESC
+        LIMIT $1`,
+        [limit]
+      );
+      polls = result.rows;
+    }
+
+    // Fallback 2: Show newest debates if still not enough
+    if (polls.length < limit) {
+      const result = await pool.query(
+        `SELECT
+          p.*,
+          p.id as id,
+          s.responses,
+          s.comments,
+          s.likes,
+          s.shares,
+          s.reposts,
+          s.views,
+          u.id as author_id,
+          u.email,
+          prof.first_name,
+          prof.last_name,
+          prof.profile_photo_url as profile_photo
+        FROM polls p
+        LEFT JOIN poll_stats s ON p.id = s.poll_id
+        JOIN users u ON p.user_id = u.id
+        LEFT JOIN profiles prof ON u.id = prof.user_id
+        WHERE p.deleted_at IS NULL
+          AND p.visibility = 'public'
+          AND p.status = 'active'
+        ORDER BY p.created_at DESC
+        LIMIT $1`,
+        [limit]
+      );
+      polls = result.rows;
+    }
+
+    return polls;
+  }
+
+  /**
+   * Get recommended polls for user
+   *
+   * @param {string} userId - User UUID
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of recommended polls
+   */
+  static async getRecommended(userId, { limit = 3 } = {}) {
+    const result = await pool.query(
+      `WITH user_interests AS (
+        -- Find categories user has engaged with
+        SELECT DISTINCT p.category, COUNT(*) as interaction_count
+        FROM poll_responses pr
+        JOIN polls p ON pr.poll_id = p.id
+        WHERE pr.user_id = $1
+        GROUP BY p.category
+        ORDER BY interaction_count DESC
+        LIMIT 3
+      ),
+      user_voted_polls AS (
+        -- Polls user has already voted on
+        SELECT poll_id FROM poll_responses WHERE user_id = $1
+      ),
+      network_activity AS (
+        -- Polls from users in network (users they've engaged with)
+        SELECT DISTINCT pe.poll_id, COUNT(*) as network_strength
+        FROM poll_engagements pe
+        JOIN poll_engagements pe2 ON pe.poll_id = pe2.poll_id
+        WHERE pe2.user_id = $1
+          AND pe.user_id != $1
+        GROUP BY pe.poll_id
+        ORDER BY network_strength DESC
+      )
+      SELECT
+        p.*,
+        p.id as id,
+        s.responses,
+        s.comments,
+        s.likes,
+        s.shares,
+        s.reposts,
+        s.views,
+        u.id as author_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.profile_photo_url as profile_photo,
+        CASE
+          WHEN ui.category IS NOT NULL THEN 'Because you follow ' || p.category
+          WHEN na.poll_id IS NOT NULL THEN 'Trending in your network'
+          ELSE 'Recommended for you'
+        END as recommendation_reason,
+        (COALESCE(ui.interaction_count, 0) * 10 +
+         COALESCE(na.network_strength, 0) * 5 +
+         COALESCE(s.responses, 0)) as recommendation_score
+      FROM polls p
+      LEFT JOIN poll_stats s ON p.id = s.poll_id
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      LEFT JOIN user_interests ui ON p.category = ui.category
+      LEFT JOIN network_activity na ON p.id = na.poll_id
+      WHERE p.deleted_at IS NULL
+        AND p.visibility = 'public'
+        AND p.status = 'active'
+        AND p.id NOT IN (SELECT poll_id FROM user_voted_polls)
+        AND (ui.category IS NOT NULL OR na.poll_id IS NOT NULL)
+      ORDER BY (COALESCE(ui.interaction_count, 0) * 10 +
+                COALESCE(na.network_strength, 0) * 5 +
+                COALESCE(s.responses, 0)) DESC
+      LIMIT $2`,
+      [userId, limit]
+    );
+
+    return result.rows;
+  }
+
+  /**
+   * Get recommended polls with fallback for new users
+   *
+   * @param {string} userId - User UUID (can be null for anonymous)
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of recommended polls
+   */
+  static async getRecommendedWithFallback(userId, { limit = 3 } = {}) {
+    // If no userId, return trending polls
+    if (!userId) {
+      return await this.getTrending({ limit });
+    }
+
+    // Try personalized recommendations
+    let polls = await this.getRecommended(userId, { limit });
+
+    // Fallback 1: Show trending polls from diverse categories
+    if (polls.length < limit) {
+      const result = await pool.query(
+        `WITH user_voted_polls AS (
+          SELECT poll_id FROM poll_responses WHERE user_id = $1
+        )
+        SELECT
+          p.*,
+          p.id as id,
+          s.responses,
+          s.comments,
+          s.likes,
+          s.shares,
+          s.reposts,
+          s.views,
+          u.id as author_id,
+          u.email,
+          prof.first_name,
+          prof.last_name,
+          prof.profile_photo_url as profile_photo,
+          'Popular this week' as recommendation_reason,
+          (COALESCE(s.responses, 0) + COALESCE(s.comments, 0) + COALESCE(s.likes, 0)) as engagement_score
+        FROM polls p
+        LEFT JOIN poll_stats s ON p.id = s.poll_id
+        JOIN users u ON p.user_id = u.id
+        LEFT JOIN profiles prof ON u.id = prof.user_id
+        WHERE p.deleted_at IS NULL
+          AND p.visibility = 'public'
+          AND p.status = 'active'
+          AND p.created_at > NOW() - INTERVAL '7 days'
+          AND p.id NOT IN (SELECT poll_id FROM user_voted_polls)
+        ORDER BY engagement_score DESC
+        LIMIT $2`,
+        [userId, limit]
+      );
+      polls = result.rows;
+    }
+
+    return polls;
+  }
 }
 
 module.exports = PollModel;

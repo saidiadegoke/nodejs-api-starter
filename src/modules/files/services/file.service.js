@@ -1,34 +1,68 @@
 const FileModel = require('../models/file.model');
 const { v4: uuidv4 } = require('uuid');
+const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { s3Client, s3BucketName, s3BucketBaseUrl } = require('../../../shared/config/s3.config');
+const path = require('path');
 
 class FileService {
   /**
-   * Upload file (mock implementation)
-   * In production, this would upload to S3/R2/Cloudinary
+   * Upload file to S3
+   *
+   * @param {Object} file - Multer file object (with buffer)
+   * @param {string} uploadedBy - User UUID
+   * @param {string} context - File context (profile_photo, poll_image, etc.)
+   * @returns {Promise<Object>} Uploaded file record
    */
   static async uploadFile(file, uploadedBy, context = 'general') {
-    // Mock file upload - in production, upload to actual storage provider
     const fileId = uuidv4();
-    const provider = process.env.DEFAULT_FILE_PROVIDER || 'mock';
-    
-    // Mock file data
-    const fileData = {
-      provider: provider,
-      provider_path: `/uploads/${context}/${fileId}`,
-      file_url: `https://cdn.runcitygo.com/uploads/${context}/${fileId}`,
-      file_type: file.mimetype || 'application/octet-stream',
-      file_size: file.size || 0,
-      uploaded_by: uploadedBy,
-      context: context,
-      metadata: {
-        original_name: file.originalname || file.name || 'file',
-        uploaded_at: new Date().toISOString()
-      },
-      is_public: context === 'profile_photo' // Public for profile photos
-    };
+    const fileExtension = path.extname(file.originalname);
+    const fileName = `${fileId}${fileExtension}`;
+    const s3Key = `${context}/${fileName}`;
 
-    const uploadedFile = await FileModel.create(fileData);
-    return uploadedFile;
+    try {
+      // Upload to S3
+      const uploadParams = {
+        Bucket: s3BucketName,
+        Key: s3Key,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+        // Make files public by default for easier access
+        ACL: 'public-read',
+      };
+
+      const command = new PutObjectCommand(uploadParams);
+      await s3Client.send(command);
+
+      // Construct S3 URL using base URL if provided, otherwise use default format
+      const file_url = s3BucketBaseUrl 
+        ? `${s3BucketBaseUrl.replace(/\/$/, '')}/${s3Key}`
+        : `https://${s3BucketName}.s3.amazonaws.com/${s3Key}`;
+
+      // Save file record to database
+      const fileData = {
+        provider: 's3',
+        provider_path: s3Key,
+        file_url: file_url,
+        file_type: file.mimetype,
+        file_size: file.size,
+        uploaded_by: uploadedBy,
+        context: context,
+        metadata: {
+          original_name: file.originalname,
+          uploaded_at: new Date().toISOString(),
+          s3_bucket: s3BucketName,
+          s3_key: s3Key
+        },
+        is_public: true
+      };
+
+      const uploadedFile = await FileModel.create(fileData);
+      return uploadedFile;
+    } catch (error) {
+      console.error('S3 upload error:', error);
+      throw new Error(`Failed to upload file to S3: ${error.message}`);
+    }
   }
 
   /**
@@ -72,7 +106,7 @@ class FileService {
    */
   static async getFile(fileId, userId) {
     const file = await FileModel.findById(fileId);
-    
+
     if (!file) {
       throw new Error('File not found');
     }
@@ -83,7 +117,39 @@ class FileService {
       // For now, allow access
     }
 
+    // Generate signed URL for private files
+    if (!file.is_public && file.provider === 's3') {
+      try {
+        const signedUrl = await this.getSignedUrl(file.provider_path);
+        file.file_url = signedUrl;
+      } catch (error) {
+        console.error('Failed to generate signed URL:', error);
+      }
+    }
+
     return file;
+  }
+
+  /**
+   * Get signed URL for private S3 file
+   *
+   * @param {string} s3Key - S3 object key
+   * @param {number} expiresIn - URL expiration in seconds (default: 1 hour)
+   * @returns {Promise<string>} Signed URL
+   */
+  static async getSignedUrl(s3Key, expiresIn = 3600) {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: s3BucketName,
+        Key: s3Key,
+      });
+
+      const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });
+      return signedUrl;
+    } catch (error) {
+      console.error('Failed to generate signed URL:', error);
+      throw new Error('Failed to generate file access URL');
+    }
   }
 
   /**
@@ -120,6 +186,61 @@ class FileService {
   static async getFilesByContext(context, userId) {
     const files = await FileModel.findByContext(context, userId);
     return files;
+  }
+
+  /**
+   * Get user's uploaded files with filtering and pagination
+   */
+  static async getUserFiles(userId, filters = {}, page = 1, limit = 20) {
+    const offset = (page - 1) * limit;
+    
+    let whereClause = 'uploaded_by = $1 AND deleted_at IS NULL';
+    let params = [userId];
+    
+    if (filters.context) {
+      whereClause += ` AND context = $${params.length + 1}`;
+      params.push(filters.context);
+    }
+    
+    if (filters.file_type) {
+      whereClause += ` AND file_type LIKE $${params.length + 1}`;
+      params.push(`${filters.file_type}/%`);
+    }
+    
+    const files = await FileModel.findWithPagination(whereClause, params, offset, limit);
+    return files;
+  }
+
+  /**
+   * Update user's profile photo reference
+   */
+  static async updateUserProfilePhoto(userId, fileId) {
+    const pool = require('../../../db/pool');
+    
+    try {
+      // Update the profiles table with the new profile photo file ID
+      const result = await pool.query(
+        `UPDATE profiles 
+         SET profile_photo_id = $1, updated_at = NOW() 
+         WHERE user_id = $2 
+         RETURNING id`,
+        [fileId, userId]
+      );
+      
+      // If no profile exists, create one
+      if (result.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO profiles (user_id, profile_photo_id) 
+           VALUES ($1, $2)`,
+          [userId, fileId]
+        );
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error updating user profile photo:', error);
+      throw new Error('Failed to update profile photo');
+    }
   }
 
   /**

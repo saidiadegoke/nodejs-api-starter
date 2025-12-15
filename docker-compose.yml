@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # API Backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opinionpulse-api
+    environment:
+      NODE_ENV: production
+      PORT: ${API_PORT:-5010}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      API_BASE_URL: ${API_BASE_URL}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS}
+      LOG_LEVEL: ${LOG_LEVEL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_S3_BUCKET_BASE_URL: ${AWS_S3_BUCKET_BASE_URL}
+    ports:
+      - "${API_PORT:-5010}:${API_PORT:-5010}"
+    volumes:
+      - api_uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${API_PORT:-5010}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  api_uploads:
+    driver: local

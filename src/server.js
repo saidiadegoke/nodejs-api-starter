@@ -2,6 +2,8 @@ const app = require('./app');
 const { port } = require('./config/env.config');
 const { logger } = require('./shared/utils/logger');
 const pool = require('./db/pool');
+const webSocketService = require('./shared/services/websocket.service');
+const http = require('http');
 
 const PORT = port || 5010;
 
@@ -12,11 +14,18 @@ const startServer = async () => {
     await pool.query('SELECT NOW()');
     logger.info('Database connection successful');
     
+    // Create HTTP server
+    const server = http.createServer(app);
+    
+    // Initialize WebSocket
+    webSocketService.initialize(server);
+    
     // Start server
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       logger.info(`🚀 OpinionPulse API Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`API Documentation: http://localhost:${PORT}/api`);
+      logger.info(`WebSocket server ready for connections`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);

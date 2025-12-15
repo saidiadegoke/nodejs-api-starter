@@ -7,6 +7,9 @@
 
 const PollModel = require('../models/poll.model');
 const PollEngagementModel = require('../models/poll-engagement.model');
+const NotificationService = require('../../notifications/services/notification.service');
+const UserActivityService = require('../../users/services/user-activity.service');
+const webSocketService = require('../../../shared/services/websocket.service');
 
 class PollEngagementService {
   /**
@@ -18,9 +21,44 @@ class PollEngagementService {
    * @throws {Error} If poll not found
    */
   static async toggleLike(userId, pollId) {
-    await this.verifyPollExists(pollId);
+    const poll = await this.verifyPollExists(pollId);
+    const result = await PollEngagementModel.toggleEngagement(pollId, userId, 'like');
 
-    return await PollEngagementModel.toggleEngagement(pollId, userId, 'like');
+    try {
+      // Create notification for poll author (if not self-like)
+      if (result.action === 'added' && poll.user_id !== userId) {
+        const notification = await NotificationService.notifyPollLike(
+          pollId, 
+          poll.user_id, 
+          userId, 
+          poll.question || poll.title
+        );
+
+        // Send real-time notification
+        if (notification) {
+          webSocketService.sendUserNotification(poll.user_id, notification);
+        }
+      }
+
+      // Create user activity
+      await UserActivityService.createLikeActivity(
+        userId, 
+        pollId, 
+        poll.question || poll.title, 
+        result.action === 'added'
+      );
+
+      // Update user interests based on like
+      if (result.action === 'added') {
+        const PersonalizedFeedService = require('./personalized-feed.service');
+        await PersonalizedFeedService.updateUserInterests(userId, poll, 'like');
+      }
+    } catch (error) {
+      console.error('Error creating like notification/activity:', error);
+      // Don't fail the main operation if notification/activity creation fails
+    }
+
+    return result;
   }
 
   /**
@@ -32,9 +70,38 @@ class PollEngagementService {
    * @throws {Error} If poll not found
    */
   static async toggleBookmark(userId, pollId) {
-    await this.verifyPollExists(pollId);
+    const poll = await this.verifyPollExists(pollId);
+    const result = await PollEngagementModel.toggleEngagement(pollId, userId, 'bookmark');
 
-    return await PollEngagementModel.toggleEngagement(pollId, userId, 'bookmark');
+    try {
+      // Create notification for poll author (if not self-bookmark)
+      if (result.action === 'added' && poll.user_id !== userId) {
+        const notification = await NotificationService.notifyPollBookmark(
+          pollId, 
+          poll.user_id, 
+          userId, 
+          poll.question || poll.title
+        );
+
+        // Send real-time notification
+        if (notification) {
+          webSocketService.sendUserNotification(poll.user_id, notification);
+        }
+      }
+
+      // Create user activity
+      await UserActivityService.createBookmarkActivity(
+        userId, 
+        pollId, 
+        poll.question || poll.title, 
+        result.action === 'added'
+      );
+    } catch (error) {
+      console.error('Error creating bookmark notification/activity:', error);
+      // Don't fail the main operation if notification/activity creation fails
+    }
+
+    return result;
   }
 
   /**
@@ -47,9 +114,23 @@ class PollEngagementService {
    * @throws {Error} If poll not found
    */
   static async recordShare(userId, pollId, metadata = {}) {
-    await this.verifyPollExists(pollId);
+    const poll = await this.verifyPollExists(pollId);
+    const engagement = await PollEngagementModel.create(pollId, userId, 'share', metadata);
 
-    return await PollEngagementModel.create(pollId, userId, 'share', metadata);
+    try {
+      // Create user activity
+      await UserActivityService.createShareActivity(
+        userId, 
+        pollId, 
+        poll.question || poll.title, 
+        metadata
+      );
+    } catch (error) {
+      console.error('Error creating share activity:', error);
+      // Don't fail the main operation if activity creation fails
+    }
+
+    return engagement;
   }
 
   /**
@@ -62,9 +143,38 @@ class PollEngagementService {
    * @throws {Error} If poll not found
    */
   static async recordRepost(userId, pollId, metadata = {}) {
-    await this.verifyPollExists(pollId);
+    const poll = await this.verifyPollExists(pollId);
+    const engagement = await PollEngagementModel.create(pollId, userId, 'repost', metadata);
 
-    return await PollEngagementModel.create(pollId, userId, 'repost', metadata);
+    try {
+      // Create notification for poll author (if not self-repost)
+      if (poll.user_id !== userId) {
+        const notification = await NotificationService.notifyPollRepost(
+          pollId, 
+          poll.user_id, 
+          userId, 
+          poll.question || poll.title
+        );
+
+        // Send real-time notification
+        if (notification) {
+          webSocketService.sendUserNotification(poll.user_id, notification);
+        }
+      }
+
+      // Create user activity
+      await UserActivityService.createRepostActivity(
+        userId, 
+        pollId, 
+        poll.question || poll.title, 
+        metadata
+      );
+    } catch (error) {
+      console.error('Error creating repost notification/activity:', error);
+      // Don't fail the main operation if notification/activity creation fails
+    }
+
+    return engagement;
   }
 
   /**
@@ -104,6 +214,24 @@ class PollEngagementService {
     const { page = 1, limit = 20 } = options;
 
     const polls = await PollEngagementModel.getUserBookmarks(userId, { page, limit });
+
+    // Fetch options with vote counts for each poll
+    const PollOptionModel = require('../models/poll-option.model');
+    const PollResponseModel = require('../models/poll-response.model');
+
+    for (const poll of polls) {
+      const options = await PollOptionModel.getWithVoteCounts(poll.id);
+      const totalVotes = poll.responses || 0;
+
+      poll.options = options.map(opt => ({
+        ...opt,
+        vote_count: parseInt(opt.vote_count) || 0,
+        percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
+      }));
+
+      // Get user's response
+      poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
+    }
 
     return {
       polls,
@@ -177,6 +305,7 @@ class PollEngagementService {
    * Verify poll exists
    *
    * @param {string} pollId - Poll UUID
+   * @returns {Promise<Object>} Poll object
    * @throws {Error} If poll not found
    */
   static async verifyPollExists(pollId) {
@@ -184,6 +313,7 @@ class PollEngagementService {
     if (!poll) {
       throw new Error('Poll not found');
     }
+    return poll;
   }
 }
 

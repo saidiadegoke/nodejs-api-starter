@@ -34,12 +34,6 @@ const authenticate = async (req, res, next) => {
       type: payload.type
     };
     
-    logger.debug('User authenticated', { 
-      user_id: payload.user_id, 
-      roles: payload.roles,
-      path: req.path 
-    });
-    
     next();
   } catch (error) {
     logger.error('Authentication failed', { 

@@ -10,6 +10,7 @@ const PollOptionModel = require('../models/poll-option.model');
 const PollResponseModel = require('../models/poll-response.model');
 const PollEngagementModel = require('../models/poll-engagement.model');
 const PollTypeValidator = require('../validations/poll-type.validator');
+const UserActivityService = require('../../users/services/user-activity.service');
 
 class PollService {
   /**
@@ -75,6 +76,18 @@ class PollService {
     let createdOptions = [];
     if (options.length > 0) {
       createdOptions = await PollOptionModel.createBulk(poll.id, options);
+    }
+
+    try {
+      // Create user activity for poll creation
+      await UserActivityService.createPollActivity(
+        userId,
+        poll.id,
+        poll.question || poll.title
+      );
+    } catch (error) {
+      console.error('Error creating poll activity:', error);
+      // Don't fail the main operation if activity creation fails
     }
 
     return {
@@ -379,6 +392,97 @@ class PollService {
       total_responses: totalResponses,
       results
     };
+  }
+
+  /**
+   * Get trending debates for sidebar
+   *
+   * @param {Object} options - Query options
+   * @param {string} userId - User UUID (optional)
+   * @returns {Promise<Array>} Array of trending debates with options
+   */
+  static async getTrendingDebates({ limit = 5 } = {}, userId = null) {
+    const polls = await PollModel.getTrendingDebatesWithFallback({ limit });
+
+    // Fetch options with vote counts for each poll
+    for (const poll of polls) {
+      const options = await PollOptionModel.getWithVoteCounts(poll.id);
+      const totalVotes = poll.responses || 0;
+
+      // Add percentage to each option
+      poll.options = options.map(opt => ({
+        ...opt,
+        vote_count: parseInt(opt.vote_count) || 0,
+        percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
+      }));
+
+      // Get user's response if logged in
+      if (userId) {
+        poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
+      }
+    }
+
+    return polls;
+  }
+
+  /**
+   * Get rising polls for sidebar
+   *
+   * @param {Object} options - Query options
+   * @param {string} userId - User UUID (optional)
+   * @returns {Promise<Array>} Array of rising polls with options
+   */
+  static async getRisingPolls({ limit = 3 } = {}, userId = null) {
+    const polls = await PollModel.getRisingWithFallback({ limit });
+
+    // Fetch options with vote counts for each poll
+    for (const poll of polls) {
+      const options = await PollOptionModel.getWithVoteCounts(poll.id);
+      const totalVotes = poll.responses || 0;
+
+      // Add percentage to each option
+      poll.options = options.map(opt => ({
+        ...opt,
+        vote_count: parseInt(opt.vote_count) || 0,
+        percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
+      }));
+
+      // Get user's response if logged in
+      if (userId) {
+        poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
+      }
+    }
+
+    return polls;
+  }
+
+  /**
+   * Get recommended polls for user
+   *
+   * @param {string} userId - User UUID (required)
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of recommended polls with options
+   */
+  static async getRecommendedPolls(userId, { limit = 3 } = {}) {
+    const polls = await PollModel.getRecommendedWithFallback(userId, { limit });
+
+    // Fetch options with vote counts for each poll
+    for (const poll of polls) {
+      const options = await PollOptionModel.getWithVoteCounts(poll.id);
+      const totalVotes = poll.responses || 0;
+
+      // Add percentage to each option
+      poll.options = options.map(opt => ({
+        ...opt,
+        vote_count: parseInt(opt.vote_count) || 0,
+        percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
+      }));
+
+      // Always get user's response (they're logged in for recommendations)
+      poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
+    }
+
+    return polls;
   }
 }
 

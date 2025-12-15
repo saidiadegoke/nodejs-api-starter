@@ -298,7 +298,7 @@ SELECT
   COUNT(DISTINCT pr.user_id) as total_voters,
   CASE
     WHEN COUNT(DISTINCT pr.user_id) > 0
-    THEN ROUND((COUNT(DISTINCT ce.user_id)::FLOAT / COUNT(DISTINCT pr.user_id)) * 100, 2)
+    THEN CAST(ROUND(CAST((COUNT(DISTINCT ce.user_id)::FLOAT / COUNT(DISTINCT pr.user_id)) * 100 AS NUMERIC), 2) AS FLOAT)
     ELSE 0
   END as context_read_percentage
 FROM polls p
@@ -327,10 +327,10 @@ COMMENT ON VIEW poll_context_effectiveness IS 'Effectiveness metrics for poll co
 
 -- Add vote_count column to poll_options
 ALTER TABLE poll_options
-ADD COLUMN vote_count INT DEFAULT 0 NOT NULL;
+ADD COLUMN IF NOT EXISTS vote_count INT DEFAULT 0 NOT NULL;
 
 -- Create index on vote_count for sorting by popularity
-CREATE INDEX idx_poll_options_vote_count ON poll_options(poll_id, vote_count DESC);
+CREATE INDEX IF NOT EXISTS idx_poll_options_vote_count ON poll_options(poll_id, vote_count DESC);
 
 -- Function to update poll option vote counts
 CREATE OR REPLACE FUNCTION update_option_vote_count()
@@ -409,6 +409,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Drop the trigger if it exists
+DROP TRIGGER IF EXISTS trigger_update_option_vote_count ON poll_responses;
+
 -- Create trigger to update option vote counts
 CREATE TRIGGER trigger_update_option_vote_count
 AFTER INSERT OR UPDATE OR DELETE ON poll_responses
@@ -433,3 +436,51 @@ SET vote_count = vote_count + (
 
 -- Add comment
 COMMENT ON COLUMN poll_options.vote_count IS 'Denormalized vote count for efficient reads, automatically updated by triggers';
+
+-- Migration: Create notifications table
+-- Description: Table for storing user notifications (likes, comments, follows, etc.)
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type VARCHAR(50) NOT NULL, -- 'like', 'comment', 'bookmark', 'repost', 'follow', 'response', 'mention'
+  actor_id UUID REFERENCES users(id) ON DELETE CASCADE, -- User who triggered the notification
+  poll_id UUID REFERENCES polls(id) ON DELETE CASCADE, -- Related poll (if applicable)
+  comment_id UUID, -- Related comment (if applicable)
+  message TEXT, -- Notification message/content
+  metadata JSONB, -- Additional data
+  read BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
+
+-- Updated_at trigger
+CREATE OR REPLACE FUNCTION update_notifications_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Drop the trigger if it exists
+DROP TRIGGER IF EXISTS update_notifications_timestamp ON notifications;
+
+CREATE TRIGGER update_notifications_timestamp
+BEFORE UPDATE ON notifications
+FOR EACH ROW
+EXECUTE FUNCTION update_notifications_updated_at();
+
+-- Comments
+COMMENT ON TABLE notifications IS 'User notifications for various activities';
+COMMENT ON COLUMN notifications.type IS 'Type of notification: like, comment, bookmark, repost, follow, response, mention';
+COMMENT ON COLUMN notifications.actor_id IS 'User who performed the action that triggered the notification';
+COMMENT ON COLUMN notifications.poll_id IS 'Related poll ID (if notification is poll-related)';
+COMMENT ON COLUMN notifications.comment_id IS 'Related comment ID (if notification is comment-related)';
+COMMENT ON COLUMN notifications.metadata IS 'Additional notification data in JSON format';

@@ -10,6 +10,9 @@ const PollOptionModel = require('../models/poll-option.model');
 const PollResponseModel = require('../models/poll-response.model');
 const PollResponseValidator = require('../validations/poll-response.validator');
 const ResponseFormatter = require('../utils/response-formatter');
+const NotificationService = require('../../notifications/services/notification.service');
+const UserActivityService = require('../../users/services/user-activity.service');
+const webSocketService = require('../../../shared/services/websocket.service');
 
 class PollResponseService {
   /**
@@ -77,6 +80,49 @@ class PollResponseService {
       explanation: normalizedResponse.explanation || null,
       referral_code: responseData.referral_code || null
     });
+
+    try {
+      // Create notification for poll author (if not self-vote)
+      if (poll.user_id !== userId) {
+        const notification = await NotificationService.notifyPollResponse(
+          pollId,
+          poll.user_id,
+          userId,
+          poll.question || poll.title
+        );
+
+        // Send real-time notification
+        if (notification) {
+          webSocketService.sendUserNotification(poll.user_id, notification);
+        }
+      }
+
+      // Get selected option text for activity
+      let optionText = 'Unknown option';
+      if (normalizedResponse.option_id) {
+        const option = await PollOptionModel.getById(normalizedResponse.option_id);
+        optionText = option ? option.label : 'Unknown option';
+      } else if (normalizedResponse.text_value) {
+        optionText = normalizedResponse.text_value;
+      } else if (normalizedResponse.numeric_value !== undefined) {
+        optionText = normalizedResponse.numeric_value.toString();
+      }
+
+      // Create user activity
+      await UserActivityService.createVoteActivity(
+        userId,
+        pollId,
+        poll.question || poll.title,
+        optionText
+      );
+
+      // Update user interests based on vote
+      const PersonalizedFeedService = require('./personalized-feed.service');
+      await PersonalizedFeedService.updateUserInterests(userId, poll, 'vote');
+    } catch (error) {
+      console.error('Error creating vote notification/activity:', error);
+      // Don't fail the main operation if notification/activity creation fails
+    }
 
     return response;
   }
