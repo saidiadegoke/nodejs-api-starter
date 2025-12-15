@@ -31,6 +31,11 @@ services:
       AWS_REGION: ${AWS_REGION}
       AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
       AWS_S3_BUCKET_BASE_URL: ${AWS_S3_BUCKET_BASE_URL}
+      SMTP_HOST: ${SMTP_HOST:-smtp.hostinger.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-adminuser}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-adminpass}
+      FROM_EMAIL: ${FROM_EMAIL:-testemail}
     ports:
       - "${API_PORT:-5010}:${API_PORT:-5010}"
     volumes:

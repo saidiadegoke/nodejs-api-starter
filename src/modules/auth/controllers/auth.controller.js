@@ -9,6 +9,28 @@ class AuthController {
   static async register(req, res) {
     try {
       const user = await AuthService.register(req.body);
+      
+      // Send welcome email asynchronously if user has email
+      if (user.email && req.body.first_name) {
+        const sendEmail = require('../../../shared/utils/sendEmail');
+        const welcomeUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/`;
+        
+        sendEmail({
+          to: user.email,
+          subject: 'Welcome to OpinionPulse!',
+          templateFile: 'shared/emails/welcome.html',
+          placeholders: [
+            req.body.first_name || 'User',
+            welcomeUrl,
+            user.email
+          ]
+        }).then(() => {
+          console.log('Welcome email sent to:', user.email);
+        }).catch((emailError) => {
+          console.error('Failed to send welcome email:', emailError);
+        });
+      }
+      
       sendSuccess(res, user, 'Registration successful. Please verify your phone number.', CREATED);
     } catch (error) {
       // Check for duplicate key violation (PostgreSQL error code 23505)
@@ -147,28 +169,79 @@ class AuthController {
       }
       
       const AuthModel = require('../models/auth.model');
+      const pool = require('../../../db/pool');
+      const crypto = require('crypto');
+      const sendEmail = require('../../../shared/utils/sendEmail');
+      
       const user = await AuthModel.findByIdentifier(identifier);
       if (!user) {
-        // Don't reveal if user exists
+        // Don't reveal if user exists - still return success
         return sendSuccess(res, { 
           reset_initiated: true,
-          method: 'sms',
-          masked_recipient: '***'
-        }, 'Password reset code sent', OK);
+          method: 'email',
+          masked_recipient: '***@***.***'
+        }, 'If an account with that email exists, we have sent a password reset link', OK);
       }
       
-      // Mock implementation - would send actual reset code
-      const method = user.email ? 'email' : 'sms';
-      const masked = user.email 
-        ? user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3')
-        : user.phone.replace(/(\+\d{3})(.*)(\d{4})/, '$1***$3');
+      // Generate reset token
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
       
-      sendSuccess(res, { 
-        reset_initiated: true,
-        method,
-        masked_recipient: masked
-      }, 'Password reset code sent', OK);
+      // Store reset token in database
+      await pool.query(
+        `INSERT INTO password_resets (user_id, token_hash, email, phone, method, ip_address, user_agent, expires_at) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          user.id, 
+          tokenHash, 
+          user.email, 
+          user.phone, 
+          user.email ? 'email' : 'sms',
+          req.ip,
+          req.headers['user-agent'],
+          expiresAt
+        ]
+      );
+      
+      // Send email if user has email
+      if (user.email) {
+        const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+        
+        // Send email asynchronously - don't wait for it
+        sendEmail({
+          to: user.email,
+          subject: 'Reset Your OpinionPulse Password',
+          templateFile: 'shared/emails/forgot-password.html',
+          placeholders: [
+            user.first_name || user.display_name || 'User',
+            resetUrl,
+            resetUrl,
+            user.email
+          ]
+        }).then(() => {
+          console.log('Password reset email sent successfully to:', user.email);
+        }).catch((emailError) => {
+          console.error('Failed to send reset email:', emailError);
+        });
+        
+        const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
+        sendSuccess(res, { 
+          reset_initiated: true,
+          method: 'email',
+          masked_recipient: maskedEmail
+        }, 'Password reset link sent to your email', OK);
+      } else {
+        // For phone-only users, would send SMS in production
+        const maskedPhone = user.phone.replace(/(\+\d{3})(.*)(\d{4})/, '$1***$3');
+        sendSuccess(res, { 
+          reset_initiated: true,
+          method: 'sms',
+          masked_recipient: maskedPhone
+        }, 'Password reset code sent to your phone', OK);
+      }
     } catch (error) {
+      console.error('Forgot password error:', error);
       sendError(res, error.message, BAD_REQUEST);
     }
   }
@@ -178,35 +251,85 @@ class AuthController {
    */
   static async resetPassword(req, res) {
     try {
-      const { identifier, reset_code, new_password } = req.body;
+      const { token, new_password } = req.body;
       
-      if (!identifier || !reset_code || !new_password) {
-        return sendError(res, 'All fields are required', BAD_REQUEST);
+      if (!token || !new_password) {
+        return sendError(res, 'Reset token and new password are required', BAD_REQUEST);
       }
       
       const bcrypt = require('bcryptjs');
-      const AuthModel = require('../models/auth.model');
+      const crypto = require('crypto');
       const pool = require('../../../db/pool');
       
-      const user = await AuthModel.findByIdentifier(identifier);
-      if (!user) {
-        return sendError(res, 'User not found', BAD_REQUEST);
+      // Hash the provided token to match against stored hash
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      
+      // Check if token exists and is valid
+      const result = await pool.query(
+        `SELECT pr.*, u.id as user_id, u.email, p.first_name 
+         FROM password_resets pr 
+         JOIN users u ON pr.user_id = u.id 
+         LEFT JOIN profiles p ON u.id = p.user_id
+         WHERE pr.token_hash = $1 AND pr.expires_at > NOW() AND pr.used_at IS NULL`,
+        [tokenHash]
+      );
+      
+      const resetRecord = result.rows[0];
+      
+      if (!resetRecord) {
+        return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
       }
       
-      // Mock implementation - would verify reset code from database
-      // For testing, accept '123456' or if USE_MOCK_OTP is true
-      if (reset_code === '123456') {
-        const newHash = await bcrypt.hash(new_password, 10);
-        await pool.query(
-          'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-          [newHash, user.id]
-        );
-        
-        sendSuccess(res, null, 'Password reset successfully', OK);
-      } else {
-        sendError(res, 'Invalid reset code', BAD_REQUEST);
+      // Validate new password
+      if (new_password.length < 8) {
+        return sendError(res, 'Password must be at least 8 characters', UNPROCESSABLE_ENTITY);
       }
+      
+      // Update password
+      const newHash = await bcrypt.hash(new_password, 10);
+      await pool.query(
+        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+        [newHash, resetRecord.user_id]
+      );
+      
+      // Mark reset token as used
+      await pool.query(
+        'UPDATE password_resets SET used_at = NOW() WHERE id = $1',
+        [resetRecord.id]
+      );
+      
+      // Send password reset success email asynchronously
+      if (resetRecord.email) {
+        const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
+        const resetDate = new Date().toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        sendEmail({
+          to: resetRecord.email,
+          subject: 'Password Reset Successful - OpinionPulse',
+          templateFile: 'shared/emails/password-reset-success.html',
+          placeholders: [
+            resetRecord.first_name || 'User',
+            resetDate,
+            loginUrl,
+            resetDate,
+            resetRecord.email
+          ]
+        }).then(() => {
+          console.log('Password reset success email sent to:', resetRecord.email);
+        }).catch((emailError) => {
+          console.error('Failed to send password reset success email:', emailError);
+        });
+      }
+      
+      sendSuccess(res, null, 'Password reset successfully', OK);
     } catch (error) {
+      console.error('Reset password error:', error);
       sendError(res, error.message, BAD_REQUEST);
     }
   }

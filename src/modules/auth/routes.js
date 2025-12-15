@@ -123,14 +123,13 @@ router.post(
 
 /**
  * @route   POST /api/auth/reset-password
- * @desc    Reset password with code
+ * @desc    Reset password with token
  * @access  Public
  */
 router.post(
   '/reset-password',
   [
-    body('identifier').notEmpty().withMessage('Email or phone is required'),
-    body('reset_code').notEmpty().withMessage('Reset code is required'),
+    body('token').notEmpty().withMessage('Reset token is required'),
     body('new_password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
     validate,
   ],

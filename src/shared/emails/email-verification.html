@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email - OpinionPulse</title>
+</head>
+<body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f8fafc; line-height: 1.6;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+        <!-- Header -->
+        <tr>
+            <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 40px 30px; text-align: center; position: relative;">
+                <div style="background: rgba(255,255,255,0.1); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+                    <span style="font-size: 36px; font-weight: bold;">OP</span>
+                </div>
+                <h1 style="margin: 0; font-size: 32px; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">OpinionPulse</h1>
+                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Your Voice, Your Impact</p>
+            </td>
+        </tr>
+        
+        <!-- Content -->
+        <tr>
+            <td style="padding: 40px 30px; background-color: #ffffff;">
+                <h2 style="font-size: 28px; margin-bottom: 24px; color: #1e293b; font-weight: 700;">📧 Verify Your Email Address</h2>
+                
+                <p style="font-size: 18px; line-height: 1.7; color: #334155; margin-bottom: 24px;">Hi %s,</p>
+              
+                <p style="font-size: 16px; line-height: 1.7; color: #475569; margin-bottom: 24px;">
+                    Thank you for signing up for OpinionPulse! To complete your registration and start creating polls, 
+                    please verify your email address by clicking the button below.
+                </p>
+
+                <!-- Verification Button -->
+                <table cellpadding="0" cellspacing="0" style="margin: 32px auto; text-align: center;">
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);">
+                            <a href="%s" style="display: inline-block; padding: 18px 36px; color: #ffffff; text-decoration: none; font-weight: bold; font-size: 16px;">Verify Email Address</a>
+                        </td>
+                    </tr>
+                </table>
+
+                <!-- Fallback Link Box -->
+                <table width="100%" cellpadding="24" cellspacing="0" style="background-color: #f1f5f9; border-radius: 8px; margin: 24px 0; border-left: 4px solid #667eea;">
+                    <tr>
+                        <td>
+                            <p style="margin: 0 0 12px 0; font-weight: bold; color: #1e293b;">Having trouble with the button?</p>
+                            <p style="margin: 0 0 12px 0; font-size: 14px; color: #64748b;">Copy and paste this link into your browser:</p>
+                            <p style="margin: 0; font-size: 13px; color: #667eea; font-family: monospace; word-break: break-all;">%s</p>
+                        </td>
+                    </tr>
+                </table>
+
+                <!-- What's Next Box -->
+                <table width="100%" cellpadding="24" cellspacing="0" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 1px solid #0ea5e9; border-radius: 12px; margin: 24px 0;">
+                    <tr>
+                        <td>
+                            <h3 style="margin: 0 0 16px 0; color: #0369a1; font-size: 18px; font-weight: 600;">🎯 After verification, you can:</h3>
+                            <ul style="margin: 0; padding-left: 20px; color: #475569; line-height: 1.8;">
+                                <li>Create unlimited polls on any topic</li>
+                                <li>Participate in community discussions</li>
+                                <li>Access detailed poll analytics</li>
+                                <li>Build your follower network</li>
+                                <li>Receive personalized recommendations</li>
+                            </ul>
+                        </td>
+                    </tr>
+                </table>
+              
+                <p style="font-size: 16px; line-height: 1.7; color: #1e293b; margin-bottom: 20px;">
+                    <strong>🔒 Security Notes:</strong>
+                </p>
+                <ul style="color: #475569; font-size: 16px; line-height: 1.7; margin-bottom: 24px; padding-left: 20px;">
+                    <li>This verification link will expire in 24 hours</li>
+                    <li>If you didn't create an OpinionPulse account, please ignore this email</li>
+                    <li>Your account will remain inactive until email verification is complete</li>
+                </ul>
+
+                <p style="font-size: 16px; line-height: 1.7; color: #475569; margin-bottom: 24px;">
+                    If you're having trouble with the verification or need assistance, don't hesitate to contact our support team. 
+                    We're here to help you get started!
+                </p>
+              
+                <p style="margin-top: 32px; font-size: 16px; line-height: 1.7; color: #1e293b;">
+                    <strong style="color: #667eea;">— The OpinionPulse Team</strong><br>
+                    <em style="color: #64748b;">Ready to make your voice heard?</em>
+                </p>
+            </td>
+        </tr>        
+        
+        <!-- Footer -->
+        <tr>
+            <td style="padding: 32px 24px; background-color: #f8fafc; text-align: center; font-size: 14px; color: #64748b; border-top: 1px solid #e2e8f0;">
+                <p style="margin: 8px 0; font-weight: 600; color: #1e293b;">This email was sent to %s</p>
+                <p style="margin: 8px 0;">You received this because you signed up for <a href="https://opinionpulse.com" style="color: #667eea; text-decoration: none; font-weight: bold;">OpinionPulse</a></p>
+                
+                <p style="margin: 24px 0; font-size: 12px;">
+                    <a href="https://twitter.com/opinionpulse" style="color: #64748b; text-decoration: none; margin: 0 8px;">Twitter</a> •
+                    <a href="https://facebook.com/opinionpulse" style="color: #64748b; text-decoration: none; margin: 0 8px;">Facebook</a> •
+                    <a href="https://instagram.com/opinionpulse" style="color: #64748b; text-decoration: none; margin: 0 8px;">Instagram</a>
+                </p>
+                
+                <p style="margin: 20px 0; color: #cbd5e1;">• • •</p>
+                
+                <p style="margin: 8px 0;">
+                    <a href="https://opinionpulse.com/help" style="color: #667eea; text-decoration: none; font-weight: bold;">Help</a> • 
+                    <a href="https://opinionpulse.com/contact" style="color: #667eea; text-decoration: none; font-weight: bold;">Contact Us</a> •
+                    <a href="https://opinionpulse.com/privacy" style="color: #667eea; text-decoration: none; font-weight: bold;">Privacy</a>
+                </p>
+                
+                <p style="margin: 20px 0 8px 0; font-weight: bold; color: #1e293b;">&copy; 2025 OpinionPulse. All rights reserved.</p>
+                <p style="font-size: 12px; margin: 8px 0; color: #94a3b8;">
+                    Empowering voices, driving change through collective opinion
+                </p>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
