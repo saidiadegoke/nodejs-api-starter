@@ -256,3 +256,158 @@ COMMENT ON COLUMN user_interests.interaction_count IS 'Number of interactions wi
 
 COMMENT ON FUNCTION update_user_interest IS 'Updates user interest score based on interactions';
 COMMENT ON FUNCTION decay_user_interests IS 'Decays interest scores over time to keep preferences fresh';
+
+-- =====================================================
+-- Migration: Create Polymorphic Comments System
+-- =====================================================
+-- This migration refactors the comments system to support multiple models
+-- (polls, context sources, and future entities) using a polymorphic approach
+
+-- =====================================================
+-- 2. Create indexes for the new comments table
+-- =====================================================
+CREATE INDEX IF NOT EXISTS idx_comments_commentable ON comments(commentable_type, commentable_id);
+CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id);
+CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_comment_id) WHERE parent_comment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_not_deleted ON comments(commentable_type, commentable_id) WHERE deleted_at IS NULL;
+-- =====================================================
+-- 3. Migrate existing poll comments to new table
+-- =====================================================
+INSERT INTO comments (
+  commentable_type,
+  commentable_id,
+  user_id,
+  parent_comment_id,
+  comment,
+  is_flagged,
+  is_hidden,
+  created_at,
+  updated_at,
+  deleted_at
+)
+SELECT 
+  'poll' as commentable_type,
+  poll_id as commentable_id,
+  user_id,
+  parent_comment_id,
+  comment,
+  is_flagged,
+  is_hidden,
+  created_at,
+  updated_at,
+  deleted_at
+FROM poll_comments;
+
+-- =====================================================
+-- 4. Update parent_comment_id references for migrated data
+-- =====================================================
+-- We need to map old poll_comment IDs to new comment IDs
+WITH comment_mapping AS (
+  SELECT 
+    pc.id as old_id,
+    c.id as new_id
+  FROM poll_comments pc
+  JOIN comments c ON (
+    c.commentable_type = 'poll' 
+    AND c.commentable_id = pc.poll_id 
+    AND c.user_id = pc.user_id 
+    AND c.comment = pc.comment 
+    AND c.created_at = pc.created_at
+  )
+)
+UPDATE comments 
+SET parent_comment_id = cm_parent.new_id
+FROM comment_mapping cm_child
+JOIN comment_mapping cm_parent ON cm_parent.old_id = (
+  SELECT parent_comment_id 
+  FROM poll_comments 
+  WHERE id = cm_child.old_id
+)
+WHERE comments.id = cm_child.new_id
+AND comments.parent_comment_id IS NOT NULL;
+
+-- =====================================================
+-- 6. Drop problematic trigger and function if they exist
+-- =====================================================
+DROP TRIGGER IF EXISTS trigger_update_stats_on_comment_new ON comments;
+DROP TRIGGER IF EXISTS trigger_update_stats_on_comment ON poll_comments;
+
+-- Recreate the function to work with poll_stats table (not comments_count column)
+CREATE OR REPLACE FUNCTION update_poll_stats_on_comment()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- Handle both old poll_comments and new polymorphic comments
+    IF TG_TABLE_NAME = 'poll_comments' THEN
+      UPDATE poll_stats
+      SET comments = comments + 1, updated_at = NOW()
+      WHERE poll_id = NEW.poll_id;
+    ELSIF TG_TABLE_NAME = 'comments' AND NEW.commentable_type = 'poll' THEN
+      UPDATE poll_stats
+      SET comments = comments + 1, updated_at = NOW()
+      WHERE poll_id = NEW.commentable_id;
+    END IF;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    -- Handle deletions
+    IF TG_TABLE_NAME = 'poll_comments' THEN
+      UPDATE poll_stats
+      SET comments = comments - 1, updated_at = NOW()
+      WHERE poll_id = OLD.poll_id;
+    ELSIF TG_TABLE_NAME = 'comments' AND OLD.commentable_type = 'poll' THEN
+      UPDATE poll_stats
+      SET comments = comments - 1, updated_at = NOW()
+      WHERE poll_id = OLD.commentable_id;
+    END IF;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger for the new comments table
+CREATE TRIGGER trigger_update_stats_on_comment_new
+AFTER INSERT OR DELETE ON comments
+FOR EACH ROW
+EXECUTE FUNCTION update_poll_stats_on_comment();
+
+-- =====================================================
+-- 7. Drop old trigger and table (commented out for safety)
+-- =====================================================
+-- DROP TRIGGER IF EXISTS trigger_update_stats_on_comment ON poll_comments;
+-- DROP TABLE IF EXISTS poll_comments;
+
+-- =====================================================
+-- 8. Add table comments
+-- =====================================================
+COMMENT ON TABLE comments IS 'Polymorphic comments table supporting polls, context sources, and other entities';
+COMMENT ON COLUMN comments.commentable_type IS 'Type of entity being commented on (poll, context_source, etc.)';
+COMMENT ON COLUMN comments.commentable_id IS 'ID of the entity being commented on';
+
+-- Migration: Add analytics and authoring permissions and extend user activities
+-- This migration adds the necessary permissions for the new analytics and authoring features
+-- and extends the user_activities table to support context sources (stories)
+
+-- Add context_source_id column to user_activities table for story-related activities
+ALTER TABLE user_activities 
+ADD COLUMN IF NOT EXISTS context_source_id UUID REFERENCES context_sources(id) ON DELETE CASCADE;
+
+-- Add index for the new column
+CREATE INDEX IF NOT EXISTS idx_user_activities_context_source_id ON user_activities(context_source_id);
+
+-- Add some sample permissions for analytics and authoring
+INSERT INTO permissions (id, name, resource, action, description, created_at) 
+VALUES 
+    (gen_random_uuid(), 'analytics.view', 'analytics', 'view', 'View analytics and statistics', NOW()),
+    (gen_random_uuid(), 'analytics.export', 'analytics', 'export', 'Export analytics data', NOW()),
+    (gen_random_uuid(), 'authoring.create', 'authoring', 'create', 'Create single content using wizards', NOW()),
+    (gen_random_uuid(), 'authoring.bulk_create', 'authoring', 'bulk_create', 'Create content in bulk (polls, stories)', NOW())
+ON CONFLICT (name) DO NOTHING;
+
+-- Create uploads directory structure (this would be handled by the application)
+-- The application should ensure these directories exist:
+-- uploads/authoring/ - for bulk creation file uploads
+
+-- Note: Bulk creation activities will be logged using the existing comprehensive logging system
+-- instead of a separate bulk_creation_logs table

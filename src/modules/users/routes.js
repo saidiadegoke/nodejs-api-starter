@@ -31,6 +31,20 @@ router.put('/me', requireAuth, UserProfileController.updateMe);
 router.get('/me/stats', requireAuth, UserProfileController.getStats);
 
 /**
+ * @route   GET /api/users/me/permissions
+ * @desc    Get current user permissions
+ * @access  Private
+ */
+router.get('/me/permissions', requireAuth, UserProfileController.getMyPermissions);
+
+/**
+ * @route   GET /api/users/me/stories
+ * @desc    Get current user's stories (context sources)
+ * @access  Private
+ */
+router.get('/me/stories', requireAuth, UserProfileController.getUserStories);
+
+/**
  * @route   GET /api/users/me/activities
  * @desc    Get current user activities
  * @access  Private

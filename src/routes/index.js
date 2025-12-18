@@ -9,6 +9,8 @@ const pollsRoutes = require('../modules/polls/routes');
 const notificationsRoutes = require('../modules/notifications/routes');
 const sharedRoutes = require('../modules/shared/routes');
 const websocketRoutes = require('../modules/websocket/routes');
+const analyticsRoutes = require('../modules/analytics/routes');
+const authoringRoutes = require('../modules/authoring/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -39,6 +41,8 @@ router.get('/', (req, res) => {
       polls: '/polls',
       notifications: '/notifications',
       websocket: '/websocket',
+      analytics: '/analytics',
+      authoring: '/authoring',
       health: '/health'
     },
     features: {
@@ -63,6 +67,8 @@ router.use('/polls', pollsRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
+router.use('/analytics', analyticsRoutes);
+router.use('/authoring', authoringRoutes);
 
 /**
  * Test routes (for RBAC testing)

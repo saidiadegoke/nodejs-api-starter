@@ -203,6 +203,122 @@ class UserActivityService {
   }
 
   /**
+   * Create activity for bulk poll creation
+   *
+   * @param {string} userId - User UUID
+   * @param {number} successCount - Number of polls created successfully
+   * @param {number} errorCount - Number of polls that failed to create
+   * @returns {Promise<Object>} Created activity
+   */
+  static async createBulkPollActivity(userId, successCount, errorCount) {
+    return await UserActivityModel.create({
+      user_id: userId,
+      activity_type: 'bulk_polls_created',
+      title: `Created ${successCount} polls in bulk`,
+      description: errorCount > 0 ? `${errorCount} polls failed to create` : null,
+      metadata: { 
+        successful_count: successCount, 
+        failed_count: errorCount,
+        total_attempted: successCount + errorCount
+      }
+    });
+  }
+
+  /**
+   * Create activity for bulk story creation
+   *
+   * @param {string} userId - User UUID
+   * @param {number} successCount - Number of stories created successfully
+   * @param {number} errorCount - Number of stories that failed to create
+   * @returns {Promise<Object>} Created activity
+   */
+  static async createBulkStoryActivity(userId, successCount, errorCount) {
+    return await UserActivityModel.create({
+      user_id: userId,
+      activity_type: 'bulk_stories_created',
+      title: `Created ${successCount} stories in bulk`,
+      description: errorCount > 0 ? `${errorCount} stories failed to create` : null,
+      metadata: { 
+        successful_count: successCount, 
+        failed_count: errorCount,
+        total_attempted: successCount + errorCount
+      }
+    });
+  }
+
+  /**
+   * Create activity for wizard poll creation
+   *
+   * @param {string} userId - User UUID
+   * @param {string} pollId - Poll UUID
+   * @param {string} pollQuestion - Poll question
+   * @returns {Promise<Object>} Created activity
+   */
+  static async createWizardPollActivity(userId, pollId, pollQuestion) {
+    return await UserActivityModel.create({
+      user_id: userId,
+      activity_type: 'wizard_poll_created',
+      poll_id: pollId,
+      title: `Created poll with wizard: "${pollQuestion}"`,
+      metadata: { poll_question: pollQuestion, creation_method: 'wizard' }
+    });
+  }
+
+  /**
+   * Create activity for wizard story creation
+   *
+   * @param {string} userId - User UUID
+   * @param {string} storyId - Story UUID
+   * @param {string} storyTitle - Story title
+   * @returns {Promise<Object>} Created activity
+   */
+  static async createWizardStoryActivity(userId, storyId, storyTitle) {
+    return await UserActivityModel.create({
+      user_id: userId,
+      activity_type: 'wizard_story_created',
+      context_source_id: storyId, // Using context_source_id for stories
+      title: `Created story with wizard: "${storyTitle}"`,
+      metadata: { story_title: storyTitle, creation_method: 'wizard' }
+    });
+  }
+
+  /**
+   * Create activity for bulk creation (mixed polls and stories)
+   *
+   * @param {string} userId - User UUID
+   * @param {number} pollsCount - Number of polls created
+   * @param {number} storiesCount - Number of stories created
+   * @param {number} errorCount - Number of items that failed to create
+   * @returns {Promise<Object>} Created activity
+   */
+  static async createBulkCreationActivity(userId, pollsCount, storiesCount, errorCount) {
+    const totalSuccess = pollsCount + storiesCount;
+    const totalAttempted = totalSuccess + errorCount;
+    
+    let title = 'Bulk creation completed';
+    if (pollsCount > 0 && storiesCount > 0) {
+      title = `Created ${pollsCount} polls and ${storiesCount} stories in bulk`;
+    } else if (pollsCount > 0) {
+      title = `Created ${pollsCount} polls in bulk`;
+    } else if (storiesCount > 0) {
+      title = `Created ${storiesCount} stories in bulk`;
+    }
+
+    return await UserActivityModel.create({
+      user_id: userId,
+      activity_type: 'bulk_creation_completed',
+      title: title,
+      description: errorCount > 0 ? `${errorCount} items failed to create` : null,
+      metadata: { 
+        polls_created: pollsCount,
+        stories_created: storiesCount,
+        failed_count: errorCount,
+        total_attempted: totalAttempted
+      }
+    });
+  }
+
+  /**
    * Delete activity
    *
    * @param {string} activityId - Activity UUID

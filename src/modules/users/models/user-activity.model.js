@@ -19,6 +19,7 @@ class UserActivityModel {
       activity_type,
       poll_id = null,
       comment_id = null,
+      context_source_id = null,
       target_user_id = null,
       title,
       description = null,
@@ -26,10 +27,10 @@ class UserActivityModel {
     } = data;
 
     const result = await pool.query(
-      `INSERT INTO user_activities (user_id, activity_type, poll_id, comment_id, target_user_id, title, description, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO user_activities (user_id, activity_type, poll_id, comment_id, context_source_id, target_user_id, title, description, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [user_id, activity_type, poll_id, comment_id, target_user_id, title, description, JSON.stringify(metadata)]
+      [user_id, activity_type, poll_id, comment_id, context_source_id, target_user_id, title, description, JSON.stringify(metadata)]
     );
 
     return result.rows[0];

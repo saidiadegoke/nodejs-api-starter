@@ -6,6 +6,7 @@
  */
 
 const ContextService = require('../services/context.service');
+const CommentService = require('../../../shared/services/comment.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 
@@ -116,11 +117,36 @@ class ContextController {
    */
   static async searchContextSources(req, res) {
     try {
-      const { query, source_type, tags, page, limit } = req.query;
+      const { 
+        query, 
+        source_type, 
+        tags, 
+        author, 
+        publisher,
+        credibility_min,
+        credibility_max,
+        date_from,
+        date_to,
+        sort_by,
+        sort_order,
+        page, 
+        limit 
+      } = req.query;
 
       const filters = {
         source_type,
-        tags: tags ? (Array.isArray(tags) ? tags : [tags]) : undefined
+        tags: tags ? (Array.isArray(tags) ? tags : [tags]) : undefined,
+        author,
+        publisher,
+        credibility_min: credibility_min ? parseFloat(credibility_min) : undefined,
+        credibility_max: credibility_max ? parseFloat(credibility_max) : undefined,
+        date_from,
+        date_to
+      };
+
+      const sorting = {
+        sort_by: sort_by || 'created_at',
+        sort_order: sort_order || 'desc'
       };
 
       const pagination = {
@@ -128,7 +154,7 @@ class ContextController {
         limit: parseInt(limit) || 20
       };
 
-      const result = await ContextService.searchContextSources(query, filters, pagination);
+      const result = await ContextService.searchContextSources(query, filters, pagination, sorting);
 
       sendSuccess(res, result, 'Context sources retrieved successfully', OK);
     } catch (error) {
@@ -415,6 +441,70 @@ class ContextController {
       }
       if (error.message.includes('not authorized')) {
         return sendError(res, error.message, FORBIDDEN);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Create a comment on a context source
+   *
+   * @route POST /api/polls/contexts/:source_id/comments
+   * @access Private
+   */
+  static async createContextComment(req, res) {
+    try {
+      const userId = req.user.user_id;
+      const { source_id } = req.params;
+      const { comment, parent_comment_id } = req.body;
+
+      const commentData = {
+        commentable_type: 'context_source',
+        commentable_id: source_id,
+        comment,
+        parent_comment_id
+      };
+
+      const result = await CommentService.createComment(userId, commentData);
+
+      sendSuccess(res, result, 'Comment created successfully', CREATED);
+    } catch (error) {
+      console.error('Create context comment error:', error);
+      if (error.message.includes('not found')) {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      if (error.message.includes('required') || error.message.includes('cannot exceed')) {
+        return sendError(res, error.message, 422);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Get comments for a context source
+   *
+   * @route GET /api/polls/contexts/:source_id/comments
+   * @access Public
+   */
+  static async getContextComments(req, res) {
+    try {
+      const { source_id } = req.params;
+      const { page, limit, include_replies, parent_comment_id } = req.query;
+
+      const options = {
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 20,
+        include_replies: include_replies === 'true',
+        parent_comment_id
+      };
+
+      const result = await CommentService.getEntityComments('context_source', source_id, options);
+
+      sendSuccess(res, result, 'Comments retrieved successfully', OK);
+    } catch (error) {
+      console.error('Get context comments error:', error);
+      if (error.message.includes('not found')) {
+        return sendError(res, error.message, NOT_FOUND);
       }
       sendError(res, error.message, BAD_REQUEST);
     }

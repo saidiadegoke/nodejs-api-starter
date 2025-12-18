@@ -424,7 +424,8 @@ class PollController {
         author,
         page = 1,
         limit = 20,
-        status = 'active'
+        status = 'active',
+        filter // trending, rising, recommended
       } = req.query;
 
       const userId = req.user?.user_id || null;
@@ -493,6 +494,28 @@ class PollController {
 
       const whereClause = whereConditions.join(' AND ');
 
+      // Determine ORDER BY clause based on filter
+      let orderByClause;
+      switch (filter) {
+        case 'trending':
+          // Sort by engagement score (views + responses + comments + likes)
+          orderByClause = `ORDER BY (COALESCE(s.views, 0) + COALESCE(s.responses, 0) * 2 + COALESCE(s.comments, 0) * 3 + COALESCE(s.likes, 0) * 2) DESC, p.created_at DESC`;
+          break;
+        case 'rising':
+          // Sort by recent activity (created in last 7 days with high engagement)
+          orderByClause = `ORDER BY 
+            CASE WHEN p.created_at > NOW() - INTERVAL '7 days' 
+            THEN (COALESCE(s.responses, 0) + COALESCE(s.views, 0) / 10) 
+            ELSE 0 END DESC, p.created_at DESC`;
+          break;
+        case 'recommended':
+          // For now, sort by engagement but could be enhanced with user preferences
+          orderByClause = `ORDER BY (COALESCE(s.responses, 0) + COALESCE(s.likes, 0)) DESC, p.created_at DESC`;
+          break;
+        default:
+          orderByClause = `ORDER BY p.created_at DESC`;
+      }
+
       // Get total count
       const countQuery = `
         SELECT COUNT(*) as total
@@ -532,7 +555,7 @@ class PollController {
         JOIN users u ON p.user_id = u.id
         LEFT JOIN profiles prof ON u.id = prof.user_id
         WHERE ${whereClause}
-        ORDER BY p.created_at DESC
+        ${orderByClause}
         LIMIT $${limitParam} OFFSET $${offsetParam}
       `;
 

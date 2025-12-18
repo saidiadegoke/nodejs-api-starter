@@ -18,7 +18,11 @@ class WebSocketService {
         methods: ['GET', 'POST'],
         credentials: true
       },
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      pingTimeout: 90000,
+      pingInterval: 25000,
+      upgradeTimeout: 30000,
+      allowEIO3: true
     });
 
     this.setupMiddleware();

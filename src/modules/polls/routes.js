@@ -203,6 +203,37 @@ router.get(
 );
 
 /**
+ * @route   GET /api/polls/contexts
+ * @desc    Search/list context sources
+ * @access  Public
+ */
+router.get(
+  '/contexts',
+  [
+    query('query').optional().trim(),
+    query('source_type').optional().trim().isIn([
+      'research', 'news_article', 'blog_post', 'whitepaper', 'dataset', 
+      'report', 'story', 'study', 'survey'
+    ]).withMessage('Invalid source type'),
+    query('tags').optional(),
+    query('author').optional().trim(),
+    query('publisher').optional().trim(),
+    query('credibility_min').optional().isFloat({ min: 0, max: 10 }).withMessage('Credibility min must be between 0 and 10'),
+    query('credibility_max').optional().isFloat({ min: 0, max: 10 }).withMessage('Credibility max must be between 0 and 10'),
+    query('date_from').optional().isDate().withMessage('Invalid date format for date_from'),
+    query('date_to').optional().isDate().withMessage('Invalid date format for date_to'),
+    query('sort_by').optional().isIn([
+      'created_at', 'updated_at', 'title', 'author', 'publisher', 'publication_date', 'credibility_score'
+    ]).withMessage('Invalid sort field'),
+    query('sort_order').optional().isIn(['asc', 'desc']).withMessage('Sort order must be asc or desc'),
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100')
+  ],
+  validate,
+  ContextController.searchContextSources
+);
+
+/**
  * @route   GET /api/polls/:poll_id
  * @desc    Get poll by ID
  * @access  Public (optionalAuth for user-specific data)
@@ -754,23 +785,7 @@ router.post(
   ContextController.createContextSource
 );
 
-/**
- * @route   GET /api/polls/contexts
- * @desc    Search/list context sources
- * @access  Public
- */
-router.get(
-  '/contexts',
-  [
-    query('query').optional().trim(),
-    query('source_type').optional().trim(),
-    query('tags').optional(),
-    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
-    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100')
-  ],
-  validate,
-  ContextController.searchContextSources
-);
+
 
 /**
  * @route   GET /api/polls/contexts/:source_id
@@ -1001,6 +1016,43 @@ router.delete(
   ],
   validate,
   ContextController.unlinkContextFromPoll
+);
+
+// ==================== Context Comments Routes ====================
+
+/**
+ * @route   POST /api/polls/contexts/:source_id/comments
+ * @desc    Create a comment on a context source
+ * @access  Private
+ */
+router.post(
+  '/contexts/:source_id/comments',
+  authenticate,
+  [
+    param('source_id').isUUID().withMessage('Invalid source ID'),
+    body('comment').trim().notEmpty().withMessage('Comment is required').isLength({ max: 2000 }).withMessage('Comment cannot exceed 2000 characters'),
+    body('parent_comment_id').optional().isUUID().withMessage('Invalid parent comment ID')
+  ],
+  validate,
+  ContextController.createContextComment
+);
+
+/**
+ * @route   GET /api/polls/contexts/:source_id/comments
+ * @desc    Get comments for a context source
+ * @access  Public
+ */
+router.get(
+  '/contexts/:source_id/comments',
+  [
+    param('source_id').isUUID().withMessage('Invalid source ID'),
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('include_replies').optional().isBoolean().withMessage('include_replies must be boolean'),
+    query('parent_comment_id').optional().isUUID().withMessage('Invalid parent comment ID')
+  ],
+  validate,
+  ContextController.getContextComments
 );
 
 module.exports = router;

@@ -52,6 +52,27 @@ class ContextService {
       throw new Error('Title must be at least 5 characters');
     }
 
+    // Validate blocks content
+    if (blocks && blocks.length > 0) {
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        if (!block.content || block.content.trim().length === 0) {
+          throw new Error(`Block ${i + 1} content is required`);
+        }
+        
+        // For text and quote blocks, validate HTML content
+        if (['text', 'quote'].includes(block.block_type)) {
+          const textContent = block.content.replace(/<[^>]*>/g, '').trim();
+          if (textContent.length === 0) {
+            throw new Error(`Block ${i + 1} must contain some text content`);
+          }
+          if (textContent.length > 5000) {
+            throw new Error(`Block ${i + 1} cannot exceed 5000 characters`);
+          }
+        }
+      }
+    }
+
     if (credibility_score !== undefined && credibility_score !== null) {
       if (credibility_score < 0 || credibility_score > 10) {
         throw new Error('Credibility score must be between 0 and 10');
@@ -402,31 +423,48 @@ class ContextService {
   }
 
   /**
-   * Search context sources
+   * Search context sources with comprehensive filtering
    *
    * @param {string} query - Search query
    * @param {Object} filters - Filter options
    * @param {Object} pagination - Pagination options
+   * @param {Object} sorting - Sorting options
    * @returns {Promise<Object>} Sources with pagination
    */
-  static async searchContextSources(query, filters = {}, pagination = {}) {
+  static async searchContextSources(query, filters = {}, pagination = {}, sorting = {}) {
     const { page = 1, limit = 20 } = pagination;
-    const { source_type, tags } = filters;
+    const { 
+      source_type, 
+      tags, 
+      author, 
+      publisher,
+      credibility_min,
+      credibility_max,
+      date_from,
+      date_to
+    } = filters;
+    const { sort_by = 'created_at', sort_order = 'desc' } = sorting;
 
-    let sources;
+    // Build comprehensive search parameters
+    const searchParams = {
+      query: query && query.trim().length > 0 ? query.trim() : undefined,
+      source_type,
+      tags,
+      author,
+      publisher,
+      credibility_min,
+      credibility_max,
+      date_from,
+      date_to,
+      sort_by,
+      sort_order,
+      page,
+      limit
+    };
 
-    if (query && query.trim().length > 0) {
-      sources = await ContextSourceModel.search(query.trim(), { page, limit });
-    } else if (source_type) {
-      sources = await ContextSourceModel.getByType(source_type, { page, limit });
-    } else if (tags && tags.length > 0) {
-      sources = await ContextSourceModel.getByTags(tags, { page, limit });
-    } else {
-      // Get all sources if no filters
-      sources = await ContextSourceModel.getByType('research', { page, limit: 100 });
-    }
-
-    const total = await ContextSourceModel.getCount({ source_type, tags });
+    // Use enhanced search method
+    const sources = await ContextSourceModel.searchWithFilters(searchParams);
+    const total = await ContextSourceModel.getCountWithFilters(searchParams);
 
     return {
       sources,
