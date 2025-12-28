@@ -566,6 +566,7 @@ class PollController {
       for (const poll of polls) {
         const PollOptionModel = require('../models/poll-option.model');
         const PollResponseModel = require('../models/poll-response.model');
+        const PollContextModel = require('../models/poll-context.model');
 
         const options = await PollOptionModel.getWithVoteCounts(poll.id);
         const totalVotes = poll.responses || 0;
@@ -575,6 +576,9 @@ class PollController {
           vote_count: parseInt(opt.vote_count) || 0,
           percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
         }));
+
+        // Get poll contexts
+        poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
 
         // Get user's response if logged in
         if (userId) {
@@ -590,7 +594,8 @@ class PollController {
           page: parseInt(page),
           limit: parseInt(limit),
           total,
-          total_pages: totalPages
+          total_pages: totalPages,
+          hasMore: parseInt(page) < totalPages
         }
       }, 'Polls retrieved successfully', OK);
     } catch (error) {

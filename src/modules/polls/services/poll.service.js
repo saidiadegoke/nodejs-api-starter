@@ -185,6 +185,7 @@ class PollService {
     }
 
     const total = await PollModel.getCount({ category, poll_type, status });
+    const total_pages = Math.ceil(total / limit);
 
     return {
       polls,
@@ -192,7 +193,8 @@ class PollService {
         page,
         limit,
         total,
-        total_pages: Math.ceil(total / limit)
+        total_pages,
+        hasMore: page < total_pages
       }
     };
   }
@@ -320,11 +322,18 @@ class PollService {
       poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
     }
 
+    // Get total count for pagination
+    const total = await PollModel.getCount({ user_id: userId, status });
+    const total_pages = Math.ceil(total / limit);
+
     return {
       polls,
       pagination: {
         page,
-        limit
+        limit,
+        total,
+        total_pages,
+        hasMore: page < total_pages
       }
     };
   }
