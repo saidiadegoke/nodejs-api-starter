@@ -977,21 +977,25 @@ const processBulkCreationFile = async (file, userId) => {
  */
 const processBulkCreationData = async (data, userId) => {
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
-    
+
     let createdPolls = 0;
     let createdStories = 0;
+    let createdLinks = 0;
     const errors = [];
     const details = [];
-    
+    const pollIdMap = []; // Map poll index to poll ID
+    const storyIdMap = []; // Map story index to story ID
+
     // Process polls if provided
     if (data.polls && Array.isArray(data.polls)) {
       for (let i = 0; i < data.polls.length; i++) {
         const pollData = data.polls[i];
         try {
           const poll = await createPollFromSeederFormat(pollData, userId, client);
+          pollIdMap[i] = poll.id; // Track poll ID by index
           createdPolls++;
           details.push({
             type: 'poll',
@@ -1004,13 +1008,14 @@ const processBulkCreationData = async (data, userId) => {
         }
       }
     }
-    
+
     // Process stories/context sources if provided
     if (data.stories && Array.isArray(data.stories)) {
       for (let i = 0; i < data.stories.length; i++) {
         const storyData = data.stories[i];
         try {
           const story = await createStoryFromSeederFormat(storyData, userId, client);
+          storyIdMap[i] = story.id; // Track story ID by index
           createdStories++;
           details.push({
             type: 'story',
@@ -1023,31 +1028,66 @@ const processBulkCreationData = async (data, userId) => {
         }
       }
     }
-    
+
     // Process poll-context links if provided
     if (data.poll_context_links && Array.isArray(data.poll_context_links)) {
       for (const link of data.poll_context_links) {
         try {
+          // Support both index-based and UUID-based linking
+          let pollId, sourceId;
+
+          if (link.poll_index !== undefined) {
+            // Index-based linking (recommended)
+            pollId = pollIdMap[link.poll_index];
+            if (!pollId) {
+              errors.push(`Poll-context link: Poll at index ${link.poll_index} was not created`);
+              continue;
+            }
+          } else if (link.poll_id) {
+            // UUID-based linking (legacy)
+            pollId = link.poll_id;
+          } else {
+            errors.push(`Poll-context link: Missing poll_index or poll_id`);
+            continue;
+          }
+
+          if (link.story_index !== undefined) {
+            // Index-based linking (recommended)
+            sourceId = storyIdMap[link.story_index];
+            if (!sourceId) {
+              errors.push(`Poll-context link: Story at index ${link.story_index} was not created`);
+              continue;
+            }
+          } else if (link.source_id) {
+            // UUID-based linking (legacy)
+            sourceId = link.source_id;
+          } else {
+            errors.push(`Poll-context link: Missing story_index or source_id`);
+            continue;
+          }
+
           await client.query(
-            'INSERT INTO poll_context_links (poll_id, source_id, display_position, is_required, order_index) VALUES ($1, $2, $3, $4, $5)',
-            [link.poll_id, link.source_id, link.display_position || 'pre_poll', link.is_required || false, link.order_index || 0]
+            'INSERT INTO poll_contexts (poll_id, source_id, display_position, is_required, order_index) VALUES ($1, $2, $3, $4, $5)',
+            [pollId, sourceId, link.display_position || 'pre_poll', link.is_required || false, link.order_index || 0]
           );
+          createdLinks++;
         } catch (error) {
           errors.push(`Poll-context link: ${error.message}`);
         }
       }
     }
-    
+
     await client.query('COMMIT');
-    
+
     // Log bulk creation activity
     if (createdPolls > 0 || createdStories > 0) {
       await UserActivityService.createBulkCreationActivity(userId, createdPolls, createdStories, errors.length);
     }
-    
+
     return {
       created_polls: createdPolls,
       created_stories: createdStories,
+      created_links: createdLinks,
       errors,
       details
     };
@@ -1477,25 +1517,54 @@ const generateTemplate = async (format) => {
           }
         ]
       }
+    ],
+    poll_context_links: [
+      // Link poll #0 (remote work) to story #1 (remote work article)
+      {
+        poll_index: 0,
+        story_index: 1,
+        display_position: 'pre_poll',
+        is_required: false,
+        order_index: 0
+      },
+      // Link poll #1 (AI regulation) to story #0 (climate change - for demonstration)
+      {
+        poll_index: 1,
+        story_index: 0,
+        display_position: 'pre_poll',
+        is_required: false,
+        order_index: 0
+      },
+      // Link poll #10 (renewable energy) to story #0 (climate change study)
+      {
+        poll_index: 10,
+        story_index: 0,
+        display_position: 'pre_poll',
+        is_required: true,
+        order_index: 0
+      }
     ]
   };
-  
+
   if (format === 'json') {
     return JSON.stringify(templateData, null, 2);
   } else if (format === 'csv') {
     // Generate CSV format with examples of different poll types
-    let csv = 'type,question,option1,option2,option3,option4,option5,poll_type,category,duration,config,title,content,source_type\n';
-    csv += 'poll,"Is remote work more productive?",Yes,No,,,,,yesno,Business,7d,{},,,\n';
-    csv += 'poll,"Should AI regulation be stricter?","Much stricter","Somewhat stricter","Current level is fine","Less regulation needed",,multipleChoice,Technology,5d,{},,,\n';
-    csv += 'poll,"Which issues should government prioritize?","Climate Change",Healthcare,Education,Economy,Security,multiSelect,Politics,10d,"{""maxSelections"": 3}",,,\n';
-    csv += 'poll,"How concerned are you about climate change?","Not at all concerned","Slightly concerned","Moderately concerned","Very concerned","Extremely concerned",likertScale,Environment,14d,"{""scaleType"": ""concern"", ""scaleRange"": 5}",,,\n';
-    csv += 'poll,"How optimistic are you about the economy (0-100)?",,,,,,,slider,Business,7d,"{""sliderMin"": 0, ""sliderMax"": 100, ""unit"": ""%""}",,,\n';
-    csv += 'poll,"What is your biggest frustration with public transit?",,,,,,,openEnded,Transportation,14d,{},,,\n';
-    csv += 'story,"","","","","","","","","","","Climate Change Research Study 2024","This study examines the latest trends in climate change.","research"\n';
-    csv += 'story,"","","","","","","","","","","The Future of Remote Work","Remote work has fundamentally changed how we approach productivity.","article"\n';
+    let csv = 'type,index,question,option1,option2,option3,option4,option5,poll_type,category,duration,config,title,content,source_type,poll_index,story_index,display_position,is_required,order_index\n';
+    csv += 'poll,0,"Is remote work more productive?",Yes,No,,,,,yesno,Business,7d,{},,,,,,,,\n';
+    csv += 'poll,1,"Should AI regulation be stricter?","Much stricter","Somewhat stricter","Current level is fine","Less regulation needed",,multipleChoice,Technology,5d,{},,,,,,,,\n';
+    csv += 'poll,2,"Which issues should government prioritize?","Climate Change",Healthcare,Education,Economy,Security,multiSelect,Politics,10d,"{""maxSelections"": 3}",,,,,,,,\n';
+    csv += 'poll,3,"How concerned are you about climate change?","Not at all concerned","Slightly concerned","Moderately concerned","Very concerned","Extremely concerned",likertScale,Environment,14d,"{""scaleType"": ""concern"", ""scaleRange"": 5}",,,,,,,,\n';
+    csv += 'poll,4,"How optimistic are you about the economy (0-100)?",,,,,,,slider,Business,7d,"{""sliderMin"": 0, ""sliderMax"": 100, ""unit"": ""%""}",,,,,,,,\n';
+    csv += 'poll,5,"What is your biggest frustration with public transit?",,,,,,,openEnded,Transportation,14d,{},,,,,,,,\n';
+    csv += 'story,0,"","","","","","","","","","Climate Change Research Study 2024","This study examines the latest trends in climate change. Global temperature has increased by 1.2°C since pre-industrial times.","research",,,,\n';
+    csv += 'story,1,"","","","","","","","","","The Future of Remote Work","Remote work has fundamentally changed how we approach productivity. 42% of companies now offer fully remote positions.","article",,,,\n';
+    csv += 'link,,,,,,,,,,,,,,,,0,1,pre_poll,false,0\n';
+    csv += 'link,,,,,,,,,,,,,,,,1,0,pre_poll,false,0\n';
+    csv += 'link,,,,,,,,,,,,,,,,3,0,pre_poll,true,0\n';
     return csv;
   }
-  
+
   throw new Error('Unsupported format');
 };
 
@@ -1506,7 +1575,8 @@ const parseBulkCreationCSV = (filePath) => {
   return new Promise((resolve, reject) => {
     const polls = [];
     const stories = [];
-    
+    const poll_context_links = [];
+
     createReadStream(filePath)
       .pipe(csv())
       .on('data', (row) => {
@@ -1518,18 +1588,21 @@ const parseBulkCreationCSV = (filePath) => {
                 options.push({ label: row[key], position: options.length });
               }
             });
-            
+
             if (options.length >= 2) {
               polls.push({
+                index: row.index ? parseInt(row.index) : polls.length,
                 question: row.question,
                 poll_type: row.poll_type || 'multipleChoice',
                 category: row.category || 'General',
                 duration: row.duration || null,
+                config: row.config ? JSON.parse(row.config) : {},
                 options
               });
             }
           } else if (row.type === 'story' && row.title && row.content) {
             stories.push({
+              index: row.index ? parseInt(row.index) : stories.length,
               title: row.title,
               summary: row.content,
               source_type: row.source_type || 'article',
@@ -1541,13 +1614,21 @@ const parseBulkCreationCSV = (filePath) => {
                 }
               ]
             });
+          } else if (row.type === 'link' && row.poll_index !== undefined && row.story_index !== undefined) {
+            poll_context_links.push({
+              poll_index: parseInt(row.poll_index),
+              story_index: parseInt(row.story_index),
+              display_position: row.display_position || 'pre_poll',
+              is_required: row.is_required === 'true' || row.is_required === true,
+              order_index: row.order_index ? parseInt(row.order_index) : 0
+            });
           }
         } catch (error) {
           console.error('Error parsing CSV row:', error);
         }
       })
       .on('end', () => {
-        resolve({ polls, stories });
+        resolve({ polls, stories, poll_context_links });
       })
       .on('error', (error) => {
         reject(error);

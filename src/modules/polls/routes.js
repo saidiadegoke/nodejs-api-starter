@@ -1055,4 +1055,14 @@ router.get(
   ContextController.getContextComments
 );
 
+// Get polls that use a context source
+router.get(
+  '/contexts/:source_id/polls',
+  [
+    param('source_id').isUUID().withMessage('Invalid source ID')
+  ],
+  validate,
+  ContextController.getContextPolls
+);
+
 module.exports = router;

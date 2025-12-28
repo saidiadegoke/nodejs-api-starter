@@ -509,6 +509,28 @@ class ContextController {
       sendError(res, error.message, BAD_REQUEST);
     }
   }
+
+  /**
+   * Get polls that use this context source
+   *
+   * @route GET /api/polls/contexts/:source_id/polls
+   * @access Public
+   */
+  static async getContextPolls(req, res) {
+    try {
+      const { source_id } = req.params;
+
+      const polls = await ContextService.getPollsBySourceId(source_id);
+
+      sendSuccess(res, { polls }, 'Related polls retrieved successfully', OK);
+    } catch (error) {
+      console.error('Get context polls error:', error);
+      if (error.message === 'Context source not found') {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
 }
 
 module.exports = ContextController;

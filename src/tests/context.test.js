@@ -288,9 +288,9 @@ describe('Context Sources API', () => {
 
     test('should check required contexts completion status', async () => {
       const authClient = createAuthClient(authToken);
-      
+
       const response = await authClient.get(`/polls/${testPoll.id}/contexts/completion`);
-      
+
       expect(response.status).toBe(200);
       expect(response.data.success).toBe(true);
       expect(response.data.data.has_required_contexts).toBe(true);
@@ -299,6 +299,111 @@ describe('Context Sources API', () => {
       expect(response.data.data.all_completed).toBe(false);
       expect(response.data.data.context_statuses).toHaveLength(1);
       expect(response.data.data.context_statuses[0].completed).toBe(false);
+    }, TEST_TIMEOUT);
+
+    test('should include contexts when retrieving poll by ID', async () => {
+      const client = createAuthClient();
+
+      const response = await client.get(`/polls/${testPoll.id}`);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      expect(response.data.data).toHaveProperty('contexts');
+      expect(response.data.data.contexts).toBeInstanceOf(Array);
+      expect(response.data.data.contexts).toHaveLength(1);
+
+      const context = response.data.data.contexts[0];
+      expect(context.source_id).toBe(testContextSource.id);
+      expect(context.title).toBe(testContextSource.title);
+      expect(context.display_position).toBe('pre_poll');
+      expect(context.is_required).toBe(true);
+      expect(context.credibility_score).toBeDefined();
+      expect(context.blocks).toBeInstanceOf(Array);
+      expect(context.blocks.length).toBeGreaterThan(0);
+
+      console.warn(`✅ Poll ${testPoll.id} includes ${response.data.data.contexts.length} context(s)`);
+    }, TEST_TIMEOUT);
+
+    test('should include contexts when retrieving polls feed', async () => {
+      const client = createAuthClient();
+
+      const response = await client.get('/polls/feed?limit=20');
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      expect(response.data.data.polls).toBeInstanceOf(Array);
+
+      // Find our test poll in the feed
+      const testPollInFeed = response.data.data.polls.find(p => p.id === testPoll.id);
+
+      if (testPollInFeed) {
+        expect(testPollInFeed).toHaveProperty('contexts');
+        expect(testPollInFeed.contexts).toBeInstanceOf(Array);
+        expect(testPollInFeed.contexts).toHaveLength(1);
+
+        const context = testPollInFeed.contexts[0];
+        expect(context.source_id).toBe(testContextSource.id);
+        expect(context.title).toBeDefined();
+        expect(context.display_position).toBe('pre_poll');
+
+        console.warn(`✅ Poll in feed includes contexts array`);
+      } else {
+        console.warn('⚠️  Test poll not found in feed (may be beyond limit)');
+      }
+    }, TEST_TIMEOUT);
+
+    test('should get related polls for a context source', async () => {
+      const client = createAuthClient();
+
+      const response = await client.get(`/polls/contexts/${testContextSource.id}/polls`);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      expect(response.data.data).toHaveProperty('polls');
+      expect(response.data.data.polls).toBeInstanceOf(Array);
+      expect(response.data.data.polls).toHaveLength(1);
+
+      const relatedPoll = response.data.data.polls[0];
+      expect(relatedPoll.id).toBe(testPoll.id);
+      expect(relatedPoll.question).toBe(testPoll.question);
+      expect(relatedPoll).toHaveProperty('display_position');
+      expect(relatedPoll.display_position).toBe('pre_poll');
+
+      console.warn(`✅ Context ${testContextSource.id} is linked to ${response.data.data.polls.length} poll(s)`);
+    }, TEST_TIMEOUT);
+
+    test('should unlink context from poll', async () => {
+      const authClient = createAuthClient(authToken);
+
+      const response = await authClient.delete(`/polls/${testPoll.id}/contexts/${testContextSource.id}`);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+
+      // Verify the link is removed
+      const verifyResponse = await authClient.get(`/polls/${testPoll.id}/contexts`);
+      expect(verifyResponse.data.data).toHaveLength(0);
+
+      console.warn(`✅ Context unlinked from poll: ${testPoll.id} -/-> ${testContextSource.id}`);
+    }, TEST_TIMEOUT);
+
+    test('should link context back to poll for further tests', async () => {
+      const authClient = createAuthClient(authToken);
+
+      // Re-link for subsequent tests
+      const linkData = {
+        source_id: testContextSource.id,
+        display_position: 'pre_poll',
+        is_required: true,
+        order_index: 0
+      };
+
+      const response = await authClient.post(`/polls/${testPoll.id}/contexts`, linkData);
+
+      expect(response.status).toBe(201);
+      expect(response.data.success).toBe(true);
+
+      console.warn(`✅ Context re-linked to poll for further tests`);
     }, TEST_TIMEOUT);
   });
 

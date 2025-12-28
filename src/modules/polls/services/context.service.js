@@ -567,6 +567,26 @@ class ContextService {
 
     return deleted;
   }
+
+  /**
+   * Get polls that use a context source
+   *
+   * @param {string} sourceId - Source UUID
+   * @returns {Promise<Array>} Array of polls using this context
+   * @throws {Error} If source not found
+   */
+  static async getPollsBySourceId(sourceId) {
+    // Verify source exists
+    const source = await ContextSourceModel.getById(sourceId);
+    if (!source) {
+      throw new Error('Context source not found');
+    }
+
+    // Get polls using this source
+    const polls = await PollContextModel.getPollsBySourceId(sourceId);
+
+    return polls;
+  }
 }
 
 module.exports = ContextService;

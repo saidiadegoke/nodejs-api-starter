@@ -9,6 +9,7 @@ const PollModel = require('../models/poll.model');
 const PollOptionModel = require('../models/poll-option.model');
 const PollResponseModel = require('../models/poll-response.model');
 const PollEngagementModel = require('../models/poll-engagement.model');
+const PollContextModel = require('../models/poll-context.model');
 const PollTypeValidator = require('../validations/poll-type.validator');
 const UserActivityService = require('../../users/services/user-activity.service');
 
@@ -122,6 +123,9 @@ class PollService {
       userEngagements = await PollEngagementModel.getUserEngagements(pollId, userId);
     }
 
+    // Get poll contexts
+    const contexts = await PollContextModel.getByPollIdWithBlocks(pollId);
+
     // Calculate percentages for options
     const totalVotes = await PollResponseModel.getCountByPollId(pollId);
     const optionsWithPercentages = options.map(option => ({
@@ -134,7 +138,8 @@ class PollService {
       options: optionsWithPercentages,
       total_votes: totalVotes,
       user_response: userResponse,
-      user_engagements: userEngagements
+      user_engagements: userEngagements,
+      contexts: contexts
     };
   }
 
@@ -169,6 +174,9 @@ class PollService {
         vote_count: parseInt(opt.vote_count) || 0,
         percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
       }));
+
+      // Get poll contexts
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
 
       // Get user's response if logged in
       if (userId) {
@@ -212,6 +220,9 @@ class PollService {
         vote_count: parseInt(opt.vote_count) || 0,
         percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
       }));
+
+      // Get poll contexts
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
 
       // Get user's response if logged in
       if (userId) {
@@ -304,6 +315,9 @@ class PollService {
         vote_count: parseInt(opt.vote_count) || 0,
         percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
       }));
+
+      // Get poll contexts
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
     }
 
     return {
@@ -416,6 +430,9 @@ class PollService {
         percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
       }));
 
+      // Get poll contexts
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
+
       // Get user's response if logged in
       if (userId) {
         poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
@@ -447,6 +464,9 @@ class PollService {
         percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
       }));
 
+      // Get poll contexts
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
+
       // Get user's response if logged in
       if (userId) {
         poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
@@ -477,6 +497,9 @@ class PollService {
         vote_count: parseInt(opt.vote_count) || 0,
         percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
       }));
+
+      // Get poll contexts
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
 
       // Always get user's response (they're logged in for recommendations)
       poll.user_response = await PollResponseModel.getByUserAndPoll(poll.id, userId);
