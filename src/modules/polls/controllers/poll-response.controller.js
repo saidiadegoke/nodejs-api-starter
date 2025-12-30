@@ -6,6 +6,7 @@
  */
 
 const PollResponseService = require('../services/poll-response.service');
+const PollService = require('../services/poll.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 const webSocketService = require('../../../shared/services/websocket.service');
@@ -25,6 +26,9 @@ class PollResponseController {
 
       const response = await PollResponseService.submitResponse(userId, poll_id, responseData);
 
+      // Get updated poll with vote counts to return to client
+      const updatedPoll = await PollService.getPollById(poll_id, userId);
+
       // Get updated poll results and broadcast vote update
       try {
         const updatedResults = await PollResponseService.getPollResults(poll_id);
@@ -34,7 +38,7 @@ class PollResponseController {
         // Don't fail the request if broadcast fails
       }
 
-      sendSuccess(res, response, 'Response submitted successfully', CREATED);
+      sendSuccess(res, updatedPoll, 'Response submitted successfully', CREATED);
     } catch (error) {
       console.error('Submit response error:', error);
       if (error.message === 'Poll not found') {
