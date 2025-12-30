@@ -173,9 +173,12 @@ class PollResponseValidator {
   /**
    * Validate Ranking response
    * Stores in: ranking_data (JSONB array of {option_id, rank})
+   * Accepts two formats:
+   * 1. Array of option IDs in order: ["id1", "id2", "id3"]
+   * 2. Array of objects: [{ option_id: "id1", rank: 1 }, ...]
    */
   static validateRanking(responseData, pollOptions, errors) {
-    const { ranking_data } = responseData;
+    let { ranking_data } = responseData;
 
     if (!ranking_data || !Array.isArray(ranking_data)) {
       errors.push('ranking_data array is required for ranking polls');
@@ -187,24 +190,51 @@ class PollResponseValidator {
       return {};
     }
 
-    // Verify structure
     const validOptionIds = pollOptions.map(opt => opt.id);
-    const rankedOptionIds = ranking_data.map(item => item.option_id);
-    const ranks = ranking_data.map(item => item.rank);
 
-    // Check all options are ranked
-    const missingOptions = validOptionIds.filter(id => !rankedOptionIds.includes(id));
-    if (missingOptions.length > 0) {
-      errors.push('All options must be included in ranking');
-      return {};
-    }
+    // Check if it's a simple array of IDs or an array of objects
+    const isSimpleArray = typeof ranking_data[0] === 'string';
 
-    // Check ranks are unique and sequential
-    const sortedRanks = [...ranks].sort((a, b) => a - b);
-    const expectedRanks = Array.from({ length: pollOptions.length }, (_, i) => i + 1);
-    if (JSON.stringify(sortedRanks) !== JSON.stringify(expectedRanks)) {
-      errors.push('Ranks must be unique and sequential from 1 to N');
-      return {};
+    if (isSimpleArray) {
+      // Simple array format: ["id1", "id2", "id3"] where position = rank
+      // Check all options are ranked
+      const missingOptions = validOptionIds.filter(id => !ranking_data.includes(id));
+      if (missingOptions.length > 0) {
+        errors.push('All options must be included in ranking');
+        return {};
+      }
+
+      // Check for duplicates
+      const uniqueIds = [...new Set(ranking_data)];
+      if (uniqueIds.length !== ranking_data.length) {
+        errors.push('Duplicate options in ranking');
+        return {};
+      }
+
+      // Convert to object format with ranks starting at 1
+      ranking_data = ranking_data.map((option_id, index) => ({
+        option_id,
+        rank: index + 1
+      }));
+    } else {
+      // Object format: [{ option_id: "...", rank: 1 }, ...]
+      const rankedOptionIds = ranking_data.map(item => item.option_id);
+      const ranks = ranking_data.map(item => item.rank);
+
+      // Check all options are ranked
+      const missingOptions = validOptionIds.filter(id => !rankedOptionIds.includes(id));
+      if (missingOptions.length > 0) {
+        errors.push('All options must be included in ranking');
+        return {};
+      }
+
+      // Check ranks are unique and sequential
+      const sortedRanks = [...ranks].sort((a, b) => a - b);
+      const expectedRanks = Array.from({ length: pollOptions.length }, (_, i) => i + 1);
+      if (JSON.stringify(sortedRanks) !== JSON.stringify(expectedRanks)) {
+        errors.push('Ranks must be unique and sequential from 1 to N');
+        return {};
+      }
     }
 
     return { ranking_data };
