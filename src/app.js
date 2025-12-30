@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const routes = require('./routes');
 const { errorHandler, notFoundHandler } = require('./shared/middleware/error.middleware');
 const { logger } = require('./shared/utils/logger');
+require('dotenv').config();
 
 const app = express();
 
@@ -13,7 +14,7 @@ app.use(helmet());
 // CORS configuration
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',') 
-  : ['http://localhost:3000']; // Default
+  : ['https://opinionpulse.org']; // Default
 
 app.use(cors({
   origin: function (origin, callback) {
