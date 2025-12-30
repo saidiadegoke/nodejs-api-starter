@@ -370,13 +370,19 @@ class ResponseFormatter {
       .map(r => r.numeric_value)
       .filter(v => v !== null && v !== undefined);
 
+    // Get slider config for calculating defaults
+    const config = poll.config || {};
+    const minValue = config.sliderMin || 0;
+    const maxValue = config.sliderMax || 100;
+    const midpoint = Math.round((minValue + maxValue) / 2);
+
     if (values.length === 0) {
       return {
         total_responses: 0,
-        average: 0,
-        min: 0,
-        max: 0,
-        median: 0
+        average: midpoint, // Use calculated midpoint, not 0
+        min: minValue,
+        max: maxValue,
+        median: midpoint
       };
     }
 

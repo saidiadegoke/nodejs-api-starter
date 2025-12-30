@@ -11,6 +11,7 @@ const PollResponseModel = require('../models/poll-response.model');
 const PollEngagementModel = require('../models/poll-engagement.model');
 const PollContextModel = require('../models/poll-context.model');
 const PollTypeValidator = require('../validations/poll-type.validator');
+const ResponseFormatter = require('../utils/response-formatter');
 const UserActivityService = require('../../users/services/user-activity.service');
 
 class PollService {
@@ -133,10 +134,20 @@ class PollService {
       percentage: totalVotes > 0 ? ((parseInt(option.vote_count) / totalVotes) * 100).toFixed(1) : 0
     }));
 
+    // For slider and prediction market polls, calculate aggregate statistics
+    let aggregateStats = null;
+    if (poll.poll_type === 'slider' || poll.poll_type === 'predictionMarket') {
+      const ResponseFormatter = require('../utils/response-formatter');
+      // Get all responses (use large limit to get all)
+      const allResponses = await PollResponseModel.getByPollId(pollId, { page: 1, limit: 10000 });
+      aggregateStats = ResponseFormatter.aggregateNumeric(allResponses, poll);
+    }
+
     return {
       ...poll,
       options: optionsWithPercentages,
       total_votes: totalVotes,
+      aggregate_stats: aggregateStats,
       user_response: userResponse,
       user_engagements: userEngagements,
       contexts: contexts

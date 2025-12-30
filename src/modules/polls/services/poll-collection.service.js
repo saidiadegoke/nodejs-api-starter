@@ -10,6 +10,7 @@ const PollModel = require('../models/poll.model');
 const PollOptionModel = require('../models/poll-option.model');
 const PollResponseModel = require('../models/poll-response.model');
 const PollContextModel = require('../models/poll-context.model');
+const ResponseFormatter = require('../utils/response-formatter');
 
 class PollCollectionService {
   /**
@@ -97,6 +98,12 @@ class PollCollectionService {
 
       // Get poll contexts
       poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
+
+      // For slider and prediction market polls, calculate aggregate statistics
+      if (poll.poll_type === 'slider' || poll.poll_type === 'predictionMarket') {
+        const allResponses = await PollResponseModel.getByPollId(poll.id, { page: 1, limit: 10000 });
+        poll.aggregate_stats = ResponseFormatter.aggregateNumeric(allResponses, poll);
+      }
 
       // Get user's response if logged in
       if (userId) {
