@@ -180,17 +180,32 @@ class PollContextModel {
    * Get polls using a source
    *
    * @param {string} sourceId - Source UUID
-   * @returns {Promise<Array>} Array of polls
+   * @returns {Promise<Array>} Array of polls with author and stats
    */
   static async getPollsBySourceId(sourceId) {
     const result = await pool.query(
       `SELECT
         p.*,
+        p.id as id,
         pc.display_position,
         pc.is_required,
-        pc.order_index
+        pc.order_index,
+        s.responses,
+        s.comments,
+        s.likes,
+        s.shares,
+        s.reposts,
+        s.views,
+        u.id as author_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.profile_photo_url as profile_photo
       FROM poll_contexts pc
       JOIN polls p ON pc.poll_id = p.id
+      LEFT JOIN poll_stats s ON p.id = s.poll_id
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
       WHERE pc.source_id = $1 AND p.deleted_at IS NULL
       ORDER BY p.created_at DESC`,
       [sourceId]

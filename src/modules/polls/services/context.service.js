@@ -572,7 +572,7 @@ class ContextService {
    * Get polls that use a context source
    *
    * @param {string} sourceId - Source UUID
-   * @returns {Promise<Array>} Array of polls using this context
+   * @returns {Promise<Array>} Array of polls using this context with full details
    * @throws {Error} If source not found
    */
   static async getPollsBySourceId(sourceId) {
@@ -582,8 +582,35 @@ class ContextService {
       throw new Error('Context source not found');
     }
 
-    // Get polls using this source
+    // Get polls using this source (includes author and stats)
     const polls = await PollContextModel.getPollsBySourceId(sourceId);
+
+    // Fetch options with vote counts for each poll
+    const PollOptionModel = require('../models/poll-option.model');
+    const PollResponseModel = require('../models/poll-response.model');
+    const ResponseFormatter = require('../utils/response-formatter');
+
+    for (const poll of polls) {
+      // Get poll options with vote counts
+      const options = await PollOptionModel.getWithVoteCounts(poll.id);
+      const totalVotes = poll.responses || 0;
+
+      // Add percentage to each option
+      poll.options = options.map(opt => ({
+        ...opt,
+        vote_count: parseInt(opt.vote_count) || 0,
+        percentage: totalVotes > 0 ? Math.round((parseInt(opt.vote_count) / totalVotes) * 100) : 0
+      }));
+
+      // For slider and prediction market polls, calculate aggregate statistics
+      if (poll.poll_type === 'slider' || poll.poll_type === 'predictionMarket') {
+        const allResponses = await PollResponseModel.getByPollId(poll.id, { page: 1, limit: 10000 });
+        poll.aggregate_stats = ResponseFormatter.aggregateNumeric(allResponses, poll);
+      }
+
+      // Get poll contexts (for display)
+      poll.contexts = await PollContextModel.getByPollIdWithBlocks(poll.id);
+    }
 
     return polls;
   }
