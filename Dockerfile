@@ -1,5 +1,5 @@
 # Multi-stage build for Node.js API
-FROM node:18-alpine AS base
+FROM node:23-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
