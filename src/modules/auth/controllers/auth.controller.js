@@ -8,6 +8,13 @@ class AuthController {
    */
   static async register(req, res) {
     try {
+      // Bot detection: Check honeypot field
+      // Bots typically fill all fields, including hidden ones
+      if (req.body.website || req.body.url || req.body.homepage) {
+        // Silently reject bot submissions with generic error
+        return sendError(res, 'Registration failed. Please try again later.', BAD_REQUEST);
+      }
+
       const user = await AuthService.register(req.body);
       
       // Send welcome email asynchronously if user has email

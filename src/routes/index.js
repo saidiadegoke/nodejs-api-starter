@@ -6,6 +6,7 @@ const users = require('../modules/users/routes');
 const filesRoutes = require('../modules/files/routes');
 const ordersRoutes = require('../modules/orders/routes');
 const pollsRoutes = require('../modules/polls/routes');
+const collectionRoutes = require('../modules/polls/collection-routes');
 const notificationsRoutes = require('../modules/notifications/routes');
 const sharedRoutes = require('../modules/shared/routes');
 const websocketRoutes = require('../modules/websocket/routes');
@@ -39,6 +40,7 @@ router.get('/', (req, res) => {
       files: '/files',
       orders: '/orders',
       polls: '/polls',
+      collections: '/collections',
       notifications: '/notifications',
       websocket: '/websocket',
       analytics: '/analytics',
@@ -64,6 +66,7 @@ router.use('/users', users);
 router.use('/files', filesRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/polls', pollsRoutes);
+router.use('/collections', collectionRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
