@@ -8,4 +8,5 @@ module.exports = {
   files: require('./files/routes'),
   orders: require('./orders/routes'),
   polls: require('./polls/routes'),
+  ads: require('./ads/routes'),
 };

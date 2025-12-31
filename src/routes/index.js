@@ -12,6 +12,7 @@ const sharedRoutes = require('../modules/shared/routes');
 const websocketRoutes = require('../modules/websocket/routes');
 const analyticsRoutes = require('../modules/analytics/routes');
 const authoringRoutes = require('../modules/authoring/routes');
+const adsRoutes = require('../modules/ads/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -45,6 +46,7 @@ router.get('/', (req, res) => {
       websocket: '/websocket',
       analytics: '/analytics',
       authoring: '/authoring',
+      ads: '/ads',
       health: '/health'
     },
     features: {
@@ -72,6 +74,7 @@ router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/authoring', authoringRoutes);
+router.use('/ads', adsRoutes);
 
 /**
  * Test routes (for RBAC testing)
