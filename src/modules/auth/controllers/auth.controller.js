@@ -25,7 +25,7 @@ class AuthController {
         sendEmail({
           to: user.email,
           subject: 'Welcome to OpinionPulse!',
-          templateFile: 'shared/emails/welcome.html',
+          templateFile: 'welcome.html',
           placeholders: [
             req.body.first_name || 'User',
             welcomeUrl,
@@ -219,7 +219,7 @@ class AuthController {
         sendEmail({
           to: user.email,
           subject: 'Reset Your OpinionPulse Password',
-          templateFile: 'shared/emails/forgot-password.html',
+          templateFile: 'forgot-password.html',
           placeholders: [
             user.first_name || user.display_name || 'User',
             resetUrl,
@@ -319,7 +319,7 @@ class AuthController {
         sendEmail({
           to: resetRecord.email,
           subject: 'Password Reset Successful - OpinionPulse',
-          templateFile: 'shared/emails/password-reset-success.html',
+          templateFile: 'password-reset-success.html',
           placeholders: [
             resetRecord.first_name || 'User',
             resetDate,
