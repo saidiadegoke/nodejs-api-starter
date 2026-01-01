@@ -3,6 +3,7 @@ const AuthController = require('./controllers/auth.controller');
 const { body } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
 const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const oauthRoutes = require('./routes/oauth.routes');
 
 /**
  * @route   POST /api/auth/register
@@ -151,6 +152,12 @@ router.post(
   ],
   AuthController.changePassword
 );
+
+/**
+ * OAuth Routes
+ * Social login (Google, Facebook, GitHub, Twitter)
+ */
+router.use('/', oauthRoutes);
 
 module.exports = router;
 

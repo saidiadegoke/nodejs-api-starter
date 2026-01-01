@@ -20,7 +20,7 @@ class AuthController {
       // Send welcome email asynchronously if user has email
       if (user.email && req.body.first_name) {
         const sendEmail = require('../../../shared/utils/sendEmail');
-        const welcomeUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/`;
+        const welcomeUrl = `${process.env.FRONTEND_URL || 'https://opinionpulse.org'}/`;
         
         sendEmail({
           to: user.email,
@@ -213,7 +213,7 @@ class AuthController {
       
       // Send email if user has email
       if (user.email) {
-        const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+        const resetUrl = `${process.env.FRONTEND_URL || 'https://opinionpulse.org'}/reset-password?token=${resetToken}`;
         
         // Send email asynchronously - don't wait for it
         sendEmail({
@@ -307,7 +307,7 @@ class AuthController {
       
       // Send password reset success email asynchronously
       if (resetRecord.email) {
-        const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
+        const loginUrl = `${process.env.FRONTEND_URL || 'https://opinionpulse.org'}/login`;
         const resetDate = new Date().toLocaleDateString('en-US', { 
           year: 'numeric', 
           month: 'long', 
