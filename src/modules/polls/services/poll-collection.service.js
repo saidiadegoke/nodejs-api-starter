@@ -440,7 +440,7 @@ class PollCollectionService {
       throw new Error('Collection not found');
     }
 
-    // Get all polls in the collection
+    // Get all poll IDs in the collection
     const collectionPolls = await PollCollectionModel.getCollectionPolls(collectionId);
     const pollIds = collectionPolls.map(cp => cp.poll_id);
 
@@ -449,7 +449,8 @@ class PollCollectionService {
         collection: {
           id: collection.id,
           title: collection.title,
-          description: collection.description
+          description: collection.description,
+          total_polls: 0
         },
         responses: [],
         pagination: {

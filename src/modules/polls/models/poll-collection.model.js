@@ -357,6 +357,21 @@ class PollCollectionModel {
   }
 
   /**
+   * Get poll IDs in collection
+   *
+   * @param {string} collectionId - Collection UUID
+   * @returns {Promise<Array>} Array of objects with poll_id
+   */
+  static async getCollectionPolls(collectionId) {
+    const result = await pool.query(
+      'SELECT poll_id FROM poll_collection_items WHERE collection_id = $1 ORDER BY order_index ASC',
+      [collectionId]
+    );
+
+    return result.rows;
+  }
+
+  /**
    * Get collection statistics
    *
    * @param {string} collectionId - Collection UUID
