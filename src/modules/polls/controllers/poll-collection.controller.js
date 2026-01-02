@@ -6,6 +6,7 @@
  */
 
 const PollCollectionService = require('../services/poll-collection.service');
+const PollResponseService = require('../services/poll-response.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 
@@ -269,6 +270,44 @@ class PollCollectionController {
         return sendError(res, error.message, NOT_FOUND);
       }
       if (error.message === 'No polls linked to this context') {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Get detailed responses for all polls in collection (requires permission)
+   *
+   * @route GET /api/collections/:collection_id/responses/detailed
+   * @access Private - requires collections.view_responses permission
+   */
+  static async getDetailedResponses(req, res) {
+    try {
+      const { collection_id } = req.params;
+      const { page, limit, search, format } = req.query;
+
+      const options = {
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 50,
+        search: search || ''
+      };
+
+      // Check if CSV export is requested
+      if (format === 'csv') {
+        const csvData = await PollCollectionService.exportCollectionResponsesToCSV(collection_id, options);
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="collection-${collection_id}-responses.csv"`);
+        return res.send(csvData);
+      }
+
+      const result = await PollCollectionService.getDetailedCollectionResponses(collection_id, options);
+
+      sendSuccess(res, result, 'Collection responses retrieved successfully', OK);
+    } catch (error) {
+      console.error('Get collection detailed responses error:', error);
+      if (error.message === 'Collection not found') {
         return sendError(res, error.message, NOT_FOUND);
       }
       sendError(res, error.message, BAD_REQUEST);

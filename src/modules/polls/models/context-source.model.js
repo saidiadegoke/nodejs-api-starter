@@ -25,17 +25,18 @@ class ContextSourceModel {
       publication_date,
       credibility_score,
       tags = [],
-      created_by
+      created_by,
+      not_for_feed = false
     } = sourceData;
 
     const result = await pool.query(
       `INSERT INTO context_sources (
         source_type, title, summary, author, publisher, source_url,
-        publication_date, credibility_score, tags, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        publication_date, credibility_score, tags, created_by, not_for_feed
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *`,
       [source_type, title, summary, author, publisher, source_url,
-        publication_date, credibility_score, tags, created_by]
+        publication_date, credibility_score, tags, created_by, not_for_feed]
     );
 
     return result.rows[0];
@@ -182,7 +183,7 @@ class ContextSourceModel {
    */
   static async update(sourceId, updates) {
     const allowedFields = ['title', 'summary', 'author', 'publisher', 'source_url',
-      'publication_date', 'credibility_score', 'tags'];
+      'publication_date', 'credibility_score', 'tags', 'not_for_feed'];
     const fields = [];
     const values = [];
     let paramCount = 1;
@@ -278,7 +279,7 @@ class ContextSourceModel {
     } = searchParams;
 
     const offset = (page - 1) * limit;
-    const conditions = ['cs.deleted_at IS NULL'];
+    const conditions = ['cs.deleted_at IS NULL', 'cs.not_for_feed = FALSE'];
     const params = [];
     let paramCount = 1;
 
@@ -392,7 +393,7 @@ class ContextSourceModel {
       date_to
     } = searchParams;
 
-    const conditions = ['deleted_at IS NULL'];
+    const conditions = ['deleted_at IS NULL', 'not_for_feed = FALSE'];
     const params = [];
     let paramCount = 1;
 

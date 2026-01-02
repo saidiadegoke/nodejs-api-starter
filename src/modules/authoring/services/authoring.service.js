@@ -1121,8 +1121,8 @@ const createPollFromSeederFormat = async (pollData, userId, client) => {
   
   // Insert poll
   const pollResult = await client.query(
-    `INSERT INTO polls (id, user_id, title, question, description, poll_type, category, config, status, visibility, duration, expires_at, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+    `INSERT INTO polls (id, user_id, title, question, description, poll_type, category, config, status, visibility, duration, expires_at, not_for_feed, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
      RETURNING *`,
     [
       pollId,
@@ -1136,7 +1136,8 @@ const createPollFromSeederFormat = async (pollData, userId, client) => {
       'active',
       'public',
       pollData.duration || null,
-      expiresAt
+      expiresAt,
+      pollData.not_for_feed || false
     ]
   );
   
@@ -1175,8 +1176,8 @@ const createStoryFromSeederFormat = async (storyData, userId, client) => {
   
   // Insert context source
   const storyResult = await client.query(
-    `INSERT INTO context_sources (id, created_by, source_type, title, summary, author, publisher, source_url, publication_date, credibility_score, tags, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+    `INSERT INTO context_sources (id, created_by, source_type, title, summary, author, publisher, source_url, publication_date, credibility_score, tags, not_for_feed, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
      RETURNING *`,
     [
       storyId,
@@ -1189,7 +1190,8 @@ const createStoryFromSeederFormat = async (storyData, userId, client) => {
       storyData.source_url || null,
       storyData.publication_date || null,
       storyData.credibility_score || null,
-      storyData.tags || null
+      storyData.tags || null,
+      storyData.not_for_feed || false
     ]
   );
   
@@ -1230,13 +1232,14 @@ const generateTemplate = async (format) => {
         category: 'Business',
         duration: '7d',
         config: {},
+        not_for_feed: false,
         options: [
           { label: 'Yes', position: 0 },
           { label: 'No', position: 1 }
         ]
       },
 
-      // 2. Multiple Choice Poll
+      // 2. Multiple Choice Poll (Hidden from feed - example)
       {
         question: 'Should AI regulation be stricter?',
         poll_type: 'multipleChoice',
@@ -1244,6 +1247,7 @@ const generateTemplate = async (format) => {
         category: 'Technology',
         duration: '5d',
         config: {},
+        not_for_feed: true,
         options: [
           { label: 'Much stricter', position: 0 },
           { label: 'Somewhat stricter', position: 1 },
@@ -1471,6 +1475,7 @@ const generateTemplate = async (format) => {
         publication_date: '2024-01-15',
         credibility_score: 8.5,
         tags: ['climate', 'environment', 'research', 'sustainability'],
+        not_for_feed: false,
         blocks: [
           {
             block_type: 'text',
@@ -1499,6 +1504,7 @@ const generateTemplate = async (format) => {
         publication_date: '2024-02-01',
         credibility_score: 7.8,
         tags: ['remote-work', 'technology', 'workplace', 'productivity'],
+        not_for_feed: true,
         blocks: [
           {
             block_type: 'text',
@@ -1550,18 +1556,18 @@ const generateTemplate = async (format) => {
     return JSON.stringify(templateData, null, 2);
   } else if (format === 'csv') {
     // Generate CSV format with examples of different poll types
-    let csv = 'type,index,question,option1,option2,option3,option4,option5,poll_type,category,duration,config,title,content,source_type,poll_index,story_index,display_position,is_required,order_index\n';
-    csv += 'poll,0,"Is remote work more productive?",Yes,No,,,,,yesno,Business,7d,{},,,,,,,,\n';
-    csv += 'poll,1,"Should AI regulation be stricter?","Much stricter","Somewhat stricter","Current level is fine","Less regulation needed",,multipleChoice,Technology,5d,{},,,,,,,,\n';
-    csv += 'poll,2,"Which issues should government prioritize?","Climate Change",Healthcare,Education,Economy,Security,multiSelect,Politics,10d,"{""maxSelections"": 3}",,,,,,,,\n';
-    csv += 'poll,3,"How concerned are you about climate change?","Not at all concerned","Slightly concerned","Moderately concerned","Very concerned","Extremely concerned",likertScale,Environment,14d,"{""scaleType"": ""concern"", ""scaleRange"": 5}",,,,,,,,\n';
-    csv += 'poll,4,"How optimistic are you about the economy (0-100)?",,,,,,,slider,Business,7d,"{""sliderMin"": 0, ""sliderMax"": 100, ""unit"": ""%""}",,,,,,,,\n';
-    csv += 'poll,5,"What is your biggest frustration with public transit?",,,,,,,openEnded,Transportation,14d,{},,,,,,,,\n';
-    csv += 'story,0,"","","","","","","","","","Climate Change Research Study 2024","This study examines the latest trends in climate change. Global temperature has increased by 1.2°C since pre-industrial times.","research",,,,\n';
-    csv += 'story,1,"","","","","","","","","","The Future of Remote Work","Remote work has fundamentally changed how we approach productivity. 42% of companies now offer fully remote positions.","article",,,,\n';
-    csv += 'link,,,,,,,,,,,,,,,,0,1,pre_poll,false,0\n';
-    csv += 'link,,,,,,,,,,,,,,,,1,0,pre_poll,false,0\n';
-    csv += 'link,,,,,,,,,,,,,,,,3,0,pre_poll,true,0\n';
+    let csv = 'type,index,question,option1,option2,option3,option4,option5,poll_type,category,duration,config,not_for_feed,title,content,source_type,poll_index,story_index,display_position,is_required,order_index\n';
+    csv += 'poll,0,"Is remote work more productive?",Yes,No,,,,,yesno,Business,7d,{},false,,,,,,,\n';
+    csv += 'poll,1,"Should AI regulation be stricter?","Much stricter","Somewhat stricter","Current level is fine","Less regulation needed",,multipleChoice,Technology,5d,{},true,,,,,,,\n';
+    csv += 'poll,2,"Which issues should government prioritize?","Climate Change",Healthcare,Education,Economy,Security,multiSelect,Politics,10d,"{""maxSelections"": 3}",false,,,,,,,\n';
+    csv += 'poll,3,"How concerned are you about climate change?","Not at all concerned","Slightly concerned","Moderately concerned","Very concerned","Extremely concerned",likertScale,Environment,14d,"{""scaleType"": ""concern"", ""scaleRange"": 5}",false,,,,,,,\n';
+    csv += 'poll,4,"How optimistic are you about the economy (0-100)?",,,,,,,slider,Business,7d,"{""sliderMin"": 0, ""sliderMax"": 100, ""unit"": ""%""}",false,,,,,,,\n';
+    csv += 'poll,5,"What is your biggest frustration with public transit?",,,,,,,openEnded,Transportation,14d,{},false,,,,,,,\n';
+    csv += 'story,0,"","","","","","","","","","",false,"Climate Change Research Study 2024","This study examines the latest trends in climate change. Global temperature has increased by 1.2°C since pre-industrial times.","research",,,\n';
+    csv += 'story,1,"","","","","","","","","","",true,"The Future of Remote Work","Remote work has fundamentally changed how we approach productivity. 42% of companies now offer fully remote positions.","article",,,\n';
+    csv += 'link,,,,,,,,,,,,,,,,,,0,1,pre_poll,false,0\n';
+    csv += 'link,,,,,,,,,,,,,,,,,,1,0,pre_poll,false,0\n';
+    csv += 'link,,,,,,,,,,,,,,,,,,3,0,pre_poll,true,0\n';
     return csv;
   }
 
@@ -1597,6 +1603,7 @@ const parseBulkCreationCSV = (filePath) => {
                 category: row.category || 'General',
                 duration: row.duration || null,
                 config: row.config ? JSON.parse(row.config) : {},
+                not_for_feed: row.not_for_feed === 'true' || row.not_for_feed === true,
                 options
               });
             }
@@ -1606,6 +1613,7 @@ const parseBulkCreationCSV = (filePath) => {
               title: row.title,
               summary: row.content,
               source_type: row.source_type || 'article',
+              not_for_feed: row.not_for_feed === 'true' || row.not_for_feed === true,
               blocks: [
                 {
                   block_type: 'text',

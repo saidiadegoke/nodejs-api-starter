@@ -31,7 +31,8 @@ class ContextService {
       publication_date,
       credibility_score,
       tags = [],
-      blocks = []
+      blocks = [],
+      not_for_feed = false
     } = sourceData;
 
     // Validation
@@ -90,7 +91,8 @@ class ContextService {
       publication_date,
       credibility_score,
       tags,
-      created_by: userId
+      created_by: userId,
+      not_for_feed
     });
 
     // Create blocks if provided

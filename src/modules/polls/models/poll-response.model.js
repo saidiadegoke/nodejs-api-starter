@@ -101,6 +101,103 @@ class PollResponseModel {
   }
 
   /**
+   * Get detailed responses with user info and search
+   *
+   * @param {string} pollId - Poll UUID
+   * @param {Object} options - Query options
+   * @returns {Promise<Object>} Responses with pagination
+   */
+  static async getDetailedResponses(pollId, { page = 1, limit = 50, search = '' } = {}) {
+    const offset = (page - 1) * limit;
+    const searchPattern = `%${search}%`;
+
+    // Get responses with user details and selected option labels
+    const responseQuery = `
+      SELECT
+        pr.id as response_id,
+        pr.user_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.display_name,
+        prof.profile_photo_url as profile_photo,
+        pr.option_id,
+        pr.option_ids,
+        pr.numeric_value,
+        pr.text_value,
+        pr.ranking_data,
+        pr.explanation,
+        pr.metadata,
+        pr.created_at as responded_at,
+        pr.updated_at,
+        -- Get selected option label(s)
+        CASE
+          WHEN pr.option_id IS NOT NULL THEN (
+            SELECT po.label FROM poll_options po WHERE po.id = pr.option_id
+          )
+          ELSE NULL
+        END as selected_option,
+        CASE
+          WHEN pr.option_ids IS NOT NULL THEN (
+            SELECT json_agg(json_build_object('id', po.id, 'label', po.label))
+            FROM poll_options po WHERE po.id = ANY(pr.option_ids)
+          )
+          ELSE NULL
+        END as selected_options
+      FROM poll_responses pr
+      JOIN users u ON pr.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      WHERE pr.poll_id = $1
+        AND (
+          $2 = '' OR
+          prof.first_name ILIKE $2 OR
+          prof.last_name ILIKE $2 OR
+          prof.display_name ILIKE $2 OR
+          u.email ILIKE $2 OR
+          pr.text_value ILIKE $2 OR
+          pr.explanation ILIKE $2
+        )
+      ORDER BY pr.created_at DESC
+      LIMIT $3 OFFSET $4
+    `;
+
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM poll_responses pr
+      JOIN users u ON pr.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      WHERE pr.poll_id = $1
+        AND (
+          $2 = '' OR
+          prof.first_name ILIKE $2 OR
+          prof.last_name ILIKE $2 OR
+          prof.display_name ILIKE $2 OR
+          u.email ILIKE $2 OR
+          pr.text_value ILIKE $2 OR
+          pr.explanation ILIKE $2
+        )
+    `;
+
+    const [responsesResult, countResult] = await Promise.all([
+      pool.query(responseQuery, [pollId, searchPattern, limit, offset]),
+      pool.query(countQuery, [pollId, searchPattern])
+    ]);
+
+    const total = parseInt(countResult.rows[0].total);
+
+    return {
+      responses: responsesResult.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + responsesResult.rows.length < total
+      }
+    };
+  }
+
+  /**
    * Get response count for a poll
    *
    * @param {string} pollId - Poll UUID

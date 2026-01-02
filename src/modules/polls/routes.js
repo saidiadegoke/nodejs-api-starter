@@ -9,6 +9,7 @@ const { body, param, query } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
 const { authenticate } = require('../../shared/middleware/authenticate.middleware');
 const { optionalAuth } = require('../../shared/middleware/optional-auth.middleware');
+const { requirePermission } = require('../../shared/middleware/rbac.middleware');
 const PollController = require('./controllers/poll.controller');
 const PollResponseController = require('./controllers/poll-response.controller');
 const PollEngagementController = require('./controllers/poll-engagement.controller');
@@ -378,6 +379,26 @@ router.delete(
   ],
   validate,
   PollResponseController.deleteMyResponse
+);
+
+/**
+ * @route   GET /api/polls/:poll_id/responses/detailed
+ * @desc    Get detailed responses with user info (requires permission)
+ * @access  Private - requires polls.view_responses permission
+ */
+router.get(
+  '/:poll_id/responses/detailed',
+  authenticate,
+  requirePermission('polls.view_responses'),
+  [
+    param('poll_id').isUUID().withMessage('Invalid poll ID'),
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('search').optional().trim(),
+    query('format').optional().isIn(['json', 'csv']).withMessage('Format must be json or csv')
+  ],
+  validate,
+  PollResponseController.getDetailedResponses
 );
 
 /**

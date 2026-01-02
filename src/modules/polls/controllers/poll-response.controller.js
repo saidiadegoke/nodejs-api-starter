@@ -231,6 +231,44 @@ class PollResponseController {
       sendError(res, error.message, BAD_REQUEST);
     }
   }
+
+  /**
+   * Get detailed responses with user info (requires permission)
+   *
+   * @route GET /api/polls/:poll_id/responses/detailed
+   * @access Private - requires polls.view_responses permission
+   */
+  static async getDetailedResponses(req, res) {
+    try {
+      const { poll_id } = req.params;
+      const { page, limit, search, format } = req.query;
+
+      const options = {
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 50,
+        search: search || ''
+      };
+
+      // Check if CSV export is requested
+      if (format === 'csv') {
+        const csvData = await PollResponseService.exportResponsesToCSV(poll_id, options);
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="poll-${poll_id}-responses.csv"`);
+        return res.send(csvData);
+      }
+
+      const result = await PollResponseService.getDetailedResponses(poll_id, options);
+
+      sendSuccess(res, result, 'Detailed responses retrieved successfully', OK);
+    } catch (error) {
+      console.error('Get detailed responses error:', error);
+      if (error.message === 'Poll not found') {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
 }
 
 module.exports = PollResponseController;

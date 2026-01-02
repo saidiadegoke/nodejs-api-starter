@@ -492,6 +492,9 @@ class PollController {
       // Always show public polls
       whereConditions.push(`p.visibility = 'public'`);
 
+      // Filter out polls not for feed
+      whereConditions.push(`p.not_for_feed = FALSE`);
+
       const whereClause = whereConditions.join(' AND ');
 
       // Determine ORDER BY clause based on filter
