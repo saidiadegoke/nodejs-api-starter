@@ -6,6 +6,8 @@
 
 const express = require('express');
 const router = express.Router();
+const { param, query } = require('express-validator');
+const { validate } = require('../../shared/validations/validator');
 const PollCollectionController = require('./controllers/poll-collection.controller');
 const { authenticate } = require('../../shared/middleware/authenticate.middleware');
 const { optionalAuth } = require('../../shared/middleware/optional-auth.middleware');
@@ -114,6 +116,26 @@ router.put(
   authenticate,
   // requirePermission('polls.update'),
   PollCollectionController.reorderPolls
+);
+
+/**
+ * @route   GET /api/collections/:collection_id/responses/detailed
+ * @desc    Get detailed responses for all polls in collection (requires permission)
+ * @access  Private - requires collections.view_responses permission
+ */
+router.get(
+  '/:collection_id/responses/detailed',
+  authenticate,
+  requirePermission('collections.view_responses'),
+  [
+    param('collection_id').isUUID().withMessage('Invalid collection ID'),
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('search').optional().trim(),
+    query('format').optional().isIn(['json', 'csv']).withMessage('Format must be json or csv')
+  ],
+  validate,
+  PollCollectionController.getDetailedResponses
 );
 
 /**

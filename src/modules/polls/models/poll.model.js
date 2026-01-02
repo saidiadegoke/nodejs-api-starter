@@ -27,17 +27,18 @@ class PollModel {
       visibility = 'public',
       cover_image,
       duration,
-      expires_at
+      expires_at,
+      not_for_feed = false
     } = pollData;
 
     const result = await pool.query(
       `INSERT INTO polls (
         user_id, title, description, question, category, poll_type,
-        config, status, visibility, cover_image, duration, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        config, status, visibility, cover_image, duration, expires_at, not_for_feed
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [user_id, title, description, question, category, poll_type,
-       JSON.stringify(config), status, visibility, cover_image, duration, expires_at]
+       JSON.stringify(config), status, visibility, cover_image, duration, expires_at, not_for_feed]
     );
 
     return result.rows[0];
@@ -165,6 +166,7 @@ class PollModel {
         AND p.visibility = 'public'
         AND p.status = $1
         AND (p.expires_at IS NULL OR p.expires_at > NOW())
+        AND p.not_for_feed = FALSE
     `;
     const params = [status];
 
@@ -218,6 +220,7 @@ class PollModel {
         AND p.visibility = 'public'
         AND p.status = 'active'
         AND p.created_at > NOW() - INTERVAL '7 days'
+        AND p.not_for_feed = FALSE
       ORDER BY engagement_score DESC, p.created_at DESC
       LIMIT $1 OFFSET $2`,
       [limit, offset]
@@ -235,7 +238,7 @@ class PollModel {
    */
   static async update(pollId, updates) {
     const allowedFields = ['title', 'description', 'question', 'category', 'status',
-                           'visibility', 'cover_image', 'config'];
+                           'visibility', 'cover_image', 'config', 'not_for_feed'];
     const fields = [];
     const values = [];
     let paramCount = 1;

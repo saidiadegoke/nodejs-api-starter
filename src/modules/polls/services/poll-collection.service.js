@@ -11,6 +11,7 @@ const PollOptionModel = require('../models/poll-option.model');
 const PollResponseModel = require('../models/poll-response.model');
 const PollContextModel = require('../models/poll-context.model');
 const ResponseFormatter = require('../utils/response-formatter');
+const pool = require('../../../db/pool');
 
 class PollCollectionService {
   /**
@@ -424,6 +425,209 @@ class PollCollectionService {
     }
 
     return collection;
+  }
+
+  /**
+   * Get detailed responses for all polls in collection
+   *
+   * @param {string} collectionId - Collection UUID
+   * @param {Object} options - Query options
+   * @returns {Promise<Object>} Detailed responses with pagination
+   */
+  static async getDetailedCollectionResponses(collectionId, options) {
+    const collection = await PollCollectionModel.getById(collectionId);
+    if (!collection) {
+      throw new Error('Collection not found');
+    }
+
+    // Get all polls in the collection
+    const collectionPolls = await PollCollectionModel.getCollectionPolls(collectionId);
+    const pollIds = collectionPolls.map(cp => cp.poll_id);
+
+    if (pollIds.length === 0) {
+      return {
+        collection: {
+          id: collection.id,
+          title: collection.title,
+          description: collection.description
+        },
+        responses: [],
+        pagination: {
+          page: 1,
+          limit: options.limit,
+          total: 0,
+          totalPages: 0,
+          hasMore: false
+        }
+      };
+    }
+
+    // Get all responses for all polls in collection
+    const offset = (options.page - 1) * options.limit;
+    const searchPattern = `%${options.search}%`;
+
+    const query = `
+      SELECT
+        pr.id as response_id,
+        pr.poll_id,
+        p.question as poll_question,
+        pr.user_id,
+        u.email,
+        prof.first_name,
+        prof.last_name,
+        prof.display_name,
+        prof.profile_photo_url as profile_photo,
+        pr.option_id,
+        pr.option_ids,
+        pr.numeric_value,
+        pr.text_value,
+        pr.ranking_data,
+        pr.explanation,
+        pr.metadata,
+        pr.created_at as responded_at,
+        pr.updated_at,
+        CASE
+          WHEN pr.option_id IS NOT NULL THEN (
+            SELECT po.label FROM poll_options po WHERE po.id = pr.option_id
+          )
+          ELSE NULL
+        END as selected_option,
+        CASE
+          WHEN pr.option_ids IS NOT NULL THEN (
+            SELECT json_agg(json_build_object('id', po.id, 'label', po.label))
+            FROM poll_options po WHERE po.id = ANY(pr.option_ids)
+          )
+          ELSE NULL
+        END as selected_options
+      FROM poll_responses pr
+      JOIN polls p ON pr.poll_id = p.id
+      JOIN users u ON pr.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      WHERE pr.poll_id = ANY($1)
+        AND (
+          $2 = '' OR
+          prof.first_name ILIKE $2 OR
+          prof.last_name ILIKE $2 OR
+          prof.display_name ILIKE $2 OR
+          u.email ILIKE $2 OR
+          pr.text_value ILIKE $2 OR
+          pr.explanation ILIKE $2 OR
+          p.question ILIKE $2
+        )
+      ORDER BY pr.created_at DESC
+      LIMIT $3 OFFSET $4
+    `;
+
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM poll_responses pr
+      JOIN polls p ON pr.poll_id = p.id
+      JOIN users u ON pr.user_id = u.id
+      LEFT JOIN profiles prof ON u.id = prof.user_id
+      WHERE pr.poll_id = ANY($1)
+        AND (
+          $2 = '' OR
+          prof.first_name ILIKE $2 OR
+          prof.last_name ILIKE $2 OR
+          prof.display_name ILIKE $2 OR
+          u.email ILIKE $2 OR
+          pr.text_value ILIKE $2 OR
+          pr.explanation ILIKE $2 OR
+          p.question ILIKE $2
+        )
+    `;
+
+    const [responsesResult, countResult] = await Promise.all([
+      pool.query(query, [pollIds, searchPattern, options.limit, offset]),
+      pool.query(countQuery, [pollIds, searchPattern])
+    ]);
+
+    const total = parseInt(countResult.rows[0].total);
+
+    return {
+      collection: {
+        id: collection.id,
+        title: collection.title,
+        description: collection.description,
+        total_polls: pollIds.length
+      },
+      responses: responsesResult.rows,
+      pagination: {
+        page: options.page,
+        limit: options.limit,
+        total,
+        totalPages: Math.ceil(total / options.limit),
+        hasMore: offset + responsesResult.rows.length < total
+      }
+    };
+  }
+
+  /**
+   * Export collection responses to CSV
+   *
+   * @param {string} collectionId - Collection UUID
+   * @param {Object} options - Query options
+   * @returns {Promise<string>} CSV data
+   */
+  static async exportCollectionResponsesToCSV(collectionId, options) {
+    const collection = await PollCollectionModel.getById(collectionId);
+    if (!collection) {
+      throw new Error('Collection not found');
+    }
+
+    // Get all responses (no pagination for export)
+    const result = await this.getDetailedCollectionResponses(collectionId, {
+      ...options,
+      page: 1,
+      limit: 10000
+    });
+
+    // Build CSV
+    const headers = [
+      'Response ID',
+      'Poll ID',
+      'Poll Question',
+      'User ID',
+      'Email',
+      'Display Name',
+      'First Name',
+      'Last Name',
+      'Selected Option',
+      'Selected Options',
+      'Numeric Value',
+      'Text Value',
+      'Ranking Data',
+      'Explanation',
+      'Responded At',
+      'Updated At'
+    ];
+
+    let csv = headers.join(',') + '\n';
+
+    result.responses.forEach(response => {
+      const row = [
+        response.response_id,
+        response.poll_id,
+        `"${(response.poll_question || '').replace(/"/g, '""')}"`,
+        response.user_id,
+        `"${(response.email || '').replace(/"/g, '""')}"`,
+        `"${(response.display_name || '').replace(/"/g, '""')}"`,
+        `"${(response.first_name || '').replace(/"/g, '""')}"`,
+        `"${(response.last_name || '').replace(/"/g, '""')}"`,
+        `"${(response.selected_option || '').replace(/"/g, '""')}"`,
+        `"${response.selected_options ? JSON.stringify(response.selected_options).replace(/"/g, '""') : ''}"`,
+        response.numeric_value || '',
+        `"${(response.text_value || '').replace(/"/g, '""')}"`,
+        `"${response.ranking_data ? JSON.stringify(response.ranking_data).replace(/"/g, '""') : ''}"`,
+        `"${(response.explanation || '').replace(/"/g, '""')}"`,
+        response.responded_at,
+        response.updated_at || ''
+      ];
+
+      csv += row.join(',') + '\n';
+    });
+
+    return csv;
   }
 }
 

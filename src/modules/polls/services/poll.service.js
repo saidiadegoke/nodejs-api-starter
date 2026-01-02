@@ -33,7 +33,8 @@ class PollService {
       config = {},
       cover_image,
       duration = '7d',
-      options = []
+      options = [],
+      not_for_feed = false
     } = pollData;
 
     // Basic validation
@@ -71,7 +72,8 @@ class PollService {
       config,
       cover_image,
       duration,
-      expires_at
+      expires_at,
+      not_for_feed
     });
 
     // Create options if provided (for choice-based polls)
