@@ -13,7 +13,7 @@ class UserProfileController {
       const userId = req.user.user_id;
 
       const result = await pool.query(
-        `SELECT 
+        `SELECT
           u.id as user_id,
           u.email,
           u.phone,
@@ -26,12 +26,23 @@ class UserProfileController {
           p.last_name,
           p.display_name,
           p.profile_photo_url as profile_photo,
+          p.bio,
+          p.date_of_birth,
+          p.gender,
+          p.country_id,
+          c.name as country_name,
+          c.iso_code_2 as country_code,
+          p.state_province,
+          p.educational_level,
+          p.employment_status,
+          p.profile_completed,
           p.rating_average as rating,
           p.rating_count as total_ratings,
           p.total_orders,
           p.completed_orders
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
+        LEFT JOIN countries c ON p.country_id = c.id
         WHERE u.id = $1`,
         [userId]
       );
@@ -81,7 +92,20 @@ class UserProfileController {
   static async updateMe(req, res) {
     try {
       const userId = req.user.user_id;
-      const { first_name, last_name, display_name, email, profile_photo_url } = req.body;
+      const {
+        first_name,
+        last_name,
+        display_name,
+        email,
+        profile_photo_url,
+        bio,
+        date_of_birth,
+        gender,
+        country_id,
+        state_province,
+        educational_level,
+        employment_status
+      } = req.body;
 
       // Check if email is being changed and if it's already taken
       if (email) {
@@ -102,32 +126,103 @@ class UserProfileController {
       }
 
       // Update profile
-      if (first_name || last_name || display_name || profile_photo_url) {
-        const updates = [];
-        const params = [];
-        let paramIndex = 1;
+      const updates = [];
+      const params = [];
+      let paramIndex = 1;
 
-        if (first_name) {
-          updates.push(`first_name = $${paramIndex}`);
-          params.push(first_name);
-          paramIndex++;
+      if (first_name !== undefined) {
+        updates.push(`first_name = $${paramIndex}`);
+        params.push(first_name);
+        paramIndex++;
+      }
+
+      if (last_name !== undefined) {
+        updates.push(`last_name = $${paramIndex}`);
+        params.push(last_name);
+        paramIndex++;
+      }
+
+      if (display_name !== undefined) {
+        updates.push(`display_name = $${paramIndex}`);
+        params.push(display_name);
+        paramIndex++;
+      }
+
+      if (profile_photo_url !== undefined) {
+        updates.push(`profile_photo_url = $${paramIndex}`);
+        params.push(profile_photo_url);
+        paramIndex++;
+      }
+
+      if (bio !== undefined) {
+        updates.push(`bio = $${paramIndex}`);
+        params.push(bio);
+        paramIndex++;
+      }
+
+      if (date_of_birth !== undefined) {
+        updates.push(`date_of_birth = $${paramIndex}`);
+        params.push(date_of_birth);
+        paramIndex++;
+      }
+
+      if (gender !== undefined) {
+        updates.push(`gender = $${paramIndex}`);
+        params.push(gender);
+        paramIndex++;
+      }
+
+      if (country_id !== undefined) {
+        updates.push(`country_id = $${paramIndex}`);
+        params.push(country_id);
+        paramIndex++;
+      }
+
+      if (state_province !== undefined) {
+        updates.push(`state_province = $${paramIndex}`);
+        params.push(state_province);
+        paramIndex++;
+      }
+
+      if (educational_level !== undefined) {
+        updates.push(`educational_level = $${paramIndex}`);
+        params.push(educational_level);
+        paramIndex++;
+      }
+
+      if (employment_status !== undefined) {
+        updates.push(`employment_status = $${paramIndex}`);
+        params.push(employment_status);
+        paramIndex++;
+      }
+
+      if (updates.length > 0) {
+        // Check if profile should be marked as completed
+        // Required fields for completion: date_of_birth, gender, country_id, educational_level, employment_status
+        const currentProfile = await pool.query(
+          `SELECT date_of_birth, gender, country_id, educational_level, employment_status
+           FROM profiles WHERE user_id = $1`,
+          [userId]
+        );
+
+        let profileCompleted = false;
+        if (currentProfile.rows.length > 0) {
+          const profile = currentProfile.rows[0];
+
+          // Merge current values with updates
+          const finalDateOfBirth = date_of_birth !== undefined ? date_of_birth : profile.date_of_birth;
+          const finalGender = gender !== undefined ? gender : profile.gender;
+          const finalCountryId = country_id !== undefined ? country_id : profile.country_id;
+          const finalEducationalLevel = educational_level !== undefined ? educational_level : profile.educational_level;
+          const finalEmploymentStatus = employment_status !== undefined ? employment_status : profile.employment_status;
+
+          // Mark as completed if all demographic fields are filled
+          profileCompleted = !!(finalDateOfBirth && finalGender && finalCountryId && finalEducationalLevel && finalEmploymentStatus);
         }
 
-        if (last_name) {
-          updates.push(`last_name = $${paramIndex}`);
-          params.push(last_name);
-          paramIndex++;
-        }
-
-        if (display_name) {
-          updates.push(`display_name = $${paramIndex}`);
-          params.push(display_name);
-          paramIndex++;
-        }
-
-        if (profile_photo_url) {
-          updates.push(`profile_photo_url = $${paramIndex}`);
-          params.push(profile_photo_url);
+        if (profileCompleted) {
+          updates.push(`profile_completed = $${paramIndex}`);
+          params.push(true);
           paramIndex++;
         }
 
@@ -144,7 +239,7 @@ class UserProfileController {
 
       // Get updated user (same format as getMe)
       const result = await pool.query(
-        `SELECT 
+        `SELECT
           u.id as user_id,
           u.email,
           u.phone,
@@ -157,12 +252,23 @@ class UserProfileController {
           p.last_name,
           p.display_name,
           p.profile_photo_url as profile_photo,
+          p.bio,
+          p.date_of_birth,
+          p.gender,
+          p.country_id,
+          c.name as country_name,
+          c.iso_code_2 as country_code,
+          p.state_province,
+          p.educational_level,
+          p.employment_status,
+          p.profile_completed,
           p.rating_average as rating,
           p.rating_count as total_ratings,
           p.total_orders,
           p.completed_orders
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
+        LEFT JOIN countries c ON p.country_id = c.id
         WHERE u.id = $1`,
         [userId]
       );
@@ -343,6 +449,25 @@ class UserProfileController {
       // Mock implementation - would update user_settings table
       sendSuccess(res, req.body, 'Notification settings updated', OK);
     } catch (error) {
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Get list of countries
+   */
+  static async getCountries(req, res) {
+    try {
+      const result = await pool.query(
+        `SELECT id, name, iso_code_2, iso_code_3, phone_code, currency_code
+         FROM countries
+         WHERE is_active = true
+         ORDER BY name ASC`
+      );
+
+      sendSuccess(res, result.rows, 'Countries retrieved successfully', OK);
+    } catch (error) {
+      console.error('Error getting countries:', error);
       sendError(res, error.message, BAD_REQUEST);
     }
   }

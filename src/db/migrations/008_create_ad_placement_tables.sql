@@ -153,3 +153,94 @@ CREATE INDEX idx_context_sources_not_for_feed ON context_sources(not_for_feed) W
 -- Comments
 COMMENT ON COLUMN polls.not_for_feed IS 'If TRUE, poll will not appear in public feeds (/feed, /explore, /trending) but remains accessible via direct link';
 COMMENT ON COLUMN context_sources.not_for_feed IS 'If TRUE, context/story will not appear in public listings (/stories) but remains accessible via direct link';
+
+-- =====================================================
+-- ADD VIEW RESPONSES PERMISSION
+-- Adds permission to view individual poll/collection responses
+-- =====================================================
+
+-- Add new permission for viewing poll responses
+INSERT INTO permissions (name, resource, action, description) VALUES
+('polls.view_responses', 'polls', 'view_responses', 'View individual user responses for polls'),
+('collections.view_responses', 'collections', 'view_responses', 'View individual user responses for collections')
+ON CONFLICT (resource, action) DO NOTHING;
+
+-- Grant view_responses permission to analyst role
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'admin'
+AND p.name IN ('polls.view_responses', 'collections.view_responses')
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Grant view_responses permission to content_creator role (can see responses to their own content)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'content_creator'
+AND p.name IN ('polls.view_responses', 'collections.view_responses')
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Grant view_responses permission to moderator role
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'moderator'
+AND p.name IN ('polls.view_responses', 'collections.view_responses')
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Admin already has all permissions via the seed
+
+-- Comments
+COMMENT ON COLUMN permissions.name IS 'Permission name in format: resource.action';
+
+-- ============================================================================
+-- ADD DEMOGRAPHIC FIELDS TO PROFILES
+-- ============================================================================
+-- Migration to add educational level, employment status, country, and state
+-- to user profiles for better demographic analysis
+
+-- Add new columns to profiles table
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS country_id INTEGER REFERENCES countries(id),
+  ADD COLUMN IF NOT EXISTS state_province VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS educational_level VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS employment_status VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS profile_completed BOOLEAN DEFAULT false;
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_profiles_country ON profiles(country_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_educational_level ON profiles(educational_level);
+CREATE INDEX IF NOT EXISTS idx_profiles_employment_status ON profiles(employment_status);
+CREATE INDEX IF NOT EXISTS idx_profiles_completed ON profiles(profile_completed);
+
+-- Add comments for documentation
+COMMENT ON COLUMN profiles.country_id IS 'Foreign key to countries table';
+COMMENT ON COLUMN profiles.state_province IS 'State, province, or region within the country';
+COMMENT ON COLUMN profiles.educational_level IS 'Educational attainment: high_school, associate, bachelor, master, doctorate, other';
+COMMENT ON COLUMN profiles.employment_status IS 'Current employment status: employed_full_time, employed_part_time, self_employed, unemployed, student, retired, other';
+COMMENT ON COLUMN profiles.profile_completed IS 'Indicates if user has completed their profile information';
+
+-- Add check constraints for valid values
+ALTER TABLE profiles
+  ADD CONSTRAINT check_educational_level
+    CHECK (educational_level IS NULL OR educational_level IN (
+      'high_school',
+      'associate',
+      'bachelor',
+      'master',
+      'doctorate',
+      'vocational',
+      'some_college',
+      'other'
+    ));
+
+ALTER TABLE profiles
+  ADD CONSTRAINT check_employment_status
+    CHECK (employment_status IS NULL OR employment_status IN (
+      'employed_full_time',
+      'employed_part_time',
+      'self_employed',
+      'unemployed',
+      'student',
+      'retired',
+      'homemaker',
+      'other'
+    ));

@@ -122,6 +122,13 @@ router.get('/preferences/categories', UserPreferenceController.getAvailableCateg
 router.get('/preferences/poll-types', UserPreferenceController.getAvailablePollTypes);
 
 /**
+ * @route   GET /api/users/countries
+ * @desc    Get list of countries
+ * @access  Public
+ */
+router.get('/countries', UserProfileController.getCountries);
+
+/**
  * @route   PUT /api/users/me/settings/notifications
  * @desc    Update notification settings
  * @access  Private

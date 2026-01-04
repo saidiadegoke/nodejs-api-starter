@@ -7,6 +7,8 @@
 
 const pool = require('../../../db/pool');
 const PollService = require('../services/poll.service');
+const VotingEligibilityService = require('../services/poll-voting-eligibility.service');
+const PollModel = require('../models/poll.model');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 const webSocketService = require('../../../shared/services/websocket.service');
@@ -603,6 +605,111 @@ class PollController {
       }, 'Polls retrieved successfully', OK);
     } catch (error) {
       console.error('Search polls error:', error);
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Check if current user can vote on poll (voting eligibility)
+   *
+   * @route GET /api/polls/:poll_id/voting-eligibility
+   * @access Private
+   */
+  static async getVotingEligibility(req, res) {
+    try {
+      const { poll_id } = req.params;
+      const userId = req.user.user_id;
+
+      const eligibility = await VotingEligibilityService.getDetailedEligibility(poll_id, userId);
+
+      sendSuccess(res, eligibility, 'Voting eligibility retrieved successfully', OK);
+    } catch (error) {
+      console.error('Get voting eligibility error:', error);
+      if (error.message === 'Poll not found') {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Get poll voting schedule information
+   *
+   * @route GET /api/polls/:poll_id/voting-schedule
+   * @access Public
+   */
+  static async getVotingSchedule(req, res) {
+    try {
+      const { poll_id } = req.params;
+
+      const schedule = await VotingEligibilityService.getPollVotingSchedule(poll_id);
+
+      sendSuccess(res, schedule, 'Voting schedule retrieved successfully', OK);
+    } catch (error) {
+      console.error('Get voting schedule error:', error);
+      if (error.message === 'Poll not found') {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Update poll voting schedule (owner only)
+   *
+   * @route PUT /api/polls/:poll_id/voting-schedule
+   * @access Private (owner only)
+   */
+  static async updateVotingSchedule(req, res) {
+    try {
+      const { poll_id } = req.params;
+      const userId = req.user.user_id;
+      const scheduleUpdates = req.body;
+
+      // Check ownership
+      const isOwner = await PollModel.isOwner(poll_id, userId);
+      if (!isOwner) {
+        return sendError(res, 'Not authorized to update this poll', FORBIDDEN);
+      }
+
+      // Validate voting schedule fields
+      const allowedFields = [
+        'voting_starts_at',
+        'voting_ends_at',
+        'voting_days_of_week',
+        'voting_time_start',
+        'voting_time_end',
+        'allow_revote',
+        'vote_frequency_type',
+        'vote_frequency_value'
+      ];
+
+      const updates = {};
+      for (const [key, value] of Object.entries(scheduleUpdates)) {
+        if (allowedFields.includes(key)) {
+          updates[key] = value;
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return sendError(res, 'No valid schedule fields to update', BAD_REQUEST);
+      }
+
+      // Update the poll
+      const updatedPoll = await PollModel.update(poll_id, updates);
+
+      // Get the full voting schedule
+      const schedule = await VotingEligibilityService.getPollVotingSchedule(poll_id);
+
+      sendSuccess(res, schedule, 'Voting schedule updated successfully', OK);
+    } catch (error) {
+      console.error('Update voting schedule error:', error);
+      if (error.message === 'Poll not found') {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      if (error.message.includes('Not authorized')) {
+        return sendError(res, error.message, FORBIDDEN);
+      }
       sendError(res, error.message, BAD_REQUEST);
     }
   }

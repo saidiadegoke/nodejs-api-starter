@@ -26,10 +26,10 @@ class PollResponseController {
 
       const response = await PollResponseService.submitResponse(userId, poll_id, responseData);
 
-      // Get updated poll with vote counts to return to client
+      // Get updated poll with full details (options, vote counts, user response)
       const updatedPoll = await PollService.getPollById(poll_id, userId);
 
-      // Get updated poll results and broadcast vote update
+      // Broadcast vote update via WebSocket
       try {
         const updatedResults = await PollResponseService.getPollResults(poll_id);
         webSocketService.broadcastPollVoteUpdate(poll_id, updatedResults);

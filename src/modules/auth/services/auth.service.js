@@ -39,22 +39,22 @@ class AuthService {
   static async register(userData) {
     // Validate required fields
     const { email, phone, password, first_name, last_name, role, country_id } = userData;
-    
+
     if (!email && !phone) {
       throw new Error('Either email or phone is required');
     }
-    
+
     if (!password || password.length < 8) {
       throw new Error('Password must be at least 8 characters');
     }
-    
+
     if (!['user', 'b2b'].includes(role)) {
       throw new Error('Invalid role. Must be user');
     }
-    
+
     // Format phone number with country code
     const formattedPhone = await this.formatPhoneNumber(phone, country_id);
-    
+
     // Check if user already exists
     if (email || formattedPhone) {
       const existing = await AuthModel.findByIdentifier(email || formattedPhone);
@@ -62,22 +62,47 @@ class AuthService {
         throw new Error('User with this email or phone already exists');
       }
     }
-    
+
     // Create user with formatted phone
     const user = await AuthModel.createUser({
       ...userData,
       phone: formattedPhone
     });
-    
+
+    // Get user roles
+    const roles = await AuthModel.getUserRoles(user.id);
+    const roleNames = roles.map(r => r.name);
+
+    // Generate tokens for automatic login after signup
+    const accessToken = this.generateAccessToken(user.id, roleNames);
+    const refreshToken = this.generateRefreshToken(user.id);
+
+    // Create session
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+    await AuthModel.createSession(user.id, refreshTokenHash, {
+      source: 'registration',
+      user_agent: 'web'
+    });
+
     return {
-      user_id: user.id,
-      email: user.email,
-      phone: user.phone,
-      first_name,
-      last_name,
-      role,
-      verification_required: true,
-      created_at: user.created_at
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: 'Bearer',
+      expires_in: 3600,
+      user: {
+        user_id: user.id,
+        email: user.email,
+        phone: user.phone,
+        first_name,
+        last_name,
+        role: roleNames[0] || role,
+        roles: roleNames,
+        profile_photo: null,
+        rating: null,
+        verified: false,
+        verification_required: true,
+        created_at: user.created_at
+      }
     };
   }
 

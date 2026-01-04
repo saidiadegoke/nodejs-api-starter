@@ -1118,11 +1118,17 @@ const createPollFromSeederFormat = async (pollData, userId, client) => {
     }
     expiresAt = now;
   }
-  
-  // Insert poll
+
+  // Default voting window to poll lifetime if not specified
+  const votingStartsAt = pollData.voting_starts_at || new Date().toISOString();
+  const votingEndsAt = pollData.voting_ends_at || (expiresAt ? expiresAt.toISOString() : null);
+
+  // Insert poll with voting schedule fields
   const pollResult = await client.query(
-    `INSERT INTO polls (id, user_id, title, question, description, poll_type, category, config, status, visibility, duration, expires_at, not_for_feed, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+    `INSERT INTO polls (id, user_id, title, question, description, poll_type, category, config, status, visibility, duration, expires_at, not_for_feed,
+      voting_starts_at, voting_ends_at, voting_days_of_week, voting_time_start, voting_time_end, allow_revote, vote_frequency_type, vote_frequency_value,
+      created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW())
      RETURNING *`,
     [
       pollId,
@@ -1137,7 +1143,15 @@ const createPollFromSeederFormat = async (pollData, userId, client) => {
       'public',
       pollData.duration || null,
       expiresAt,
-      pollData.not_for_feed || false
+      pollData.not_for_feed || false,
+      votingStartsAt,
+      votingEndsAt,
+      pollData.voting_days_of_week || null,
+      pollData.voting_time_start || null,
+      pollData.voting_time_end || null,
+      pollData.allow_revote !== undefined ? pollData.allow_revote : null,
+      pollData.vote_frequency_type || null,
+      pollData.vote_frequency_value || null
     ]
   );
   
@@ -1239,7 +1253,7 @@ const generateTemplate = async (format) => {
         ]
       },
 
-      // 2. Multiple Choice Poll (Hidden from feed - example)
+      // 2. Multiple Choice Poll (Hidden from feed - example with business hours voting schedule)
       {
         question: 'Should AI regulation be stricter?',
         poll_type: 'multipleChoice',
@@ -1248,6 +1262,11 @@ const generateTemplate = async (format) => {
         duration: '5d',
         config: {},
         not_for_feed: true,
+        voting_days_of_week: [1, 2, 3, 4, 5], // Monday to Friday only
+        voting_time_start: '09:00:00', // 9 AM
+        voting_time_end: '17:00:00', // 5 PM
+        vote_frequency_type: 'once',
+        allow_revote: false,
         options: [
           { label: 'Much stricter', position: 0 },
           { label: 'Somewhat stricter', position: 1 },
@@ -1290,7 +1309,7 @@ const generateTemplate = async (format) => {
         ]
       },
 
-      // 5. Likert Scale Poll
+      // 5. Likert Scale Poll (with daily voting and time window)
       {
         question: 'How concerned are you about climate change?',
         poll_type: 'likertScale',
@@ -1298,6 +1317,11 @@ const generateTemplate = async (format) => {
         category: 'Environment',
         duration: '14d',
         config: { scaleType: 'concern', scaleRange: 5 },
+        voting_starts_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Starts in 24 hours
+        voting_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(), // Ends in 14 days
+        vote_frequency_type: 'daily',
+        vote_frequency_value: 1, // Once per day
+        allow_revote: true, // Users can change their daily vote
         options: [
           { label: 'Not at all concerned', position: 0 },
           { label: 'Slightly concerned', position: 1 },
@@ -1307,7 +1331,7 @@ const generateTemplate = async (format) => {
         ]
       },
 
-      // 6. Slider Poll
+      // 6. Slider Poll (weekend-only with unlimited revoting)
       {
         question: 'How optimistic are you about the economy (0-100)?',
         poll_type: 'slider',
@@ -1315,6 +1339,9 @@ const generateTemplate = async (format) => {
         category: 'Business',
         duration: '7d',
         config: { sliderMin: 0, sliderMax: 100, unit: '%' },
+        voting_days_of_week: [0, 6], // Saturday and Sunday only
+        vote_frequency_type: 'unlimited',
+        allow_revote: true, // Can vote multiple times on weekends
         options: []
       },
 
@@ -1555,19 +1582,19 @@ const generateTemplate = async (format) => {
   if (format === 'json') {
     return JSON.stringify(templateData, null, 2);
   } else if (format === 'csv') {
-    // Generate CSV format with examples of different poll types
-    let csv = 'type,index,question,option1,option2,option3,option4,option5,poll_type,category,duration,config,not_for_feed,title,content,source_type,poll_index,story_index,display_position,is_required,order_index\n';
-    csv += 'poll,0,"Is remote work more productive?",Yes,No,,,,,yesno,Business,7d,{},false,,,,,,,\n';
-    csv += 'poll,1,"Should AI regulation be stricter?","Much stricter","Somewhat stricter","Current level is fine","Less regulation needed",,multipleChoice,Technology,5d,{},true,,,,,,,\n';
-    csv += 'poll,2,"Which issues should government prioritize?","Climate Change",Healthcare,Education,Economy,Security,multiSelect,Politics,10d,"{""maxSelections"": 3}",false,,,,,,,\n';
-    csv += 'poll,3,"How concerned are you about climate change?","Not at all concerned","Slightly concerned","Moderately concerned","Very concerned","Extremely concerned",likertScale,Environment,14d,"{""scaleType"": ""concern"", ""scaleRange"": 5}",false,,,,,,,\n';
-    csv += 'poll,4,"How optimistic are you about the economy (0-100)?",,,,,,,slider,Business,7d,"{""sliderMin"": 0, ""sliderMax"": 100, ""unit"": ""%""}",false,,,,,,,\n';
-    csv += 'poll,5,"What is your biggest frustration with public transit?",,,,,,,openEnded,Transportation,14d,{},false,,,,,,,\n';
-    csv += 'story,0,"","","","","","","","","","",false,"Climate Change Research Study 2024","This study examines the latest trends in climate change. Global temperature has increased by 1.2°C since pre-industrial times.","research",,,\n';
-    csv += 'story,1,"","","","","","","","","","",true,"The Future of Remote Work","Remote work has fundamentally changed how we approach productivity. 42% of companies now offer fully remote positions.","article",,,\n';
-    csv += 'link,,,,,,,,,,,,,,,,,,0,1,pre_poll,false,0\n';
-    csv += 'link,,,,,,,,,,,,,,,,,,1,0,pre_poll,false,0\n';
-    csv += 'link,,,,,,,,,,,,,,,,,,3,0,pre_poll,true,0\n';
+    // Generate CSV format with examples of different poll types including voting schedule fields
+    let csv = 'type,index,question,option1,option2,option3,option4,option5,poll_type,category,duration,config,not_for_feed,voting_days_of_week,voting_time_start,voting_time_end,vote_frequency_type,vote_frequency_value,allow_revote,voting_starts_at,voting_ends_at,title,content,source_type,poll_index,story_index,display_position,is_required,order_index\n';
+    csv += 'poll,0,"Is remote work more productive?",Yes,No,,,,,yesno,Business,7d,{},false,,,,once,1,false,,,,,,,,,\n';
+    csv += 'poll,1,"Should AI regulation be stricter?","Much stricter","Somewhat stricter","Current level is fine","Less regulation needed",,multipleChoice,Technology,5d,{},true,"[1,2,3,4,5]",09:00:00,17:00:00,once,1,false,,,,,,,,,\n';
+    csv += 'poll,2,"Which issues should government prioritize?","Climate Change",Healthcare,Education,Economy,Security,multiSelect,Politics,10d,"{""maxSelections"": 3}",false,,,,once,1,false,,,,,,,,,\n';
+    csv += 'poll,3,"How concerned are you about climate change?","Not at all concerned","Slightly concerned","Moderately concerned","Very concerned","Extremely concerned",likertScale,Environment,14d,"{""scaleType"": ""concern"", ""scaleRange"": 5}",false,,,,daily,1,true,2026-01-04T00:00:00.000Z,2026-01-18T00:00:00.000Z,,,,,,\n';
+    csv += 'poll,4,"How optimistic are you about the economy (0-100)?",,,,,,,slider,Business,7d,"{""sliderMin"": 0, ""sliderMax"": 100, ""unit"": ""%""}",false,"[0,6]",,,unlimited,1,true,,,,,,,,,\n';
+    csv += 'poll,5,"What is your biggest frustration with public transit?",,,,,,,openEnded,Transportation,14d,{},false,,,,once,1,false,,,,,,,,,\n';
+    csv += 'story,0,"","","","","","","","","","",false,,,,,,,,,"Climate Change Research Study 2024","This study examines the latest trends in climate change. Global temperature has increased by 1.2°C since pre-industrial times.","research",,,\n';
+    csv += 'story,1,"","","","","","","","","","",true,,,,,,,,,"The Future of Remote Work","Remote work has fundamentally changed how we approach productivity. 42% of companies now offer fully remote positions.","article",,,\n';
+    csv += 'link,,,,,,,,,,,,,,,,,,,,,,,,,0,1,pre_poll,false,0\n';
+    csv += 'link,,,,,,,,,,,,,,,,,,,,,,,,,1,0,pre_poll,false,0\n';
+    csv += 'link,,,,,,,,,,,,,,,,,,,,,,,,,3,0,pre_poll,true,0\n';
     return csv;
   }
 
@@ -1596,7 +1623,7 @@ const parseBulkCreationCSV = (filePath) => {
             });
 
             if (options.length >= 2) {
-              polls.push({
+              const pollData = {
                 index: row.index ? parseInt(row.index) : polls.length,
                 question: row.question,
                 poll_type: row.poll_type || 'multipleChoice',
@@ -1605,7 +1632,25 @@ const parseBulkCreationCSV = (filePath) => {
                 config: row.config ? JSON.parse(row.config) : {},
                 not_for_feed: row.not_for_feed === 'true' || row.not_for_feed === true,
                 options
-              });
+              };
+
+              // Add voting schedule fields if present
+              if (row.voting_days_of_week) {
+                try {
+                  pollData.voting_days_of_week = JSON.parse(row.voting_days_of_week);
+                } catch (e) {
+                  // If parse fails, leave it as null
+                }
+              }
+              if (row.voting_time_start) pollData.voting_time_start = row.voting_time_start;
+              if (row.voting_time_end) pollData.voting_time_end = row.voting_time_end;
+              if (row.vote_frequency_type) pollData.vote_frequency_type = row.vote_frequency_type;
+              if (row.vote_frequency_value) pollData.vote_frequency_value = parseInt(row.vote_frequency_value);
+              if (row.allow_revote) pollData.allow_revote = row.allow_revote === 'true' || row.allow_revote === true;
+              if (row.voting_starts_at) pollData.voting_starts_at = row.voting_starts_at;
+              if (row.voting_ends_at) pollData.voting_ends_at = row.voting_ends_at;
+
+              polls.push(pollData);
             }
           } else if (row.type === 'story' && row.title && row.content) {
             stories.push({

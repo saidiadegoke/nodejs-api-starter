@@ -28,17 +28,30 @@ class PollModel {
       cover_image,
       duration,
       expires_at,
-      not_for_feed = false
+      not_for_feed = false,
+      // Voting schedule fields
+      voting_starts_at,
+      voting_ends_at,
+      voting_days_of_week,
+      voting_time_start,
+      voting_time_end,
+      allow_revote,
+      vote_frequency_type,
+      vote_frequency_value
     } = pollData;
 
     const result = await pool.query(
       `INSERT INTO polls (
         user_id, title, description, question, category, poll_type,
-        config, status, visibility, cover_image, duration, expires_at, not_for_feed
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        config, status, visibility, cover_image, duration, expires_at, not_for_feed,
+        voting_starts_at, voting_ends_at, voting_days_of_week, voting_time_start, voting_time_end,
+        allow_revote, vote_frequency_type, vote_frequency_value
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       RETURNING *`,
       [user_id, title, description, question, category, poll_type,
-       JSON.stringify(config), status, visibility, cover_image, duration, expires_at, not_for_feed]
+       JSON.stringify(config), status, visibility, cover_image, duration, expires_at, not_for_feed,
+       voting_starts_at, voting_ends_at, voting_days_of_week, voting_time_start, voting_time_end,
+       allow_revote, vote_frequency_type, vote_frequency_value]
     );
 
     return result.rows[0];
@@ -237,8 +250,14 @@ class PollModel {
    * @returns {Promise<Object>} Updated poll
    */
   static async update(pollId, updates) {
-    const allowedFields = ['title', 'description', 'question', 'category', 'status',
-                           'visibility', 'cover_image', 'config', 'not_for_feed'];
+    const allowedFields = [
+      'title', 'description', 'question', 'category', 'status',
+      'visibility', 'cover_image', 'config', 'not_for_feed',
+      // Voting schedule fields
+      'voting_starts_at', 'voting_ends_at', 'voting_days_of_week',
+      'voting_time_start', 'voting_time_end', 'allow_revote',
+      'vote_frequency_type', 'vote_frequency_value'
+    ];
     const fields = [];
     const values = [];
     let paramCount = 1;

@@ -301,6 +301,59 @@ router.delete(
 );
 
 /**
+ * @route   GET /api/polls/:poll_id/voting-eligibility
+ * @desc    Check if current user can vote on poll (voting eligibility)
+ * @access  Private
+ */
+router.get(
+  '/:poll_id/voting-eligibility',
+  authenticate,
+  [
+    param('poll_id').isUUID().withMessage('Invalid poll ID')
+  ],
+  validate,
+  PollController.getVotingEligibility
+);
+
+/**
+ * @route   GET /api/polls/:poll_id/voting-schedule
+ * @desc    Get poll voting schedule information
+ * @access  Public
+ */
+router.get(
+  '/:poll_id/voting-schedule',
+  [
+    param('poll_id').isUUID().withMessage('Invalid poll ID')
+  ],
+  validate,
+  PollController.getVotingSchedule
+);
+
+/**
+ * @route   PUT /api/polls/:poll_id/voting-schedule
+ * @desc    Update poll voting schedule (owner only)
+ * @access  Private (owner only)
+ */
+router.put(
+  '/:poll_id/voting-schedule',
+  authenticate,
+  [
+    param('poll_id').isUUID().withMessage('Invalid poll ID'),
+    body('voting_starts_at').optional().isISO8601().withMessage('Invalid voting start date'),
+    body('voting_ends_at').optional().isISO8601().withMessage('Invalid voting end date'),
+    body('voting_days_of_week').optional().isArray().withMessage('voting_days_of_week must be an array'),
+    body('voting_days_of_week.*').optional().isInt({ min: 0, max: 6 }).withMessage('Day of week must be between 0 (Sunday) and 6 (Saturday)'),
+    body('voting_time_start').optional().matches(/^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/).withMessage('voting_time_start must be in HH:MM:SS format'),
+    body('voting_time_end').optional().matches(/^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/).withMessage('voting_time_end must be in HH:MM:SS format'),
+    body('allow_revote').optional().isBoolean().withMessage('allow_revote must be boolean'),
+    body('vote_frequency_type').optional().isIn(['once', 'unlimited', 'hourly', 'daily', 'weekly', 'monthly']).withMessage('Invalid frequency type'),
+    body('vote_frequency_value').optional().isInt({ min: 1 }).withMessage('vote_frequency_value must be a positive integer')
+  ],
+  validate,
+  PollController.updateVotingSchedule
+);
+
+/**
  * @route   GET /api/polls/:poll_id/results
  * @desc    Get aggregated poll results (formatted by poll type)
  * @access  Public

@@ -12,6 +12,7 @@ const PollResponseValidator = require('../validations/poll-response.validator');
 const ResponseFormatter = require('../utils/response-formatter');
 const NotificationService = require('../../notifications/services/notification.service');
 const UserActivityService = require('../../users/services/user-activity.service');
+const VotingEligibilityService = require('./poll-voting-eligibility.service');
 const webSocketService = require('../../../shared/services/websocket.service');
 
 class PollResponseService {
@@ -32,26 +33,11 @@ class PollResponseService {
       throw new Error('Poll not found');
     }
 
-    // Check if poll is active
-    if (poll.status !== 'active') {
-      throw new Error('Poll is not active');
-    }
+    // Check voting eligibility (includes all schedule and frequency restrictions)
+    const eligibility = await VotingEligibilityService.canUserVote(pollId, userId);
 
-    // Check if poll has expired
-    if (poll.expires_at && new Date(poll.expires_at) < new Date()) {
-      throw new Error('Poll has expired');
-    }
-
-    // Check if user has already voted
-    const existingResponse = await PollResponseModel.getByUserAndPoll(pollId, userId);
-
-    if (existingResponse) {
-      // Check if poll allows vote changes
-      const allowVoteChanges = poll.config?.allow_vote_changes || false;
-
-      if (!allowVoteChanges) {
-        throw new Error('You have already voted on this poll. Vote changes are not allowed.');
-      }
+    if (!eligibility.allowed) {
+      throw new Error(eligibility.reason);
     }
 
     // Get poll options for validation

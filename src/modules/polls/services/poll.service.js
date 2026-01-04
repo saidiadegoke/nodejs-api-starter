@@ -34,7 +34,16 @@ class PollService {
       cover_image,
       duration = '7d',
       options = [],
-      not_for_feed = false
+      not_for_feed = false,
+      // Voting schedule fields
+      voting_starts_at,
+      voting_ends_at,
+      voting_days_of_week,
+      voting_time_start,
+      voting_time_end,
+      allow_revote,
+      vote_frequency_type,
+      vote_frequency_value
     } = pollData;
 
     // Basic validation
@@ -61,6 +70,29 @@ class PollService {
     // Calculate expiry time
     const expires_at = this.calculateExpiryTime(duration);
 
+    // Set voting schedule defaults if not provided
+    // Default voting window to poll lifetime (created_at to expires_at)
+    const votingSchedule = {
+      voting_starts_at: voting_starts_at || new Date().toISOString(), // Default to created_at (now)
+      voting_ends_at: voting_ends_at || expires_at, // Default to poll expiration
+      voting_days_of_week: voting_days_of_week || [0, 1, 2, 3, 4, 5, 6], // All days by default
+      voting_time_start: voting_time_start || '00:00:00', // Midnight by default
+      voting_time_end: voting_time_end || '23:59:59', // End of day by default
+      allow_revote: allow_revote !== undefined ? allow_revote : false, // false by default
+      vote_frequency_type: vote_frequency_type || 'once', // 'once' by default
+      vote_frequency_value: vote_frequency_value || 1 // 1 by default
+    };
+
+    // Validate voting schedule against poll expiry
+    if (expires_at) {
+      if (votingSchedule.voting_starts_at && new Date(votingSchedule.voting_starts_at) > new Date(expires_at)) {
+        throw new Error('Voting start time cannot be after poll expiration');
+      }
+      if (votingSchedule.voting_ends_at && new Date(votingSchedule.voting_ends_at) > new Date(expires_at)) {
+        throw new Error('Voting end time cannot be after poll expiration');
+      }
+    }
+
     // Create poll
     const poll = await PollModel.create({
       user_id: userId,
@@ -73,7 +105,9 @@ class PollService {
       cover_image,
       duration,
       expires_at,
-      not_for_feed
+      not_for_feed,
+      // Voting schedule fields with defaults applied
+      ...votingSchedule
     });
 
     // Create options if provided (for choice-based polls)
