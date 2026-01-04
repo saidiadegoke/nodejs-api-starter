@@ -307,17 +307,22 @@ class ResponseFormatter {
       });
     });
 
+    // Calculate total selections across all options
+    const totalSelections = Object.values(optionCounts).reduce((sum, count) => sum + count, 0);
+
+    // Calculate percentages based on total selections (will add up to 100%)
     const results = pollOptions.map(option => ({
       id: option.id,
       label: option.label,
       count: optionCounts[option.id],
-      percentage: totalResponses > 0
-        ? Math.round((optionCounts[option.id] / totalResponses) * 100)
+      percentage: totalSelections > 0
+        ? Math.round((optionCounts[option.id] / totalSelections) * 100)
         : 0
     }));
 
     return {
       total_responses: totalResponses,
+      total_selections: totalSelections,
       results
     };
   }
