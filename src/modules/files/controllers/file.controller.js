@@ -20,7 +20,9 @@ class FileController {
       const file = await FileService.uploadFile(req.file, userId, context);
 
       sendSuccess(res, {
+        id: file.id,
         file_id: file.id,
+        url: file.file_url,
         file_url: file.file_url,
         file_type: file.file_type,
         file_size: file.file_size,

@@ -108,6 +108,32 @@ const logout = async (token, baseUrl) => {
 };
 
 /**
+ * Delete site via API
+ * @param {string} siteId - Site ID to delete
+ * @param {string} token - Auth token for the user
+ * @param {string} baseUrl - API base URL
+ */
+const deleteSite = async (siteId, token, baseUrl) => {
+  try {
+    const client = axios.create({
+      baseURL: baseUrl,
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    await client.delete(`/sites/${siteId}`);
+    return { success: true, siteId };
+  } catch (error) {
+    return { 
+      success: false, 
+      siteId, 
+      error: error.response?.data?.message || error.message 
+    };
+  }
+};
+
+/**
  * Clean up all resources in parallel
  * @param {Object} resources - Object containing arrays of resources to clean
  * @param {string} baseUrl - API base URL
@@ -116,10 +142,29 @@ const cleanupAll = async (resources, baseUrl) => {
   const results = {
     users: [],
     addresses: [],
-    sessions: []
+    sessions: [],
+    sites: [],
+    pages: []
   };
 
-  // Cleanup addresses first
+  // Cleanup pages first (they depend on sites)
+  if (resources.pages && resources.pages.length > 0) {
+    // Pages are deleted when sites are deleted, so we can skip individual deletion
+    results.pages = resources.pages.map(page => ({ 
+      status: 'fulfilled', 
+      value: { success: true, page_id: page.page_id, note: 'Will be deleted with site' } 
+    }));
+  }
+
+  // Cleanup sites (this will cascade delete pages)
+  if (resources.sites && resources.sites.length > 0) {
+    const sitePromises = resources.sites.map(site =>
+      deleteSite(site.site_id, site.token, baseUrl)
+    );
+    results.sites = await Promise.allSettled(sitePromises);
+  }
+
+  // Cleanup addresses
   if (resources.addresses && resources.addresses.length > 0) {
     const addressPromises = resources.addresses.map(addr =>
       deleteAddress(addr.address_id, addr.token, baseUrl)
@@ -153,6 +198,16 @@ const cleanupAll = async (resources, baseUrl) => {
 const logCleanupResults = (results) => {
   console.log('\n📊 Cleanup Summary:');
   
+  if (results.sites && results.sites.length > 0) {
+    const siteSuccess = results.sites.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    console.log(`  Sites: ${siteSuccess}/${results.sites.length} deleted`);
+  }
+
+  if (results.pages && results.pages.length > 0) {
+    const pageSuccess = results.pages.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    console.log(`  Pages: ${pageSuccess}/${results.pages.length} deleted`);
+  }
+
   if (results.addresses && results.addresses.length > 0) {
     const addressSuccess = results.addresses.filter(r => r.status === 'fulfilled' && r.value.success).length;
     console.log(`  Addresses: ${addressSuccess}/${results.addresses.length} deleted`);
@@ -170,6 +225,8 @@ const logCleanupResults = (results) => {
 
   // Log failures
   const allResults = [
+    ...(results.sites || []),
+    ...(results.pages || []),
     ...(results.addresses || []),
     ...(results.sessions || []),
     ...(results.users || [])
@@ -196,6 +253,7 @@ module.exports = {
   deleteUser,
   adminDeleteUser,
   deleteAddress,
+  deleteSite,
   logout,
   cleanupAll,
   logCleanupResults

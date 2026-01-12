@@ -1,21 +1,17 @@
--- Opinion Polls RBAC Seeder
--- Creates roles and permissions for the opinion polling platform
+-- SmartStore RBAC Seeder
+-- Creates roles and permissions for the SmartStore e-commerce platform
 
 -- ==================== ROLES ====================
 
 -- Insert default system roles
 INSERT INTO roles (name, display_name, description, is_system) VALUES
-('user', 'User', 'Regular user with basic poll participation', true),
-('premium_user', 'Premium User', 'Premium user with enhanced features', true),
-('content_creator', 'Content Creator', 'Can create and manage polls and content', true),
-('analyst', 'Analyst', 'Can view analytics and generate reports', true),
-('moderator', 'Moderator', 'Can moderate content and users', true),
+('user', 'User', 'Regular user with basic site management', true),
 ('admin', 'Administrator', 'Full system access and administration', true)
 ON CONFLICT (name) DO NOTHING;
 
 -- ==================== PERMISSIONS ====================
 
--- Insert permissions for the Opinion Polls platform
+-- Insert permissions for the SmartStore platform
 INSERT INTO permissions (name, resource, action, description) VALUES
 -- System permissions
 ('system.admin', 'system', 'admin', 'Full system administration access'),
@@ -27,101 +23,70 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 ('users.create', 'users', 'create', 'Create new users'),
 ('users.update', 'users', 'update', 'Update user profiles'),
 ('users.delete', 'users', 'delete', 'Delete users'),
-('users.moderate', 'users', 'moderate', 'Moderate users and enforce policies'),
 
--- Poll permissions
-('polls.view', 'polls', 'view', 'View polls'),
-('polls.create', 'polls', 'create', 'Create new polls'),
-('polls.update', 'polls', 'update', 'Update own polls'),
-('polls.delete', 'polls', 'delete', 'Delete own polls'),
-('polls.moderate', 'polls', 'moderate', 'Moderate any poll content'),
-('polls.respond', 'polls', 'respond', 'Respond to polls (vote)'),
+-- Site permissions
+('sites.view', 'sites', 'view', 'View sites'),
+('sites.create', 'sites', 'create', 'Create new sites'),
+('sites.update', 'sites', 'update', 'Update own sites'),
+('sites.delete', 'sites', 'delete', 'Delete own sites'),
+('sites.manage', 'sites', 'manage', 'Manage any site'),
 
--- Comment permissions
-('comments.view', 'comments', 'view', 'View comments'),
-('comments.create', 'comments', 'create', 'Create comments'),
-('comments.update', 'comments', 'update', 'Update own comments'),
-('comments.delete', 'comments', 'delete', 'Delete own comments'),
-('comments.moderate', 'comments', 'moderate', 'Moderate any comments'),
+-- Template permissions
+('templates.view', 'templates', 'view', 'View templates'),
+('templates.create', 'templates', 'create', 'Create new templates'),
+('templates.update', 'templates', 'update', 'Update own templates'),
+('templates.delete', 'templates', 'delete', 'Delete own templates'),
+('templates.manage', 'templates', 'manage', 'Manage any template'),
 
--- Context source permissions
-('context_sources.view', 'context_sources', 'view', 'View context sources (stories)'),
-('context_sources.create', 'context_sources', 'create', 'Create context sources'),
-('context_sources.update', 'context_sources', 'update', 'Update own context sources'),
-('context_sources.delete', 'context_sources', 'delete', 'Delete own context sources'),
-('context_sources.moderate', 'context_sources', 'moderate', 'Moderate any context sources'),
+-- Product permissions
+('products.view', 'products', 'view', 'View products'),
+('products.create', 'products', 'create', 'Create new products'),
+('products.update', 'products', 'update', 'Update own products'),
+('products.delete', 'products', 'delete', 'Delete own products'),
+('products.manage', 'products', 'manage', 'Manage any product'),
+
+-- Order permissions
+('orders.view', 'orders', 'view', 'View orders'),
+('orders.create', 'orders', 'create', 'Create new orders'),
+('orders.update', 'orders', 'update', 'Update own orders'),
+('orders.delete', 'orders', 'delete', 'Delete own orders'),
+('orders.manage', 'orders', 'manage', 'Manage any order'),
+
+-- Customer permissions
+('customers.view', 'customers', 'view', 'View customers'),
+('customers.create', 'customers', 'create', 'Create new customers'),
+('customers.update', 'customers', 'update', 'Update customer profiles'),
+('customers.delete', 'customers', 'delete', 'Delete customers'),
+
+-- SSL/Certificate permissions (admin only)
+('certificates.view', 'certificates', 'view', 'View SSL certificates'),
+('certificates.create', 'certificates', 'create', 'Create SSL certificates'),
+('certificates.manage', 'certificates', 'manage', 'Manage SSL certificates'),
+
+-- Deployment permissions
+('deployments.view', 'deployments', 'view', 'View deployments'),
+('deployments.create', 'deployments', 'create', 'Create deployments'),
+('deployments.manage', 'deployments', 'manage', 'Manage deployments'),
 
 -- Analytics permissions
 ('analytics.view', 'analytics', 'view', 'View platform analytics'),
-('analytics.export', 'analytics', 'export', 'Export analytics data'),
-
--- Authoring permissions
-('authoring.create', 'authoring', 'create', 'Use authoring wizards'),
-('authoring.bulk_create', 'authoring', 'bulk_create', 'Bulk create polls and stories')
+('analytics.export', 'analytics', 'export', 'Export analytics data')
 ON CONFLICT (resource, action) DO NOTHING;
 
 -- ==================== ROLE PERMISSIONS ====================
 
--- Grant permissions to user role (basic participation)
+-- Grant permissions to user role (basic site management)
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'user'
 AND p.name IN (
-  'polls.view', 'polls.respond',
-  'comments.view', 'comments.create', 'comments.update', 'comments.delete',
-  'context_sources.view',
-  'users.view', 'users.update'
-)
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Grant permissions to premium_user role (enhanced features)
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'premium_user'
-AND p.name IN (
-  'polls.view', 'polls.create', 'polls.update', 'polls.delete', 'polls.respond',
-  'comments.view', 'comments.create', 'comments.update', 'comments.delete',
-  'context_sources.view', 'context_sources.create', 'context_sources.update', 'context_sources.delete',
   'users.view', 'users.update',
-  'authoring.create'
-)
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Grant permissions to content_creator role (content management)
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'content_creator'
-AND p.name IN (
-  'polls.view', 'polls.create', 'polls.update', 'polls.delete', 'polls.respond',
-  'comments.view', 'comments.create', 'comments.update', 'comments.delete',
-  'context_sources.view', 'context_sources.create', 'context_sources.update', 'context_sources.delete',
-  'users.view', 'users.update',
-  'authoring.create', 'authoring.bulk_create'
-)
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Grant permissions to analyst role (analytics access)
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'analyst'
-AND p.name IN (
-  'polls.view', 'polls.respond',
-  'comments.view',
-  'context_sources.view',
-  'users.view',
-  'analytics.view', 'analytics.export'
-)
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Grant permissions to moderator role (content moderation)
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'moderator'
-AND p.name IN (
-  'users.view', 'users.moderate',
-  'polls.view', 'polls.moderate', 'polls.respond',
-  'comments.view', 'comments.moderate',
-  'context_sources.view', 'context_sources.moderate',
+  'sites.view', 'sites.create', 'sites.update', 'sites.delete',
+  'templates.view', 'templates.create', 'templates.update', 'templates.delete',
+  'products.view', 'products.create', 'products.update', 'products.delete',
+  'orders.view', 'orders.create', 'orders.update', 'orders.delete',
+  'customers.view', 'customers.create', 'customers.update',
+  'deployments.view', 'deployments.create',
   'analytics.view'
 )
 ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -135,11 +100,11 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- ==================== DEFAULT ADMIN ASSIGNMENT ====================
 
 -- Note: Admin user assignment should be done manually via RBAC CLI
--- Example: node scripts/rbac.js add-role-to-user admin@opinionpulse.org admin
+-- Example: node scripts/rbac.js add-role-to-user admin@smartstore.ng admin
 
 -- You can uncomment and modify this if you want to automatically assign admin role
 -- INSERT INTO user_roles (user_id, role_id)
 -- SELECT u.id, r.id FROM users u, roles r
 -- WHERE r.name = 'admin'
--- AND u.email = 'admin@opinionpulse.org'
+-- AND u.email = 'admin@smartstore.ng'
 -- ON CONFLICT (user_id, role_id) DO NOTHING;

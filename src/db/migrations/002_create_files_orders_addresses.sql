@@ -374,3 +374,115 @@ CREATE INDEX idx_location_tracking_status ON order_location_tracking(status);
 COMMENT ON COLUMN order_location_tracking.status IS 'Valid statuses: heading_to_store, at_store, shopping, heading_to_pickup, at_pickup_point, heading_to_delivery, at_delivery, delivered';
 
 COMMENT ON TABLE order_location_tracking IS 'Real-time location tracking of shoppers and dispatchers during order fulfillment. All location data stored in locations table.';
+
+-- Add profile_photo_id column to profiles table
+ALTER TABLE profiles 
+ADD COLUMN IF NOT EXISTS profile_photo_id UUID REFERENCES files(id) ON DELETE SET NULL;
+
+-- Create index for profile photo lookups
+CREATE INDEX IF NOT EXISTS idx_profiles_profile_photo_id ON profiles(profile_photo_id);
+
+-- Update existing profile_photo_url entries to use file IDs if they exist
+-- This is a data migration that would need to be run carefully in production
+-- For now, we'll just add the column and leave existing URLs as-is
+
+-- Add additional fields to files table for better organization
+ALTER TABLE files 
+ADD COLUMN IF NOT EXISTS width INTEGER,
+ADD COLUMN IF NOT EXISTS height INTEGER,
+ADD COLUMN IF NOT EXISTS thumbnail_s3_key VARCHAR(500),
+ADD COLUMN IF NOT EXISTS optimized_s3_key VARCHAR(500),
+ADD COLUMN IF NOT EXISTS upload_ip INET,
+ADD COLUMN IF NOT EXISTS usage_count INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
+
+-- Create indexes for new fields
+CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
+CREATE INDEX IF NOT EXISTS idx_files_dimensions ON files(width, height) WHERE width IS NOT NULL AND height IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_usage_count ON files(usage_count);
+
+-- ============================================================================
+-- 5. CREATE FUNCTIONS FOR FILE USAGE TRACKING
+-- ============================================================================
+
+-- Function to increment file usage count
+CREATE OR REPLACE FUNCTION increment_file_usage(file_uuid UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE files 
+  SET usage_count = usage_count + 1,
+      updated_at = NOW()
+  WHERE id = file_uuid;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to decrement file usage count
+CREATE OR REPLACE FUNCTION decrement_file_usage(file_uuid UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE files 
+  SET usage_count = GREATEST(usage_count - 1, 0),
+      updated_at = NOW()
+  WHERE id = file_uuid;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger function to update file usage when profile photos are changed
+CREATE OR REPLACE FUNCTION update_file_usage_on_profile_photo()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Handle INSERT (new profile)
+  IF TG_OP = 'INSERT' AND NEW.profile_photo_id IS NOT NULL THEN
+    PERFORM increment_file_usage(NEW.profile_photo_id);
+    RETURN NEW;
+  END IF;
+  
+  -- Handle UPDATE (profile photo changed)
+  IF TG_OP = 'UPDATE' THEN
+    -- Decrement old file usage
+    IF OLD.profile_photo_id IS NOT NULL AND (NEW.profile_photo_id IS NULL OR OLD.profile_photo_id != NEW.profile_photo_id) THEN
+      PERFORM decrement_file_usage(OLD.profile_photo_id);
+    END IF;
+    
+    -- Increment new file usage
+    IF NEW.profile_photo_id IS NOT NULL AND (OLD.profile_photo_id IS NULL OR OLD.profile_photo_id != NEW.profile_photo_id) THEN
+      PERFORM increment_file_usage(NEW.profile_photo_id);
+    END IF;
+    
+    RETURN NEW;
+  END IF;
+  
+  -- Handle DELETE (profile deleted)
+  IF TG_OP = 'DELETE' AND OLD.profile_photo_id IS NOT NULL THEN
+    PERFORM decrement_file_usage(OLD.profile_photo_id);
+    RETURN OLD;
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create triggers for profiles
+DROP TRIGGER IF EXISTS trigger_profiles_photo_usage ON profiles;
+CREATE TRIGGER trigger_profiles_photo_usage
+  AFTER INSERT OR UPDATE OR DELETE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION update_file_usage_on_profile_photo();
+
+-- View for users with profile photos
+CREATE OR REPLACE VIEW users_with_profiles AS
+SELECT 
+  u.*,
+  p.first_name,
+  p.last_name,
+  p.display_name,
+  p.bio,
+  p.profile_photo_url,
+  p.profile_photo_id,
+  f.file_url as profile_photo_file_url,
+  f.width as profile_photo_width,
+  f.height as profile_photo_height
+FROM users u
+LEFT JOIN profiles p ON u.id = p.user_id
+LEFT JOIN files f ON p.profile_photo_id = f.id AND f.deleted_at IS NULL
+WHERE u.deleted_at IS NULL;

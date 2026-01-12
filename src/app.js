@@ -14,7 +14,7 @@ app.use(helmet());
 // CORS configuration
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',') 
-  : ['https://opinionpulse.org']; // Default
+  : ['https://api.smartstore.ng']; // Default
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -28,8 +28,8 @@ app.use(cors({
     return callback(null, origin);
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'client-type', 'Accept']
 }));
 
 // Body parsers
@@ -50,6 +50,44 @@ app.use((req, res, next) => {
   });
   
   next();
+});
+
+// Multi-tenant routing middleware (for site rendering)
+// This should come before API routes to catch subdomain/custom domain requests
+const hostnameExtractor = require('./modules/sites/middleware/hostnameExtractor');
+const siteRouter = require('./modules/sites/middleware/siteRouter');
+const publicRoutes = require('./modules/sites/routes/public.routes');
+
+// Apply multi-tenant routing only if not an API request
+app.use((req, res, next) => {
+  // Get hostname from request
+  const hostname = req.hostname || req.get('host') || req.headers.host || '';
+  const cleanHostname = hostname.split(':')[0].toLowerCase();
+  
+  // Skip multi-tenant routing for:
+  // 1. API hostname (localhost, api.smartstore.ng, etc.)
+  // 2. API paths that should always go to API routes
+  const apiHostnames = ['localhost', '127.0.0.1', 'api.smartstore.ng', 'api.smartstore.ng.ng'];
+  const apiPaths = ['/api', '/v1', '/auth', '/health'];
+  const isApiHostname = apiHostnames.some(h => cleanHostname === h || cleanHostname.includes(h));
+  const isApiPath = apiPaths.some(path => req.path.startsWith(path));
+  
+  // If it's an API hostname or API path, skip multi-tenant routing
+  if (isApiHostname || isApiPath) {
+    return next();
+  }
+  
+  // Apply hostname extraction and site routing for subdomain/custom domain requests
+  hostnameExtractor(req, res, () => {
+    siteRouter(req, res, () => {
+      // If site is found, use public routes
+      if (req.site) {
+        return publicRoutes(req, res, next);
+      }
+      // Otherwise continue to API routes (fallback)
+      next();
+    });
+  });
 });
 
 // API routes

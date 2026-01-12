@@ -33,11 +33,20 @@ class AuthModel {
         [user.id, first_name, last_name, `${first_name} ${last_name}`]
       );
       
-      // Assign role
-      if (role) {
+      // Automatically assign "user" role to all new users
+      await client.query(
+        `INSERT INTO user_roles (user_id, role_id)
+         SELECT $1, id FROM roles WHERE name = 'user'
+         ON CONFLICT (user_id, role_id) DO NOTHING`,
+        [user.id]
+      );
+      
+      // Assign additional role if provided (e.g., admin can be added later)
+      if (role && role !== 'user') {
         await client.query(
           `INSERT INTO user_roles (user_id, role_id)
-           SELECT $1, id FROM roles WHERE name = $2`,
+           SELECT $1, id FROM roles WHERE name = $2
+           ON CONFLICT (user_id, role_id) DO NOTHING`,
           [user.id, role]
         );
       }

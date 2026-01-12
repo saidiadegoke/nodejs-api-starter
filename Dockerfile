@@ -1,5 +1,5 @@
-# Multi-stage build for Node.js API
-FROM node:23-alpine AS base
+# Multi-stage build for SmartStore API
+FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -7,16 +7,10 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
-COPY package-lock.json* ./
+COPY package.json package-lock.json* ./
 
-# Install dependencies - use npm install if no lockfile exists
-RUN if [ -f package-lock.json ]; then \
-      npm ci --omit=dev; \
-    else \
-      npm install --only=production; \
-    fi && \
-    npm cache clean --force
+# Install dependencies
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Production image
 FROM base AS runner
@@ -42,10 +36,10 @@ RUN mkdir -p uploads && chown -R apiuser:nodejs uploads
 
 USER apiuser
 
-EXPOSE 5010
+EXPOSE 4050
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5010/health || exit 1
+  CMD curl -f http://localhost:4050/health || exit 1
 
 CMD ["npm", "start"]

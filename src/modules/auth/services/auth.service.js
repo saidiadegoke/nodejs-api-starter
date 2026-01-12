@@ -48,8 +48,10 @@ class AuthService {
       throw new Error('Password must be at least 8 characters');
     }
 
-    if (!['user', 'b2b'].includes(role)) {
-      throw new Error('Invalid role. Must be user');
+    // Role is optional - all users get "user" role automatically
+    // Additional roles (like admin) can be assigned separately
+    if (role && !['user', 'admin'].includes(role)) {
+      throw new Error('Invalid role. Must be user or admin');
     }
 
     // Format phone number with country code

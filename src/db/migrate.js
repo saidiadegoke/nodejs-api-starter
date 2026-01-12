@@ -87,4 +87,3 @@ const pool = require('./pool');
     client.release();
   }
 })();
-

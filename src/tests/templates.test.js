@@ -1,0 +1,690 @@
+const axios = require('axios');
+const { cleanupAll, logCleanupResults } = require('./cleanup-helper');
+
+// Ensure environment is loaded before getting BASE_URL
+const BASE_URL = process.env.API_BASE_URL || 'http://localhost:4050';
+const TEST_TIMEOUT = 30000; // 30 seconds
+
+// Log configuration at start
+console.warn(`\n🧪 Templates Test Configuration:`);
+console.warn(`   API Base URL: ${BASE_URL}`);
+console.warn(`   Environment: ${process.env.NODE_ENV}\n`);
+
+// Test data storage
+let testUser = null;
+let authToken = null;
+
+// Track all created resources for cleanup
+let createdResources = {
+  users: [],
+  templates: []
+};
+
+// Helper function to create axios instance with auth
+const createAuthClient = (token) => {
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  return axios.create({
+    baseURL: BASE_URL,
+    headers
+  });
+};
+
+// Helper to generate random email
+const generateEmail = () => `test${Date.now()}${Math.floor(Math.random() * 1000)}@example.com`;
+
+// Helper to generate random template name
+const generateTemplateName = () => `Test Template ${Date.now()}`;
+
+// Cleanup function to delete test data
+const cleanupTestData = async () => {
+  console.log('\n🧹 Cleaning up test data...');
+  
+  try {
+    const results = await cleanupAll(createdResources, BASE_URL);
+    logCleanupResults(results);
+
+    // Reset tracking arrays
+    createdResources = {
+      users: [],
+      templates: []
+    };
+
+  } catch (error) {
+    console.error('❌ Cleanup failed:', error.message);
+  }
+};
+
+describe('Templates API Tests', () => {
+  jest.setTimeout(TEST_TIMEOUT);
+
+  // Setup: Create test user and get auth token
+  beforeAll(async () => {
+    try {
+      const client = createAuthClient();
+      
+      // Create test user
+      const userData = {
+        email: generateEmail(),
+        password: 'Test@123456',
+        first_name: 'Test',
+        last_name: 'User',
+        role: 'user'
+      };
+      
+      // Register user
+      await client.post('/auth/register', userData);
+      
+      // Login to get token and user info
+      const loginResponse = await client.post('/auth/login', {
+        identifier: userData.email,
+        password: userData.password
+      });
+      
+      // Extract user from login response
+      const loginData = loginResponse.data.data;
+      testUser = loginData.user || {
+        user_id: loginData.user_id,
+        email: loginData.email,
+        phone: loginData.phone,
+        first_name: loginData.first_name,
+        last_name: loginData.last_name,
+        role: loginData.role
+      };
+      authToken = loginData.access_token;
+      
+      createdResources.users.push({ user_id: testUser.user_id, token: authToken });
+      
+      console.log('✅ Test user created and authenticated:', testUser.email, 'user_id:', testUser.user_id);
+      
+    } catch (error) {
+      console.error('❌ Failed to setup test user:', error.response?.data || error.message);
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      }
+      throw error;
+    }
+  });
+
+  // Cleanup after all tests complete
+  afterAll(async () => {
+    await cleanupTestData();
+  });
+
+  describe('Template Creation with Default Pages', () => {
+    test('should create template with default pages automatically', async () => {
+      const client = createAuthClient(authToken);
+      
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template with default pages',
+        config: {
+          // Empty config - should trigger default pages creation
+          pages: [],
+          blocks: [],
+          theme: {
+            colors: {},
+            fonts: {}
+          }
+        }
+      };
+
+      const response = await client.post('/templates', templateData);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      expect(response.data.data).toHaveProperty('id');
+      expect(response.data.data).toHaveProperty('config');
+      
+      const templateId = response.data.data.id;
+      createdResources.templates.push({ template_id: templateId, token: authToken });
+      
+      // Parse config from response
+      const config = typeof response.data.data.config === 'string'
+        ? JSON.parse(response.data.data.config)
+        : response.data.data.config;
+      
+      // Verify default pages are present
+      expect(config).toHaveProperty('pages');
+      expect(Array.isArray(config.pages)).toBe(true);
+      
+      // Check for default page slugs
+      const pageSlugs = config.pages.map(p => p.slug);
+      const expectedDefaultPages = ['home', 'about', 'contact', 'services', 'store'];
+      
+      expectedDefaultPages.forEach(slug => {
+        expect(pageSlugs).toContain(slug);
+      });
+      
+      // Verify at least 5 pages (the default pages)
+      expect(config.pages.length).toBeGreaterThanOrEqual(5);
+      
+      console.log('✅ Template created with default pages:', pageSlugs);
+      
+      // Verify blocks are present (default blocks for navigation, footer, etc.)
+      expect(config).toHaveProperty('blocks');
+      expect(Array.isArray(config.blocks)).toBe(true);
+      expect(config.blocks.length).toBeGreaterThan(0);
+      
+      console.log('✅ Template created with default blocks:', config.blocks.length, 'blocks');
+    });
+
+    test('should create template with default pages even when config has existing pages', async () => {
+      const client = createAuthClient(authToken);
+      
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template with existing pages',
+        config: {
+          // Config with only home page - should still add other defaults
+          pages: [
+            {
+              slug: 'home',
+              title: 'Home',
+              layout: 'linear',
+              blockIds: []
+            }
+          ],
+          blocks: [],
+          theme: {
+            colors: {},
+            fonts: {}
+          }
+        }
+      };
+
+      const response = await client.post('/templates', templateData);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      
+      const templateId = response.data.data.id;
+      createdResources.templates.push({ template_id: templateId, token: authToken });
+      
+      // Parse config
+      const config = typeof response.data.data.config === 'string'
+        ? JSON.parse(response.data.data.config)
+        : response.data.data.config;
+      
+      // Verify default pages are added (should have more than just home)
+      const pageSlugs = config.pages.map(p => p.slug);
+      const expectedDefaultPages = ['about', 'contact', 'services', 'store'];
+      
+      expectedDefaultPages.forEach(slug => {
+        expect(pageSlugs).toContain(slug);
+      });
+      
+      // Verify home page is still present (not duplicated)
+      const homePages = config.pages.filter(p => p.slug === 'home');
+      expect(homePages.length).toBe(1);
+      
+      console.log('✅ Template created with existing pages, defaults added:', pageSlugs);
+    });
+
+    test('should not duplicate pages when creating template with all default pages already present', async () => {
+      const client = createAuthClient(authToken);
+      
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template with all default pages',
+        config: {
+          pages: [
+            { slug: 'home', title: 'Home', layout: 'linear', blockIds: [] },
+            { slug: 'about', title: 'About', layout: 'linear', blockIds: [] },
+            { slug: 'contact', title: 'Contact', layout: 'linear', blockIds: [] },
+            { slug: 'services', title: 'Services', layout: 'linear', blockIds: [] },
+            { slug: 'store', title: 'Store', layout: 'linear', blockIds: [] }
+          ],
+          blocks: [],
+          theme: {
+            colors: {},
+            fonts: {}
+          }
+        }
+      };
+
+      const response = await client.post('/templates', templateData);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      
+      const templateId = response.data.data.id;
+      createdResources.templates.push({ template_id: templateId, token: authToken });
+      
+      // Parse config
+      const config = typeof response.data.data.config === 'string'
+        ? JSON.parse(response.data.data.config)
+        : response.data.data.config;
+      
+      // Verify no duplicates (each slug should appear only once)
+      const pageSlugs = config.pages.map(p => p.slug);
+      const uniqueSlugs = [...new Set(pageSlugs)];
+      
+      expect(pageSlugs.length).toBe(uniqueSlugs.length);
+      
+      // Verify all default pages are still present
+      const expectedDefaultPages = ['home', 'about', 'contact', 'services', 'store'];
+      expectedDefaultPages.forEach(slug => {
+        expect(pageSlugs).toContain(slug);
+      });
+      
+      console.log('✅ Template created without duplicates:', pageSlugs);
+    });
+
+    test('should create template with default blocks', async () => {
+      const client = createAuthClient(authToken);
+      
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template for default blocks',
+        config: {
+          pages: [],
+          blocks: [],
+          theme: {
+            colors: {},
+            fonts: {}
+          }
+        }
+      };
+
+      const response = await client.post('/templates', templateData);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      
+      const templateId = response.data.data.id;
+      createdResources.templates.push({ template_id: templateId, token: authToken });
+      
+      // Parse config
+      const config = typeof response.data.data.config === 'string'
+        ? JSON.parse(response.data.data.config)
+        : response.data.data.config;
+      
+      // Verify default blocks are present
+      expect(config).toHaveProperty('blocks');
+      expect(Array.isArray(config.blocks)).toBe(true);
+      expect(config.blocks.length).toBeGreaterThan(0);
+      
+      // Check for default block IDs (navigation and footer)
+      const blockIds = config.blocks.map(b => b.id);
+      const expectedDefaultBlocks = ['block-nav-default', 'block-footer-default'];
+      
+      expectedDefaultBlocks.forEach(blockId => {
+        expect(blockIds).toContain(blockId);
+      });
+      
+      // Verify blocks have componentId set
+      const navBlock = config.blocks.find(b => b.id === 'block-nav-default');
+      const footerBlock = config.blocks.find(b => b.id === 'block-footer-default');
+      
+      if (navBlock) {
+        expect(navBlock).toHaveProperty('componentId');
+        expect(navBlock.componentId).toBe('topnav');
+      }
+      
+      if (footerBlock) {
+        expect(footerBlock).toHaveProperty('componentId');
+        expect(footerBlock.componentId).toBe('footer');
+      }
+      
+      console.log('✅ Template created with default blocks:', blockIds.slice(0, 5));
+    });
+
+    test('should not duplicate blocks when creating template with existing blocks', async () => {
+      const client = createAuthClient(authToken);
+      
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template with existing blocks',
+        config: {
+          pages: [],
+          blocks: [
+            {
+              id: 'block-nav-default',
+              name: 'Navigation',
+              componentId: 'topnav',
+              data: {},
+              order: 0
+            },
+            {
+              id: 'block-footer-default',
+              name: 'Footer',
+              componentId: 'footer',
+              data: {},
+              order: 0
+            }
+          ],
+          theme: {
+            colors: {},
+            fonts: {}
+          }
+        }
+      };
+
+      const response = await client.post('/templates', templateData);
+
+      expect(response.status).toBe(200);
+      expect(response.data.success).toBe(true);
+      
+      const templateId = response.data.data.id;
+      createdResources.templates.push({ template_id: templateId, token: authToken });
+      
+      // Parse config
+      const config = typeof response.data.data.config === 'string'
+        ? JSON.parse(response.data.data.config)
+        : response.data.data.config;
+      
+      // Verify no duplicate blocks (each block ID should appear only once)
+      const blockIds = config.blocks.map(b => b.id);
+      const uniqueBlockIds = [...new Set(blockIds)];
+      
+      expect(blockIds.length).toBe(uniqueBlockIds.length);
+      
+      // Verify default blocks are still present
+      expect(blockIds).toContain('block-nav-default');
+      expect(blockIds).toContain('block-footer-default');
+      
+      console.log('✅ Template created without duplicate blocks');
+    });
+  });
+
+  describe('Add Default Pages to Existing Template', () => {
+    let createdTemplateId = null;
+
+    test('should add default pages to existing template', async () => {
+      const client = createAuthClient(authToken);
+      
+      // Create a template without default pages
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template for adding defaults',
+        config: {
+          pages: [
+            {
+              slug: 'custom-page',
+              title: 'Custom Page',
+              layout: 'linear',
+              blockIds: []
+            }
+          ],
+          blocks: [],
+          theme: {
+            colors: {},
+            fonts: {}
+          }
+        }
+      };
+
+      const createResponse = await client.post('/templates', templateData);
+      createdTemplateId = createResponse.data.data.id;
+      createdResources.templates.push({ template_id: createdTemplateId, token: authToken });
+      
+      // Verify template was created
+      expect(createResponse.status).toBe(200);
+      
+      // Wait a bit to ensure template is fully created
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Add default pages
+      const addResponse = await client.post(`/templates/${createdTemplateId}/default-pages`);
+
+      expect(addResponse.status).toBe(200);
+      expect(addResponse.data.success).toBe(true);
+      
+      // Parse updated config
+      const updatedConfig = typeof addResponse.data.data.config === 'string'
+        ? JSON.parse(addResponse.data.data.config)
+        : addResponse.data.data.config;
+      
+      // Verify default pages are added
+      const pageSlugs = updatedConfig.pages.map(p => p.slug);
+      const expectedDefaultPages = ['home', 'about', 'contact', 'services', 'store'];
+      
+      expectedDefaultPages.forEach(slug => {
+        expect(pageSlugs).toContain(slug);
+      });
+      
+      // Verify custom page is still present
+      expect(pageSlugs).toContain('custom-page');
+      
+      console.log('✅ Default pages added to existing template:', pageSlugs);
+    });
+  });
+
+  describe('Template Preview Service', () => {
+    let testTemplateId = null;
+    let testTemplateConfig = null;
+
+    beforeAll(async () => {
+      // Create a template with default pages and blocks for preview testing
+      const client = createAuthClient(authToken);
+      
+      const templateData = {
+        name: generateTemplateName(),
+        description: 'Test template for preview service',
+        config: {
+          pages: [],
+          blocks: [],
+          theme: {
+            colors: {
+              primary: '#3b82f6',
+              secondary: '#6b7280',
+            },
+            fonts: {
+              heading: 'Inter, sans-serif',
+              body: 'Inter, sans-serif',
+            }
+          }
+        }
+      };
+
+      const response = await client.post('/templates', templateData);
+      testTemplateId = response.data.data.id;
+      createdResources.templates.push({ template_id: testTemplateId, token: authToken });
+      
+      // Parse config
+      testTemplateConfig = typeof response.data.data.config === 'string'
+        ? JSON.parse(response.data.data.config)
+        : response.data.data.config;
+    });
+
+    test('should resolve blockIds to actual blocks in preview config', async () => {
+      const PreviewService = require('../modules/sites/services/preview.service');
+      
+      // Get preview config
+      const previewConfig = await PreviewService.previewTemplate(testTemplateId);
+      
+      // Verify preview config structure
+      expect(previewConfig).toHaveProperty('site');
+      expect(previewConfig).toHaveProperty('pages');
+      expect(previewConfig).toHaveProperty('template');
+      
+      // Find home page
+      const homePage = previewConfig.pages.find(p => p.slug === 'home');
+      expect(homePage).toBeDefined();
+      
+      // Verify home page has content with regions
+      expect(homePage.content).toBeDefined();
+      expect(homePage.content.regions).toBeDefined();
+      expect(Array.isArray(homePage.content.regions)).toBe(true);
+      
+      // Find header region
+      const headerRegion = homePage.content.regions.find(r => r.regionId === 'header' || r.id === 'header');
+      expect(headerRegion).toBeDefined();
+      
+      // Verify header region has blocks (not just blockIds)
+      expect(headerRegion.blocks).toBeDefined();
+      expect(Array.isArray(headerRegion.blocks)).toBe(true);
+      expect(headerRegion.blocks.length).toBeGreaterThan(0);
+      
+      // Verify blocks have type set
+      const navBlock = headerRegion.blocks.find(b => b.componentId === 'topnav' || b.type === 'topnav');
+      expect(navBlock).toBeDefined();
+      expect(navBlock).toHaveProperty('type');
+      expect(navBlock.type).toBe('topnav');
+      
+      console.log('✅ BlockIds resolved to blocks:', headerRegion.blocks.map(b => ({ id: b.id, type: b.type })));
+    });
+
+    test('should set type from componentId when type is missing', async () => {
+      const PreviewService = require('../modules/sites/services/preview.service');
+      
+      // Get preview config
+      const previewConfig = await PreviewService.previewTemplate(testTemplateId);
+      
+      // Find home page
+      const homePage = previewConfig.pages.find(p => p.slug === 'home');
+      expect(homePage).toBeDefined();
+      
+      // Get all blocks from all regions
+      const allBlocks = [];
+      if (homePage.content.regions) {
+        homePage.content.regions.forEach(region => {
+          if (region.blocks && Array.isArray(region.blocks)) {
+            allBlocks.push(...region.blocks);
+          }
+        });
+      }
+      
+      // Verify all blocks have type set
+      allBlocks.forEach(block => {
+        expect(block).toHaveProperty('type');
+        expect(typeof block.type).toBe('string');
+        expect(block.type.length).toBeGreaterThan(0);
+        
+        // If block has componentId, type should match or be set from componentId
+        if (block.componentId) {
+          expect(block.type).toBe(block.componentId);
+        }
+      });
+      
+      console.log('✅ All blocks have type set:', allBlocks.map(b => ({ id: b.id, type: b.type, componentId: b.componentId })));
+    });
+
+    test('should include all blocks from home page in preview', async () => {
+      const PreviewService = require('../modules/sites/services/preview.service');
+      
+      // Get preview config
+      const previewConfig = await PreviewService.previewTemplate(testTemplateId);
+      
+      // Find home page
+      const homePage = previewConfig.pages.find(p => p.slug === 'home');
+      expect(homePage).toBeDefined();
+      
+      // Get main region blocks
+      const mainRegion = homePage.content.regions.find(r => r.regionId === 'main' || r.id === 'main' || r.regionType === 'main');
+      expect(mainRegion).toBeDefined();
+      expect(mainRegion.blocks).toBeDefined();
+      expect(Array.isArray(mainRegion.blocks)).toBe(true);
+      
+      // Verify home page has expected blocks (hero, features, stats, testimonials, cta)
+      const blockTypes = mainRegion.blocks.map(b => b.type || b.componentId);
+      const expectedBlockTypes = ['hero', 'features', 'stats', 'testimonials', 'cta'];
+      
+      // At least some of the expected blocks should be present
+      const foundBlocks = expectedBlockTypes.filter(type => blockTypes.includes(type));
+      expect(foundBlocks.length).toBeGreaterThan(0);
+      
+      console.log('✅ Home page blocks:', blockTypes);
+      console.log('✅ Expected blocks found:', foundBlocks);
+    });
+
+    test('should include topnav and footer blocks in header and footer regions', async () => {
+      const PreviewService = require('../modules/sites/services/preview.service');
+      
+      // Get preview config
+      const previewConfig = await PreviewService.previewTemplate(testTemplateId);
+      
+      // Find home page
+      const homePage = previewConfig.pages.find(p => p.slug === 'home');
+      expect(homePage).toBeDefined();
+      
+      // Find header region
+      const headerRegion = homePage.content.regions.find(r => 
+        r.regionId === 'header' || r.id === 'header' || r.regionType === 'header'
+      );
+      expect(headerRegion).toBeDefined();
+      
+      // Verify topnav block is in header
+      const topnavBlock = headerRegion.blocks.find(b => 
+        b.type === 'topnav' || b.componentId === 'topnav'
+      );
+      expect(topnavBlock).toBeDefined();
+      expect(topnavBlock.type).toBe('topnav');
+      
+      // Find footer region
+      const footerRegion = homePage.content.regions.find(r => 
+        r.regionId === 'footer' || r.id === 'footer' || r.regionType === 'footer'
+      );
+      expect(footerRegion).toBeDefined();
+      
+      // Verify footer block is in footer
+      const footerBlock = footerRegion.blocks.find(b => 
+        b.type === 'footer' || b.componentId === 'footer'
+      );
+      expect(footerBlock).toBeDefined();
+      expect(footerBlock.type).toBe('footer');
+      
+      console.log('✅ Topnav block found:', topnavBlock.id);
+      console.log('✅ Footer block found:', footerBlock.id);
+    });
+
+    test('should handle pages with both blockIds and embedded blocks', async () => {
+      const PreviewService = require('../modules/sites/services/preview.service');
+      
+      // Get preview config
+      const previewConfig = await PreviewService.previewTemplate(testTemplateId);
+      
+      // Verify all pages have resolved blocks
+      previewConfig.pages.forEach(page => {
+        if (page.content && page.content.regions) {
+          page.content.regions.forEach(region => {
+            // Regions should have blocks array, not just blockIds
+            if (region.blocks) {
+              expect(Array.isArray(region.blocks)).toBe(true);
+              region.blocks.forEach(block => {
+                expect(block).toHaveProperty('id');
+                expect(block).toHaveProperty('type');
+                expect(block).toHaveProperty('data');
+              });
+            }
+          });
+        }
+      });
+      
+      console.log('✅ All pages have resolved blocks');
+    });
+
+    test('should preserve block order when resolving blockIds', async () => {
+      const PreviewService = require('../modules/sites/services/preview.service');
+      
+      // Get preview config
+      const previewConfig = await PreviewService.previewTemplate(testTemplateId);
+      
+      // Find home page
+      const homePage = previewConfig.pages.find(p => p.slug === 'home');
+      expect(homePage).toBeDefined();
+      
+      // Get main region blocks
+      const mainRegion = homePage.content.regions.find(r => r.regionId === 'main' || r.id === 'main' || r.regionType === 'main');
+      expect(mainRegion).toBeDefined();
+      
+      if (mainRegion.blocks && mainRegion.blocks.length > 1) {
+        // Verify blocks are ordered correctly
+        const orders = mainRegion.blocks.map(b => b.order || 0);
+        const sortedOrders = [...orders].sort((a, b) => a - b);
+        expect(orders).toEqual(sortedOrders);
+        
+        console.log('✅ Block order preserved:', orders);
+      }
+    });
+  });
+});
+

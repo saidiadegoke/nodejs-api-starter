@@ -5,7 +5,7 @@ const pool = require('./db/pool');
 const webSocketService = require('./shared/services/websocket.service');
 const http = require('http');
 
-const PORT = port || 5010;
+const PORT = port || 4050;
 
 // Test database connection before starting server
 const startServer = async () => {
@@ -22,9 +22,9 @@ const startServer = async () => {
     
     // Start server
     server.listen(PORT, () => {
-      logger.info(`🚀 OpinionPulse API Server running on port ${PORT}`);
+      logger.info(`🚀 API Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`API Documentation: http://localhost:${PORT}/api`);
+      logger.info(`API Documentation: http://localhost:${PORT}`);
       logger.info(`WebSocket server ready for connections`);
     });
   } catch (error) {

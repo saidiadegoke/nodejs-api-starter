@@ -22,7 +22,7 @@ router.post(
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
     body('first_name').notEmpty().withMessage('First name is required'),
     body('last_name').notEmpty().withMessage('Last name is required'),
-    body('role').isIn(['user', 'b2b']).withMessage('Invalid role'),
+    body('role').optional().isIn(['user', 'admin']).withMessage('Invalid role. Must be user or admin'),
     // Custom validation: at least one of email or phone must be provided
     body().custom((value, { req }) => {
       if (!req.body.email && !req.body.phone) {
