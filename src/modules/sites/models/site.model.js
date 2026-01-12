@@ -6,7 +6,13 @@ class SiteModel {
    */
   static async getUserSites(userId) {
     const result = await pool.query(
-      'SELECT * FROM sites WHERE owner_id = $1 ORDER BY created_at DESC',
+      `SELECT 
+        s.*,
+        st.template_id
+      FROM sites s
+      LEFT JOIN site_templates st ON s.id = st.site_id
+      WHERE s.owner_id = $1 
+      ORDER BY s.created_at DESC`,
       [userId]
     );
     return result.rows;

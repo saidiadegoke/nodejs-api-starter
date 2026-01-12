@@ -495,7 +495,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
   status VARCHAR(50) DEFAULT 'pending' NOT NULL,
   deployed_at TIMESTAMP,
-  deployed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  deployed_by UUID REFERENCES users(id) ON DELETE SET NULL,
   deployment_url VARCHAR(500),
   error_message TEXT,
   deployment_metadata JSONB,
