@@ -417,6 +417,8 @@ class CloudflareService {
 
       // Cloudflare API endpoint for creating Origin Certificates
       // Note: This endpoint is for account-level certificates
+      // API endpoint: POST /certificates
+      // Note: request_type is not needed when creating certificates, only when listing
       const response = await fetch(`${this.apiUrl}/certificates`, {
         method: 'POST',
         headers: this.getAuthHeaders(),
@@ -426,7 +428,6 @@ class CloudflareService {
           validity_days: options.validityDays || 5475, // 15 years (default)
           key_type: options.keyType || 'rsa', // 'rsa' or 'ecdsa'
           key_length: options.keyLength || 2048, // For RSA: 2048 or 4096, For ECDSA: 256
-          request_type: options.requestType || 'origin-ca', // 'origin-ca' for Origin Certificates
         }),
       });
 
