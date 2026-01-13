@@ -108,14 +108,36 @@ server {
     try {
       // Ensure directory exists
       const configDir = path.dirname(this.nginxSitesEnabled);
-      await fs.mkdir(configDir, { recursive: true });
+      try {
+        await fs.mkdir(configDir, { recursive: true });
+      } catch (error) {
+        if (error.code === 'EACCES') {
+          // Try with sudo if permission denied
+          logger.warn(`[NginxService] Permission denied creating directory, trying with sudo`);
+          await this.executeWithSudo(`mkdir -p ${configDir}`);
+        } else {
+          throw error;
+        }
+      }
 
       // Generate config
       const config = await this.generateNginxConfig(domain, sslCertPath, sslKeyPath);
 
       // Write config file
       const configFile = path.join(configDir, `${domain.replace(/\./g, '_')}.conf`);
-      await fs.writeFile(configFile, config, 'utf8');
+      try {
+        await fs.writeFile(configFile, config, 'utf8');
+      } catch (error) {
+        if (error.code === 'EACCES') {
+          // Write to temp file first, then move with sudo
+          const tempFile = `/tmp/nginx-${domain.replace(/\./g, '_')}-${Date.now()}.conf`;
+          await fs.writeFile(tempFile, config, 'utf8');
+          await this.executeWithSudo(`mv ${tempFile} ${configFile}`);
+          await this.executeWithSudo(`chmod 644 ${configFile}`);
+        } else {
+          throw error;
+        }
+      }
 
       logger.info(`[NginxService] Nginx config written for ${domain}: ${configFile}`);
       return configFile;
@@ -189,7 +211,8 @@ server {
         testCommand = 'nginx -t';
       }
       
-      const { stdout, stderr } = await execAsync(testCommand);
+      // Use sudo if configured
+      const { stdout, stderr } = await this.executeWithSudo(testCommand);
       if (stderr && !stderr.includes('test is successful')) {
         throw new Error(stderr);
       }
@@ -207,8 +230,9 @@ server {
    */
   async reloadNginx() {
     try {
-      // Test config first
-      await this.testNginxConfig();
+      // Test config first (with sudo if needed)
+      const testCommand = 'nginx -t';
+      await this.executeWithSudo(testCommand);
 
       // Determine reload command based on deployment type
       // If nginx is in Docker, use docker exec
@@ -230,7 +254,8 @@ server {
         reloadCommand = 'nginx -s reload';
       }
       
-      const { stdout, stderr } = await execAsync(reloadCommand);
+      // Use sudo if configured
+      const { stdout, stderr } = await this.executeWithSudo(reloadCommand);
       
       if (stderr && !stderr.includes('successful') && !stderr.includes('reloaded')) {
         throw new Error(stderr);

@@ -550,21 +550,66 @@ class CertificateManagerService {
 
       logger.info(`[CertificateManager] Uploading base origin certificate manually`);
 
-      // Save certificate files
-      const certPath = process.env.CLOUDFLARE_ORIGIN_CERT_PATH || '/etc/ssl/smartstore/certs/cloudflare-origin.crt';
-      const keyPath = process.env.CLOUDFLARE_ORIGIN_KEY_PATH || '/etc/ssl/smartstore/keys/cloudflare-origin.key';
+      // Determine certificate paths - use writable location if /etc/ssl is not accessible
+      let certPath = process.env.CLOUDFLARE_ORIGIN_CERT_PATH;
+      let keyPath = process.env.CLOUDFLARE_ORIGIN_KEY_PATH;
+
+      // If not configured, try /etc/ssl first, fallback to ./ssl in app directory
+      if (!certPath || !keyPath) {
+        const defaultEtcPath = '/etc/ssl/smartstore/certs/cloudflare-origin.crt';
+        const defaultEtcKeyPath = '/etc/ssl/smartstore/keys/cloudflare-origin.key';
+        const defaultAppPath = path.join(process.cwd(), 'ssl', 'certs', 'cloudflare-origin.crt');
+        const defaultAppKeyPath = path.join(process.cwd(), 'ssl', 'keys', 'cloudflare-origin.key');
+
+        // Try to use /etc/ssl if we have permission, otherwise use app directory
+        try {
+          await fs.mkdir(path.dirname(defaultEtcPath), { recursive: true });
+          certPath = certPath || defaultEtcPath;
+          keyPath = keyPath || defaultEtcKeyPath;
+        } catch (error) {
+          logger.warn(`[CertificateManager] Cannot write to /etc/ssl, using app directory: ${error.message}`);
+          certPath = certPath || defaultAppPath;
+          keyPath = keyPath || defaultAppKeyPath;
+        }
+      }
       
-      // Ensure directories exist
-      await fs.mkdir(path.dirname(certPath), { recursive: true });
-      await fs.mkdir(path.dirname(keyPath), { recursive: true });
+      // Ensure directories exist (with error handling)
+      try {
+        await fs.mkdir(path.dirname(certPath), { recursive: true });
+        await fs.mkdir(path.dirname(keyPath), { recursive: true });
+      } catch (error) {
+        if (error.code === 'EACCES') {
+          throw new Error(
+            `Permission denied creating certificate directories. ` +
+            `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths, ` +
+            `or ensure the application has write permissions to ${path.dirname(certPath)}`
+          );
+        }
+        throw error;
+      }
       
       // Write certificate and key
-      await fs.writeFile(certPath, certificate);
-      await fs.writeFile(keyPath, privateKey);
-      
-      // Set permissions
-      await fs.chmod(certPath, 0o644);
-      await fs.chmod(keyPath, 0o600);
+      try {
+        await fs.writeFile(certPath, certificate);
+        await fs.writeFile(keyPath, privateKey);
+        
+        // Set permissions (ignore errors if not supported)
+        try {
+          await fs.chmod(certPath, 0o644);
+          await fs.chmod(keyPath, 0o600);
+        } catch (chmodError) {
+          logger.warn(`[CertificateManager] Could not set file permissions: ${chmodError.message}`);
+        }
+      } catch (error) {
+        if (error.code === 'EACCES') {
+          throw new Error(
+            `Permission denied writing certificate files. ` +
+            `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths, ` +
+            `or ensure the application has write permissions.`
+          );
+        }
+        throw error;
+      }
 
       // Create database record
       const certificateName = 'smartstore-base-origin-cert';
