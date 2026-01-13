@@ -575,17 +575,34 @@ class CertificateManagerService {
       
       // Ensure directories exist (with error handling)
       try {
-        await fs.mkdir(path.dirname(certPath), { recursive: true });
-        await fs.mkdir(path.dirname(keyPath), { recursive: true });
-      } catch (error) {
-        if (error.code === 'EACCES') {
+        // Create parent directories first
+        const certDir = path.dirname(certPath);
+        const keyDir = path.dirname(keyPath);
+        
+        // Try to create directories
+        await fs.mkdir(certDir, { recursive: true });
+        await fs.mkdir(keyDir, { recursive: true });
+        
+        // Verify we can write to the directories
+        const testFile = path.join(certDir, '.write-test');
+        try {
+          await fs.writeFile(testFile, 'test');
+          await fs.unlink(testFile);
+        } catch (writeError) {
           throw new Error(
-            `Permission denied creating certificate directories. ` +
+            `Cannot write to certificate directory: ${certDir}. ` +
             `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths, ` +
-            `or ensure the application has write permissions to ${path.dirname(certPath)}`
+            `or ensure the application has write permissions.`
           );
         }
-        throw error;
+      } catch (error) {
+        if (error.code === 'EACCES' || error.message.includes('Cannot write')) {
+          throw error; // Re-throw our custom error
+        }
+        throw new Error(
+          `Failed to create certificate directories: ${error.message}. ` +
+          `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths.`
+        );
       }
       
       // Write certificate and key

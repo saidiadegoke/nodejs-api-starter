@@ -31,8 +31,11 @@ COPY --from=deps --chown=apiuser:nodejs /app/node_modules ./node_modules
 # Copy application code
 COPY --chown=apiuser:nodejs . .
 
-# Create uploads directory with proper permissions
-RUN mkdir -p uploads && chown -R apiuser:nodejs uploads
+# Create uploads and SSL directories with proper permissions
+RUN mkdir -p uploads ssl/certs ssl/keys && \
+    chown -R apiuser:nodejs uploads ssl && \
+    chmod -R 755 ssl && \
+    chmod -R 700 ssl/keys
 
 USER apiuser
 
