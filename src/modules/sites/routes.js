@@ -208,6 +208,7 @@ router.delete('/admin/certificates/:certificateId', requireAuth, requireRole('ad
  */
 router.get('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.getBaseOriginCertificate);
 router.post('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.createBaseOriginCertificate);
+router.post('/admin/certificates/base-origin/upload', requireAuth, requireRole('admin'), CertificateController.uploadBaseOriginCertificate);
 
 module.exports = router;
 

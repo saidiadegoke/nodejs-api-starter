@@ -518,6 +518,95 @@ class CertificateManagerService {
       throw error;
     }
   }
+
+  /**
+   * Upload base origin certificate manually (when API creation fails)
+   * @param {string} certificate - Certificate PEM string
+   * @param {string} privateKey - Private key PEM string
+   * @param {string} cloudflareCertId - Optional Cloudflare certificate ID
+   * @param {Date} expiresAt - Optional expiration date
+   */
+  static async uploadBaseOriginCertificate(certificate, privateKey, cloudflareCertId = null, expiresAt = null) {
+    try {
+      // Check if it already exists
+      const existing = await this.getBaseOriginCertificate();
+      if (existing) {
+        logger.info(`[CertificateManager] Base origin certificate already exists: ${existing.id}`);
+        throw new Error('Base origin certificate already exists. Delete it first to upload a new one.');
+      }
+
+      if (!certificate || !privateKey) {
+        throw new Error('Certificate and private key are required');
+      }
+
+      // Validate certificate format (basic check)
+      if (!certificate.includes('-----BEGIN CERTIFICATE-----') || !certificate.includes('-----END CERTIFICATE-----')) {
+        throw new Error('Invalid certificate format. Expected PEM format.');
+      }
+
+      if (!privateKey.includes('-----BEGIN') || !privateKey.includes('-----END')) {
+        throw new Error('Invalid private key format. Expected PEM format.');
+      }
+
+      logger.info(`[CertificateManager] Uploading base origin certificate manually`);
+
+      // Save certificate files
+      const certPath = process.env.CLOUDFLARE_ORIGIN_CERT_PATH || '/etc/ssl/smartstore/certs/cloudflare-origin.crt';
+      const keyPath = process.env.CLOUDFLARE_ORIGIN_KEY_PATH || '/etc/ssl/smartstore/keys/cloudflare-origin.key';
+      
+      // Ensure directories exist
+      await fs.mkdir(path.dirname(certPath), { recursive: true });
+      await fs.mkdir(path.dirname(keyPath), { recursive: true });
+      
+      // Write certificate and key
+      await fs.writeFile(certPath, certificate);
+      await fs.writeFile(keyPath, privateKey);
+      
+      // Set permissions
+      await fs.chmod(certPath, 0o644);
+      await fs.chmod(keyPath, 0o600);
+
+      // Create database record
+      const certificateName = 'smartstore-base-origin-cert';
+      const domains = ['smartstore.ng', '*.smartstore.ng'];
+      
+      const result = await pool.query(
+        `INSERT INTO ssl_certificates 
+         (certificate_name, cloudflare_cert_id, cert_path, key_path, domains_count, status, certificate_type, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'active', 'wildcard', $6)
+         RETURNING *`,
+        [
+          certificateName,
+          cloudflareCertId,
+          certPath,
+          keyPath,
+          domains.length,
+          expiresAt ? new Date(expiresAt) : null
+        ]
+      );
+
+      const cert = result.rows[0];
+
+      // Link domains to certificate
+      for (const domain of domains) {
+        await pool.query(
+          `INSERT INTO ssl_certificate_domains (certificate_id, custom_domain_id, domain)
+           VALUES ($1, NULL, $2)
+           ON CONFLICT (domain) DO UPDATE SET certificate_id = $1`,
+          [cert.id, domain]
+        );
+      }
+
+      // Update domain count
+      await this.updateCertificateDomainCount(cert.id);
+
+      logger.info(`[CertificateManager] Base origin certificate uploaded: ${cert.id}`);
+      return cert;
+    } catch (error) {
+      logger.error(`[CertificateManager] Error uploading base origin certificate:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = CertificateManagerService;

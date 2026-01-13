@@ -141,6 +141,31 @@ class CertificateController {
       sendError(res, error.message, BAD_REQUEST);
     }
   }
+
+  /**
+   * Upload base origin certificate manually (when API creation fails)
+   */
+  static async uploadBaseOriginCertificate(req, res) {
+    try {
+      const { certificate, privateKey, cloudflareCertId, expiresAt } = req.body;
+
+      if (!certificate || !privateKey) {
+        return sendError(res, 'Certificate and private key are required', BAD_REQUEST);
+      }
+
+      const cert = await CertificateManagerService.uploadBaseOriginCertificate(
+        certificate,
+        privateKey,
+        cloudflareCertId,
+        expiresAt
+      );
+
+      sendSuccess(res, cert, 'Base origin certificate uploaded successfully', OK);
+    } catch (error) {
+      logger.error('Error uploading base origin certificate:', error);
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
 }
 
 module.exports = CertificateController;
