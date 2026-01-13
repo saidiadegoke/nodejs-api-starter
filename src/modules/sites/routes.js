@@ -167,6 +167,21 @@ router.get('/:siteId/engine/history', requireAuth, EngineController.getVersionHi
 /**
  * Certificate Management Routes (admin only)
  * These routes manage SSL certificates and their domain assignments
+ * 
+ * IMPORTANT: Base origin routes must come BEFORE parameterized routes
+ * to avoid route conflicts (e.g., /base-origin being matched as /:certificateId)
+ */
+
+/**
+ * Base Origin Certificate Routes (for smartstore.ng and *.smartstore.ng)
+ * Must be defined BEFORE /admin/certificates/:certificateId
+ */
+router.get('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.getBaseOriginCertificate);
+router.post('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.createBaseOriginCertificate);
+router.post('/admin/certificates/base-origin/upload', requireAuth, requireRole('admin'), CertificateController.uploadBaseOriginCertificate);
+
+/**
+ * Multi-Domain Certificate Routes
  */
 router.get('/admin/certificates', requireAuth, requireRole('admin'), CertificateController.getAllCertificates);
 router.get('/admin/certificates/:certificateId', requireAuth, requireRole('admin'), CertificateController.getCertificateById);
@@ -202,13 +217,6 @@ router.delete(
   CertificateController.removeDomain
 );
 router.delete('/admin/certificates/:certificateId', requireAuth, requireRole('admin'), CertificateController.deleteCertificate);
-
-/**
- * Base Origin Certificate Routes (for smartstore.ng and *.smartstore.ng)
- */
-router.get('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.getBaseOriginCertificate);
-router.post('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.createBaseOriginCertificate);
-router.post('/admin/certificates/base-origin/upload', requireAuth, requireRole('admin'), CertificateController.uploadBaseOriginCertificate);
 
 module.exports = router;
 

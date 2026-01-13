@@ -227,6 +227,7 @@ class CertificateManagerService {
    * Get all certificates with domain counts
    */
   static async getAllCertificates() {
+    // Exclude base origin certificate from multi-domain certificates list
     const result = await pool.query(
       `SELECT 
         sc.*,
@@ -234,6 +235,7 @@ class CertificateManagerService {
         array_agg(scd.domain ORDER BY scd.assigned_at DESC) FILTER (WHERE scd.domain IS NOT NULL) as domains
        FROM ssl_certificates sc
        LEFT JOIN ssl_certificate_domains scd ON sc.id = scd.certificate_id
+       WHERE sc.certificate_name != 'smartstore-base-origin-cert'
        GROUP BY sc.id
        ORDER BY sc.created_at DESC`
     );
