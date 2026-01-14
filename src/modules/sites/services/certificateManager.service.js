@@ -79,10 +79,12 @@ class CertificateManagerService {
 
   /**
    * Create new certificate via Cloudflare API
+   * @param {string[]} domains - Array of domains (optional, but required for Cloudflare API)
+   * @param {boolean} createPlaceholder - If true and no domains, create placeholder without Cloudflare cert
    */
-  static async createNewCertificateViaAPI(domains = []) {
+  static async createNewCertificateViaAPI(domains = [], createPlaceholder = false) {
     try {
-      logger.info(`[CertificateManager] Creating new certificate via Cloudflare API${domains.length > 0 ? ` with ${domains.length} domains` : ''}`);
+      logger.info(`[CertificateManager] Creating new certificate via Cloudflare API${domains.length > 0 ? ` with ${domains.length} domains` : createPlaceholder ? ' (placeholder)' : ''}`);
 
       let cloudflareCert = null;
       let certPath = null;
@@ -121,17 +123,22 @@ class CertificateManagerService {
         await fs.chmod(keyPath, 0o600);
 
         cloudflareCertId = cloudflareCert.id;
+      } else if (createPlaceholder) {
+        // Create placeholder certificate record (no Cloudflare cert yet)
+        // User will upload certificate later
+        logger.info(`[CertificateManager] Creating placeholder certificate (no Cloudflare cert yet)`);
+        certPath = null; // Will be set when certificate is uploaded
+        keyPath = null;
+        cloudflareCertId = null;
       } else {
-        // Empty certificate placeholder - will use shared certificate path
-        certPath = process.env.CLOUDFLARE_ORIGIN_CERT_PATH || '/etc/ssl/smartstore/certs/cloudflare-origin.crt';
-        keyPath = process.env.CLOUDFLARE_ORIGIN_KEY_PATH || '/etc/ssl/smartstore/keys/cloudflare-origin.key';
+        throw new Error('At least one domain is required to create a Cloudflare Origin Certificate. Use createPlaceholder=true to create a placeholder certificate.');
       }
 
       const certificateName = `cert-${Date.now()}`;
       const result = await pool.query(
         `INSERT INTO ssl_certificates 
-         (certificate_name, cloudflare_cert_id, cert_path, key_path, domains_count, status, expires_at)
-         VALUES ($1, $2, $3, $4, $5, 'active', $6)
+         (certificate_name, cloudflare_cert_id, cert_path, key_path, domains_count, max_domains, status, certificate_type, provider, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           certificateName,
@@ -139,11 +146,29 @@ class CertificateManagerService {
           certPath,
           keyPath,
           domains.length,
+          50, // max_domains
+          createPlaceholder && domains.length === 0 ? 'pending' : 'active', // Placeholder starts as pending
+          domains.length === 1 && domains[0]?.startsWith('*.') ? 'wildcard' : 'multi_domain',
+          'cloudflare', // provider
           cloudflareCert?.expiresOn ? new Date(cloudflareCert.expiresOn) : null
         ]
       );
 
       const certificate = result.rows[0];
+      
+      // Link domains to certificate if provided
+      if (domains.length > 0) {
+        for (const domain of domains) {
+          await pool.query(
+            `INSERT INTO ssl_certificate_domains (certificate_id, custom_domain_id, domain)
+             VALUES ($1, NULL, $2)
+             ON CONFLICT (domain) DO UPDATE SET certificate_id = $1`,
+            [certificate.id, domain]
+          );
+        }
+        await this.updateCertificateDomainCount(certificate.id);
+      }
+      
       logger.info(`[CertificateManager] Created certificate ${certificate.id}`);
       return certificate;
     } catch (error) {
@@ -226,8 +251,19 @@ class CertificateManagerService {
   /**
    * Get all certificates with domain counts
    */
-  static async getAllCertificates() {
+  static async getAllCertificates(provider = null) {
     // Exclude base origin certificate from multi-domain certificates list
+    let whereClause = "WHERE sc.certificate_name != 'smartstore-base-origin-cert'";
+    const params = [];
+    
+    if (provider) {
+      whereClause += " AND sc.provider = $1";
+      params.push(provider);
+    } else {
+      // Only return Cloudflare certificates by default (for multi-domain certs)
+      whereClause += " AND sc.provider = 'cloudflare'";
+    }
+    
     const result = await pool.query(
       `SELECT 
         sc.*,
@@ -235,9 +271,10 @@ class CertificateManagerService {
         array_agg(scd.domain ORDER BY scd.assigned_at DESC) FILTER (WHERE scd.domain IS NOT NULL) as domains
        FROM ssl_certificates sc
        LEFT JOIN ssl_certificate_domains scd ON sc.id = scd.certificate_id
-       WHERE sc.certificate_name != 'smartstore-base-origin-cert'
+       ${whereClause}
        GROUP BY sc.id
-       ORDER BY sc.created_at DESC`
+       ORDER BY sc.created_at DESC`,
+      params.length > 0 ? params : undefined
     );
     return result.rows;
   }
@@ -668,6 +705,250 @@ class CertificateManagerService {
       return cert;
     } catch (error) {
       logger.error(`[CertificateManager] Error uploading base origin certificate:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Upload multi-domain certificate manually (when API creation fails)
+   * @param {string} certificate - Certificate PEM string
+   * @param {string} privateKey - Private key PEM string
+   * @param {string[]} domains - Array of domains covered by this certificate
+   * @param {string} certificateName - Optional certificate name
+   * @param {string} cloudflareCertId - Optional Cloudflare certificate ID
+   * @param {Date} expiresAt - Optional expiration date
+   */
+  static async uploadMultiDomainCertificate(certificate, privateKey, domains = [], certificateName = null, cloudflareCertId = null, expiresAt = null) {
+    try {
+      if (!certificate || !privateKey) {
+        throw new Error('Certificate and private key are required');
+      }
+
+      if (!domains || domains.length === 0) {
+        throw new Error('At least one domain is required');
+      }
+
+      if (domains.length > 50) {
+        throw new Error('Maximum 50 domains per certificate');
+      }
+
+      // Validate certificate format (basic check)
+      if (!certificate.includes('-----BEGIN CERTIFICATE-----') || !certificate.includes('-----END CERTIFICATE-----')) {
+        throw new Error('Invalid certificate format. Expected PEM format.');
+      }
+
+      if (!privateKey.includes('-----BEGIN') || !privateKey.includes('-----END')) {
+        throw new Error('Invalid private key format. Expected PEM format.');
+      }
+
+      logger.info(`[CertificateManager] Uploading multi-domain certificate manually with ${domains.length} domains`);
+
+      // Determine certificate paths - use writable location if /etc/ssl is not accessible
+      let certPath = null;
+      let keyPath = null;
+
+      // Use timestamp-based paths for multi-domain certificates
+      const timestamp = Date.now();
+      const defaultEtcPath = `/etc/ssl/smartstore/certs/cert-${timestamp}.crt`;
+      const defaultEtcKeyPath = `/etc/ssl/smartstore/keys/cert-${timestamp}.key`;
+      const defaultAppPath = path.join(process.cwd(), 'ssl', 'certs', `cert-${timestamp}.crt`);
+      const defaultAppKeyPath = path.join(process.cwd(), 'ssl', 'keys', `cert-${timestamp}.key`);
+
+      // Try to use /etc/ssl if we have permission, otherwise use app directory
+      try {
+        await fs.mkdir(path.dirname(defaultEtcPath), { recursive: true });
+        certPath = defaultEtcPath;
+        keyPath = defaultEtcKeyPath;
+      } catch (error) {
+        logger.warn(`[CertificateManager] Cannot write to /etc/ssl, using app directory: ${error.message}`);
+        certPath = defaultAppPath;
+        keyPath = defaultAppKeyPath;
+      }
+      
+      // Ensure directories exist (with error handling)
+      try {
+        const certDir = path.dirname(certPath);
+        const keyDir = path.dirname(keyPath);
+        
+        await fs.mkdir(certDir, { recursive: true });
+        await fs.mkdir(keyDir, { recursive: true });
+        
+        // Verify we can write to the directories
+        const testFile = path.join(certDir, '.write-test');
+        try {
+          await fs.writeFile(testFile, 'test');
+          await fs.unlink(testFile);
+        } catch (writeError) {
+          throw new Error(
+            `Cannot write to certificate directory: ${certDir}. ` +
+            `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths, ` +
+            `or ensure the application has write permissions.`
+          );
+        }
+      } catch (error) {
+        if (error.code === 'EACCES' || error.message.includes('Cannot write')) {
+          throw error;
+        }
+        throw new Error(
+          `Failed to create certificate directories: ${error.message}. ` +
+          `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths.`
+        );
+      }
+      
+      // Write certificate and key
+      try {
+        await fs.writeFile(certPath, certificate);
+        await fs.writeFile(keyPath, privateKey);
+        
+        // Set permissions (ignore errors if not supported)
+        try {
+          await fs.chmod(certPath, 0o644);
+          await fs.chmod(keyPath, 0o600);
+        } catch (chmodError) {
+          logger.warn(`[CertificateManager] Could not set file permissions: ${chmodError.message}`);
+        }
+      } catch (error) {
+        if (error.code === 'EACCES') {
+          throw new Error(
+            `Permission denied writing certificate files. ` +
+            `Please set CLOUDFLARE_ORIGIN_CERT_PATH and CLOUDFLARE_ORIGIN_KEY_PATH to writable paths, ` +
+            `or ensure the application has write permissions.`
+          );
+        }
+        throw error;
+      }
+
+      // Create database record
+      const name = certificateName || `cert-${timestamp}`;
+      const certType = domains.length === 1 && domains[0].startsWith('*.') ? 'wildcard' : 'multi_domain';
+      
+      const result = await pool.query(
+        `INSERT INTO ssl_certificates 
+         (certificate_name, cloudflare_cert_id, cert_path, key_path, domains_count, max_domains, status, certificate_type, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8)
+         RETURNING *`,
+        [
+          name,
+          cloudflareCertId,
+          certPath,
+          keyPath,
+          domains.length,
+          50, // max_domains
+          certType,
+          expiresAt ? new Date(expiresAt) : null
+        ]
+      );
+
+      const cert = result.rows[0];
+
+      // Link domains to certificate
+      for (const domain of domains) {
+        await pool.query(
+          `INSERT INTO ssl_certificate_domains (certificate_id, custom_domain_id, domain)
+           VALUES ($1, NULL, $2)
+           ON CONFLICT (domain) DO UPDATE SET certificate_id = $1`,
+          [cert.id, domain]
+        );
+      }
+
+      // Update domain count
+      await this.updateCertificateDomainCount(cert.id);
+
+      logger.info(`[CertificateManager] Multi-domain certificate uploaded: ${cert.id}`);
+      return cert;
+    } catch (error) {
+      logger.error(`[CertificateManager] Error uploading multi-domain certificate:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create Let's Encrypt certificate record
+   * @param {string} domain - Domain name
+   * @param {string} certPath - Certificate file path
+   * @param {string} keyPath - Private key file path
+   * @param {number} customDomainId - Custom domain ID
+   * @param {Date} expiresAt - Optional expiration date
+   */
+  static async createLetsEncryptCertificate(domain, certPath, keyPath, customDomainId = null, expiresAt = null) {
+    try {
+      logger.info(`[CertificateManager] Creating Let's Encrypt certificate record for ${domain}`);
+
+      // Check if certificate already exists for this domain
+      const existing = await pool.query(
+        `SELECT sc.* FROM ssl_certificates sc
+         JOIN ssl_certificate_domains scd ON sc.id = scd.certificate_id
+         WHERE scd.domain = $1 AND sc.provider = 'letsencrypt' AND sc.status = 'active'
+         LIMIT 1`,
+        [domain]
+      );
+
+      if (existing.rows.length > 0) {
+        logger.info(`[CertificateManager] Let's Encrypt certificate already exists for ${domain}`);
+        return existing.rows[0];
+      }
+
+      // Create new certificate record
+      const certificateName = `letsencrypt-${domain}-${Date.now()}`;
+      const result = await pool.query(
+        `INSERT INTO ssl_certificates 
+         (certificate_name, cloudflare_cert_id, cert_path, key_path, domains_count, max_domains, status, certificate_type, provider, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [
+          certificateName,
+          null, // No Cloudflare cert ID for Let's Encrypt
+          certPath,
+          keyPath,
+          1, // Let's Encrypt certificates are typically single-domain
+          1, // max_domains (Let's Encrypt supports SAN but we track per-domain)
+          'active',
+          'single_domain', // Let's Encrypt certificates are typically single-domain
+          'letsencrypt',
+          expiresAt
+        ]
+      );
+
+      const certificate = result.rows[0];
+
+      // Link domain to certificate
+      await pool.query(
+        `INSERT INTO ssl_certificate_domains (certificate_id, custom_domain_id, domain)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (domain) DO UPDATE SET certificate_id = $1`,
+        [certificate.id, customDomainId, domain]
+      );
+
+      // Update domain count
+      await this.updateCertificateDomainCount(certificate.id);
+
+      logger.info(`[CertificateManager] Let's Encrypt certificate created: ${certificate.id}`);
+      return certificate;
+    } catch (error) {
+      logger.error(`[CertificateManager] Error creating Let's Encrypt certificate:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all Let's Encrypt certificates
+   */
+  static async getLetsEncryptCertificates() {
+    try {
+      const result = await pool.query(
+        `SELECT 
+          sc.*,
+          COUNT(scd.id) as actual_domains_count,
+          array_agg(scd.domain ORDER BY scd.assigned_at DESC) FILTER (WHERE scd.domain IS NOT NULL) as domains
+         FROM ssl_certificates sc
+         LEFT JOIN ssl_certificate_domains scd ON sc.id = scd.certificate_id
+         WHERE sc.provider = 'letsencrypt'
+         GROUP BY sc.id
+         ORDER BY sc.created_at DESC`
+      );
+      return result.rows;
+    } catch (error) {
+      logger.error('[CertificateManager] Error fetching Let\'s Encrypt certificates:', error);
       throw error;
     }
   }

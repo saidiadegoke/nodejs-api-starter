@@ -184,6 +184,8 @@ router.post('/admin/certificates/base-origin/upload', requireAuth, requireRole('
  * Multi-Domain Certificate Routes
  */
 router.get('/admin/certificates', requireAuth, requireRole('admin'), CertificateController.getAllCertificates);
+router.get('/admin/certificates/letsencrypt', requireAuth, requireRole('admin'), CertificateController.getLetsEncryptCertificates);
+router.post('/admin/certificates/upload', requireAuth, requireRole('admin'), CertificateController.uploadMultiDomainCertificate);
 router.get('/admin/certificates/:certificateId', requireAuth, requireRole('admin'), CertificateController.getCertificateById);
 router.post(
   '/admin/certificates',

@@ -7,20 +7,52 @@ const nginxService = require('./nginx.service');
 class SSLService {
   /**
    * Provision SSL certificate for a verified domain
+   * @param {number} domainId - Custom domain ID
+   * @param {string} domain - Domain name
+   * @param {string} provider - Provider preference: 'cloudflare', 'letsencrypt', 'auto' (default: 'auto')
+   *   - 'cloudflare': Use Cloudflare only (fails if not configured)
+   *   - 'letsencrypt': Use Let's Encrypt only
+   *   - 'auto': Try Let's Encrypt first, fallback to Cloudflare (or vice versa based on env)
    */
-  static async provisionSSL(domainId, domain) {
+  static async provisionSSL(domainId, domain, provider = 'auto') {
     try {
-      logger.info(`[SSLService] Starting SSL provisioning for domain: ${domain}`);
+      logger.info(`[SSLService] Starting SSL provisioning for domain: ${domain} with provider preference: ${provider}`);
 
       // Update status to provisioning
       await CustomDomainModel.updateSSLStatus(domainId, 'provisioning', null);
 
-      // Always prefer Cloudflare first (scalable, unlimited certificates)
-      // Let's Encrypt is fallback only (rate-limited, not scalable)
       let result;
-      
-      // Try Cloudflare first if configured
-      if (cloudflareService.isConfigured()) {
+      const sslProvider = process.env.SSL_PROVIDER || 'cloudflare';
+      const allowLetsEncryptFallback = process.env.ALLOW_LETSENCRYPT_FALLBACK !== 'false';
+
+      // Determine provider strategy
+      let useCloudflare = false;
+      let useLetsEncrypt = false;
+      let tryCloudflareFirst = true;
+
+      if (provider === 'cloudflare') {
+        useCloudflare = true;
+        useLetsEncrypt = false;
+      } else if (provider === 'letsencrypt') {
+        useCloudflare = false;
+        useLetsEncrypt = true;
+      } else if (provider === 'auto') {
+        // Auto mode: based on env settings
+        if (sslProvider === 'letsencrypt') {
+          // Try Let's Encrypt first, then Cloudflare
+          useLetsEncrypt = true;
+          useCloudflare = cloudflareService.isConfigured() && allowLetsEncryptFallback;
+          tryCloudflareFirst = false;
+        } else {
+          // Try Cloudflare first, then Let's Encrypt (default)
+          useCloudflare = cloudflareService.isConfigured();
+          useLetsEncrypt = allowLetsEncryptFallback;
+          tryCloudflareFirst = true;
+        }
+      }
+
+      // Try providers based on strategy
+      if (tryCloudflareFirst && useCloudflare) {
         try {
           logger.info(`[SSLService] Attempting Cloudflare SSL for ${domain}`);
           result = await this.provisionCloudflareSSL(domainId, domain);
@@ -28,12 +60,8 @@ class SSLService {
           return result;
         } catch (cloudflareError) {
           logger.warn(`[SSLService] Cloudflare SSL failed for ${domain}: ${cloudflareError.message}`);
-          logger.info(`[SSLService] Falling back to Let's Encrypt for ${domain}`);
-          
-          // Only fallback to Let's Encrypt if explicitly allowed or Cloudflare fails
-          const allowLetsEncryptFallback = process.env.ALLOW_LETSENCRYPT_FALLBACK !== 'false';
-          
-          if (allowLetsEncryptFallback) {
+          if (useLetsEncrypt) {
+            logger.info(`[SSLService] Falling back to Let's Encrypt for ${domain}`);
             try {
               result = await this.provisionLetsEncryptSSL(domainId, domain);
               logger.info(`[SSLService] Let's Encrypt SSL provisioned as fallback for ${domain}`);
@@ -43,21 +71,34 @@ class SSLService {
               throw new Error(`SSL provisioning failed: Cloudflare (${cloudflareError.message}), Let's Encrypt (${letsEncryptError.message})`);
             }
           } else {
-            // Don't fallback to Let's Encrypt if explicitly disabled
-            throw new Error(`Cloudflare SSL failed and Let's Encrypt fallback is disabled: ${cloudflareError.message}`);
+            throw new Error(`Cloudflare SSL failed: ${cloudflareError.message}`);
+          }
+        }
+      } else if (useLetsEncrypt) {
+        // Try Let's Encrypt first
+        try {
+          logger.info(`[SSLService] Attempting Let's Encrypt SSL for ${domain}`);
+          result = await this.provisionLetsEncryptSSL(domainId, domain);
+          logger.info(`[SSLService] Let's Encrypt SSL provisioned successfully for ${domain}`);
+          return result;
+        } catch (letsEncryptError) {
+          logger.warn(`[SSLService] Let's Encrypt SSL failed for ${domain}: ${letsEncryptError.message}`);
+          if (useCloudflare && cloudflareService.isConfigured()) {
+            logger.info(`[SSLService] Falling back to Cloudflare for ${domain}`);
+            try {
+              result = await this.provisionCloudflareSSL(domainId, domain);
+              logger.info(`[SSLService] Cloudflare SSL provisioned as fallback for ${domain}`);
+              return result;
+            } catch (cloudflareError) {
+              logger.error(`[SSLService] Both Let's Encrypt and Cloudflare failed for ${domain}`);
+              throw new Error(`SSL provisioning failed: Let's Encrypt (${letsEncryptError.message}), Cloudflare (${cloudflareError.message})`);
+            }
+          } else {
+            throw new Error(`Let's Encrypt SSL failed: ${letsEncryptError.message}`);
           }
         }
       } else {
-        // Cloudflare not configured - use Let's Encrypt only if explicitly enabled
-        const sslProvider = process.env.SSL_PROVIDER || 'cloudflare';
-        
-        if (sslProvider === 'letsencrypt') {
-          logger.warn(`[SSLService] Cloudflare not configured, using Let's Encrypt for ${domain} (not scalable for production)`);
-          result = await this.provisionLetsEncryptSSL(domainId, domain);
-          return result;
-        } else {
-          throw new Error('Cloudflare SSL is required but not configured. Please configure CLOUDFLARE_API_TOKEN or set SSL_PROVIDER=letsencrypt for fallback');
-        }
+        throw new Error('No SSL provider configured. Please configure Cloudflare or Let\'s Encrypt.');
       }
     } catch (error) {
       logger.error(`[SSLService] Error provisioning SSL for ${domain}:`, error);

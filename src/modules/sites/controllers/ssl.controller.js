@@ -29,10 +29,17 @@ class SSLController {
   /**
    * Provision SSL certificate for a domain
    * POST /sites/:siteId/custom-domains/:domainId/ssl/provision
+   * Body: { provider?: 'cloudflare' | 'letsencrypt' | 'auto' }
    */
   static async provisionSSL(req, res) {
     try {
       const { siteId, domainId } = req.params;
+      const { provider = 'auto' } = req.body; // 'cloudflare', 'letsencrypt', or 'auto'
+      
+      // Validate provider
+      if (provider && !['cloudflare', 'letsencrypt', 'auto'].includes(provider)) {
+        return sendError(res, 'Invalid provider. Must be "cloudflare", "letsencrypt", or "auto"', BAD_REQUEST);
+      }
       
       // Verify ownership and get domain
       const status = await CustomDomainService.getCustomDomainStatus(domainId, siteId, req.user.user_id);
@@ -41,7 +48,7 @@ class SSLController {
         return sendError(res, 'Domain must be verified before SSL can be provisioned', BAD_REQUEST);
       }
       
-      const result = await SSLService.provisionSSL(domainId, status.domain);
+      const result = await SSLService.provisionSSL(domainId, status.domain, provider);
       sendSuccess(res, result, 'SSL provisioning initiated', OK);
     } catch (error) {
       const statusCode = 
