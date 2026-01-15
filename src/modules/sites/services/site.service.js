@@ -2,6 +2,7 @@ const SiteModel = require('../models/site.model');
 const TemplateModel = require('../models/template.model');
 const PageModel = require('../models/page.model');
 const CustomizationModel = require('../models/customization.model');
+const pool = require('../../../db/pool');
 
 class SiteService {
   /**
@@ -232,7 +233,49 @@ class SiteService {
       }
     }
 
-    return await SiteModel.updateSite(siteId, updates);
+    // Handle template_id separately (it's stored in site_templates table, not sites table)
+    const templateId = updates.template_id || updates.templateId;
+    if (templateId !== undefined) {
+      // Remove template_id from updates object to avoid trying to update sites table
+      delete updates.template_id;
+      delete updates.templateId;
+      
+      // Apply template using the dedicated method
+      if (templateId) {
+        // If templateId is provided (not null/empty), apply it
+        await this.applyTemplateToSite(siteId, templateId, userId);
+      } else {
+        // If templateId is null/empty, remove template association
+        const TemplateModel = require('../models/template.model');
+        await pool.query(
+          'DELETE FROM site_templates WHERE site_id = $1',
+          [siteId]
+        );
+      }
+    }
+
+    // Update site fields (excluding template_id)
+    const siteUpdates = { ...updates };
+    // Remove any remaining template_id references
+    delete siteUpdates.template_id;
+    delete siteUpdates.templateId;
+
+    // Only update sites table if there are other fields to update
+    if (Object.keys(siteUpdates).length > 0) {
+      await SiteModel.updateSite(siteId, siteUpdates);
+    }
+
+    // Return updated site with template info (join with site_templates)
+    const result = await pool.query(
+      `SELECT 
+        s.*,
+        st.template_id
+      FROM sites s
+      LEFT JOIN site_templates st ON s.id = st.site_id
+      WHERE s.id = $1`,
+      [siteId]
+    );
+    return result.rows[0];
   }
 
   /**

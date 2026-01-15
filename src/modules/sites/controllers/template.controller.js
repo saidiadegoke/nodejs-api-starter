@@ -86,6 +86,9 @@ class TemplateController {
         return sendError(res, 'Name and config are required', BAD_REQUEST);
       }
 
+      // Get user ID from authenticated request
+      const userId = req.user?.user_id || null;
+
       const template = await TemplateService.createTemplate({
         name,
         description,
@@ -94,7 +97,7 @@ class TemplateController {
         thumbnailUrl,
         config,
         isPremium: isPremium || false,
-      });
+      }, userId);
 
       sendSuccess(res, template, 'Template created successfully', OK);
     } catch (error) {

@@ -40,7 +40,7 @@ class TemplateService {
    * with navigation (topnav, footer) and starter blocks.
    * Defaults are merged without duplicating existing pages/blocks.
    */
-  static async createTemplate(templateData) {
+  static async createTemplate(templateData, userId = null) {
     // Parse config if it's a string
     let config = typeof templateData.config === 'string' 
       ? JSON.parse(templateData.config) 
@@ -50,10 +50,11 @@ class TemplateService {
     console.log('[TemplateService] Merging with default pages and blocks');
     config = mergeWithDefaults(config);
 
-    // Update templateData with merged config
+    // Update templateData with merged config and user ID
     const finalTemplateData = {
       ...templateData,
       config: JSON.stringify(config),
+      createdBy: userId, // Set created_by to the user ID
     };
 
     return await TemplateModel.createTemplate(finalTemplateData);

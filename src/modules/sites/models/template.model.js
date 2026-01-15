@@ -51,12 +51,12 @@ class TemplateModel {
    * Create template
    */
   static async createTemplate(templateData) {
-    const { name, description, category, previewImageUrl, thumbnailUrl, config, isPremium } = templateData;
+    const { name, description, category, previewImageUrl, thumbnailUrl, config, isPremium, createdBy } = templateData;
     const result = await pool.query(
-      `INSERT INTO templates (name, description, category, preview_image_url, thumbnail_url, config, is_premium)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO templates (name, description, category, preview_image_url, thumbnail_url, config, is_premium, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [name, description, category, previewImageUrl, thumbnailUrl, JSON.stringify(config), isPremium || false]
+      [name, description, category, previewImageUrl, thumbnailUrl, JSON.stringify(config), isPremium || false, createdBy || null]
     );
     return result.rows[0];
   }
