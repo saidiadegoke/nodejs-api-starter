@@ -588,6 +588,9 @@ class CertificateManagerService {
       }
 
       logger.info(`[CertificateManager] Uploading base origin certificate manually`);
+      logger.info(`[CertificateManager] Environment check: CLOUDFLARE_ORIGIN_CERT_PATH=${process.env.CLOUDFLARE_ORIGIN_CERT_PATH || 'NOT SET'}`);
+      logger.info(`[CertificateManager] Environment check: CLOUDFLARE_ORIGIN_KEY_PATH=${process.env.CLOUDFLARE_ORIGIN_KEY_PATH || 'NOT SET'}`);
+      logger.info(`[CertificateManager] Working directory: ${process.cwd()}`);
 
       // Determine certificate paths - use writable location if /etc/ssl is not accessible
       let certPath = process.env.CLOUDFLARE_ORIGIN_CERT_PATH;
@@ -611,6 +614,9 @@ class CertificateManagerService {
           keyPath = keyPath || defaultAppKeyPath;
         }
       }
+      
+      logger.info(`[CertificateManager] Selected certificate path: ${certPath}`);
+      logger.info(`[CertificateManager] Selected key path: ${keyPath}`);
       
       // Ensure directories exist (with error handling)
       try {
@@ -646,17 +652,34 @@ class CertificateManagerService {
       
       // Write certificate and key
       try {
+        logger.info(`[CertificateManager] Writing certificate to: ${certPath}`);
         await fs.writeFile(certPath, certificate);
+        logger.info(`[CertificateManager] Certificate file written successfully`);
+        
+        logger.info(`[CertificateManager] Writing key to: ${keyPath}`);
         await fs.writeFile(keyPath, privateKey);
+        logger.info(`[CertificateManager] Key file written successfully`);
+        
+        // Verify files were written
+        try {
+          const certStat = await fs.stat(certPath);
+          const keyStat = await fs.stat(keyPath);
+          logger.info(`[CertificateManager] Certificate file size: ${certStat.size} bytes`);
+          logger.info(`[CertificateManager] Key file size: ${keyStat.size} bytes`);
+        } catch (statError) {
+          logger.warn(`[CertificateManager] Could not verify file stats: ${statError.message}`);
+        }
         
         // Set permissions (ignore errors if not supported)
         try {
           await fs.chmod(certPath, 0o644);
           await fs.chmod(keyPath, 0o600);
+          logger.info(`[CertificateManager] File permissions set successfully`);
         } catch (chmodError) {
           logger.warn(`[CertificateManager] Could not set file permissions: ${chmodError.message}`);
         }
       } catch (error) {
+        logger.error(`[CertificateManager] Error writing certificate files:`, error);
         if (error.code === 'EACCES') {
           throw new Error(
             `Permission denied writing certificate files. ` +

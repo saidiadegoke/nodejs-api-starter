@@ -14,6 +14,12 @@ class NginxService {
     this.sslCertPath = process.env.SSL_CERT_PATH || '/etc/ssl/smartstore';
     this.sslKeyPath = process.env.SSL_KEY_PATH || '/etc/ssl/smartstore';
     
+    // Path translation: Docker container paths to host paths
+    // When API saves certs to /app/ssl/, they're mounted to /opt/smartstore/ssl on host
+    // Nginx on host can access via /etc/ssl/smartstore (symlink) or /opt/smartstore/ssl
+    this.dockerSslPath = process.env.DOCKER_SSL_PATH || '/app/ssl';
+    this.hostSslPath = process.env.HOST_SSL_PATH || '/etc/ssl/smartstore';
+    
     // App service configuration
     // Use localhost if services are on same server, or domain if distributed
     this.appPort = process.env.APP_PORT || 4060;
@@ -29,9 +35,28 @@ class NginxService {
   }
 
   /**
+   * Translate Docker container paths to host paths for Nginx
+   * Converts /app/ssl/... to /etc/ssl/smartstore/... (or configured host path)
+   */
+  translatePath(dockerPath) {
+    if (!dockerPath) return dockerPath;
+    
+    // If path starts with Docker SSL path, replace with host SSL path
+    if (dockerPath.startsWith(this.dockerSslPath)) {
+      return dockerPath.replace(this.dockerSslPath, this.hostSslPath);
+    }
+    
+    // If path already looks like host path, return as-is
+    return dockerPath;
+  }
+
+  /**
    * Generate Nginx configuration for a custom domain
    */
   async generateNginxConfig(domain, sslCertPath = null, sslKeyPath = null) {
+    // Translate Docker paths to host paths for Nginx
+    const hostCertPath = sslCertPath ? this.translatePath(sslCertPath) : null;
+    const hostKeyPath = sslKeyPath ? this.translatePath(sslKeyPath) : null;
     const config = `
 # Auto-generated configuration for ${domain}
 # DO NOT EDIT MANUALLY - This file is managed by SmartStore
@@ -48,10 +73,10 @@ server {
     listen 443 ssl http2;
     server_name ${domain} www.${domain};
 
-    ${sslCertPath && sslKeyPath ? `
+    ${hostCertPath && hostKeyPath ? `
     # SSL Certificate Configuration
-    ssl_certificate ${sslCertPath};
-    ssl_certificate_key ${sslKeyPath};
+    ssl_certificate ${hostCertPath};
+    ssl_certificate_key ${hostKeyPath};
     
     # SSL Configuration
     ssl_protocols TLSv1.2 TLSv1.3;
