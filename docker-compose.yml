@@ -61,7 +61,8 @@ services:
     #   - "${API_PORT:-4050}:${API_PORT:-4050}"
     volumes:
       - api_uploads:/app/uploads
-      - api_ssl:/app/ssl
+      # Use bind mount for SSL certificates so Nginx on host can access them
+      - /opt/smartstore/ssl:/app/ssl
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:4050/health || exit 1"]
@@ -72,6 +73,4 @@ services:
 
 volumes:
   api_uploads:
-    driver: local
-  api_ssl:
     driver: local
