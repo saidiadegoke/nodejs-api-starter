@@ -80,6 +80,31 @@ class SiteService {
           console.warn(`Template ${siteData.templateId} not found, site created without template`);
           // Site stays in draft mode if template not found
         } else {
+          // Ensure template has default pages (like when creating a template)
+          // This ensures templates created before default pages feature still work
+          const { mergeWithDefaults } = require('../../../utils/defaultTemplateConfig');
+          
+          // Parse template config
+          let templateConfig = typeof template.config === 'string' 
+            ? JSON.parse(template.config) 
+            : template.config || {};
+          
+          // Merge with defaults to ensure default pages exist
+          const mergedConfig = mergeWithDefaults(templateConfig);
+          
+          // If template config was updated (has more pages/blocks), update template
+          const originalPagesCount = (templateConfig.pages || []).length;
+          const mergedPagesCount = (mergedConfig.pages || []).length;
+          
+          if (mergedPagesCount > originalPagesCount) {
+            console.log(`[SiteService] Template ${siteData.templateId} missing default pages, updating template with defaults`);
+            // Update template with merged config
+            await TemplateModel.updateTemplate(siteData.templateId, {
+              config: JSON.stringify(mergedConfig),
+            });
+            console.log(`[SiteService] Template updated with default pages (${mergedPagesCount} total pages)`);
+          }
+          
           // Apply template (does not activate - activation is separate)
           await this.applyTemplateToSite(site.id, siteData.templateId, userId);
           
@@ -89,6 +114,33 @@ class SiteService {
       } catch (templateError) {
         console.error(`Error applying template ${siteData.templateId} to site ${site.id}:`, templateError);
         // Site stays in draft mode if template application fails
+      }
+    } else {
+      // No template provided - create a default template with default pages for this site
+      console.log(`[SiteService] No template provided, creating default template with default pages for site ${site.id}`);
+      try {
+        const { generateDefaultTemplateConfig } = require('../../../utils/defaultTemplateConfig');
+        const TemplateService = require('./template.service');
+        
+        // Create a default template with default pages
+        const defaultTemplateData = {
+          name: `Default Template - ${site.name}`,
+          description: 'Auto-generated default template with starter pages',
+          config: generateDefaultTemplateConfig(),
+        };
+        
+        const defaultTemplate = await TemplateService.createTemplate(defaultTemplateData, userId);
+        console.log(`[SiteService] Created default template ${defaultTemplate.id} with default pages`);
+        
+        // Apply the default template to the site
+        await this.applyTemplateToSite(site.id, defaultTemplate.id, userId);
+        console.log(`[SiteService] Applied default template to site ${site.id}`);
+        
+        // Return updated site
+        return await SiteModel.getSiteById(site.id);
+      } catch (defaultTemplateError) {
+        console.error(`[SiteService] Failed to create default template for site ${site.id}:`, defaultTemplateError);
+        // Continue without template - site can be configured later
       }
     }
 

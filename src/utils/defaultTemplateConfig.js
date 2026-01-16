@@ -179,11 +179,18 @@ function mergeWithDefaults(config = {}) {
   
   const finalMergedPages = [...mergedPages, ...newDefaultPages];
   
+  // Debug logging
+  if (newDefaultPages.length > 0) {
+    console.log(`[defaultTemplateConfig] Adding ${newDefaultPages.length} new default pages:`, 
+      newDefaultPages.map(p => p.slug).join(', '));
+  }
+  console.log(`[defaultTemplateConfig] Total pages after merge: ${finalMergedPages.length} (was ${(config.pages || []).length})`);
+  
   return {
     ...defaults,
     ...config,
     blocks: mergedBlocks,
-    pages: mergedPages,
+    pages: finalMergedPages, // Use finalMergedPages which includes new default pages
     // Merge theme (provided theme overrides defaults)
     theme: {
       ...defaults.theme,
