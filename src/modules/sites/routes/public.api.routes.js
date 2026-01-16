@@ -188,20 +188,37 @@ router.get('/:id/config', async (req, res) => {
     const customization = await CustomizationModel.getCustomization(id);
 
     // Pages come from template.config.pages (filter to published only for public)
+    // Default pages use settings.visibility.published, not top-level published
     const allPages = templateConfig?.pages || [];
     const pages = allPages
-      .filter(page => page.published === true && page.status === 'published')
+      .filter(page => {
+        // Check both top-level published and settings.visibility.published
+        // Default pages have settings.visibility.published = true
+        const isPublished = page.published === true || 
+                          page.settings?.visibility?.published === true;
+        // If published is true (via either method), include the page
+        // Status can be 'published', missing (defaults to published if visibility.published is true), or explicitly 'draft'
+        if (!isPublished) return false;
+        // Only exclude if explicitly set to 'draft' status AND not published
+        if (page.status === 'draft' && page.published !== true && page.settings?.visibility?.published !== true) {
+          return false;
+        }
+        return true;
+      })
       .map(page => ({
         id: `page-${page.slug}`, // Generate ID from slug
         site_id: id,
         slug: page.slug,
         title: page.title,
         content: page.content || {},
-        published: page.published || false,
-        status: page.status || 'draft',
-        meta_description: page.metaDescription || page.meta_description || null,
-        meta_keywords: page.metaKeywords || page.meta_keywords || null,
+        regions: page.regions || [], // Preserve regions (default pages have regions at top level)
+        published: page.published || page.settings?.visibility?.published || false,
+        status: page.status || (page.settings?.visibility?.published ? 'published' : 'draft'),
+        settings: page.settings || {}, // Preserve all settings
+        layoutTemplate: page.layoutTemplate || page.layout_id || site.default_layout_id,
         layout_id: page.layoutId || page.layout_id || site.default_layout_id,
+        meta_description: page.metaDescription || page.meta_description || page.settings?.seo?.metaDescription || null,
+        meta_keywords: page.metaKeywords || page.meta_keywords || null,
       }));
 
     // Build config object
@@ -272,18 +289,65 @@ router.get('/:id/config/draft', async (req, res) => {
       return sendError(res, `Site with ID "${id}" is suspended`, NOT_FOUND);
     }
 
-    // Get related data (include draft pages for preview)
-    const [customization, allPages, template] = await Promise.all([
-      CustomizationModel.getCustomization(id),
-      PageModel.getSitePages(id), // Get all pages for draft preview
-      site.template_id ? TemplateModel.getTemplateById(site.template_id) : null,
-    ]);
+    // If site has no template, return minimal config
+    if (!site.template_id) {
+      const customization = await CustomizationModel.getCustomization(id);
+      const config = {
+        site: {
+          id: site.id,
+          name: site.name,
+          slug: site.slug,
+          status: site.status,
+          owner_id: site.owner_id,
+          template_id: null,
+          primary_domain: site.primary_domain,
+          engine_version: site.engine_version,
+          default_layout_id: site.default_layout_id,
+          created_at: site.created_at,
+          updated_at: site.updated_at,
+        },
+        customization: customization ? {
+          ...customization,
+          colors: typeof customization.colors === 'string' ? JSON.parse(customization.colors) : customization.colors,
+          fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
+          spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
+        } : null,
+        pages: [],
+        template: null,
+      };
+      return sendSuccess(res, config, 'Draft config retrieved (no template assigned)', OK);
+    }
 
-    // For draft config, include all pages (published and draft) for preview and parse JSONB content
-    const pages = (allPages || []).map(page => ({
-      ...page,
-      content: typeof page.content === 'string' ? JSON.parse(page.content) : page.content,
-      meta_keywords: typeof page.meta_keywords === 'string' ? JSON.parse(page.meta_keywords) : page.meta_keywords,
+    // Get template - pages come from template.config.pages
+    const template = await TemplateModel.getTemplateById(site.template_id);
+    if (!template) {
+      return sendError(res, `Template for site "${id}" not found`, NOT_FOUND);
+    }
+
+    // Parse template config
+    const templateConfig = typeof template.config === 'string' 
+      ? JSON.parse(template.config) 
+      : template.config;
+
+    // Get customization settings (site-specific)
+    const customization = await CustomizationModel.getCustomization(id);
+
+    // For draft config, include ALL pages from template (published and draft) for preview
+    const allPages = templateConfig?.pages || [];
+    const pages = allPages.map(page => ({
+      id: `page-${page.slug}`, // Generate ID from slug
+      site_id: id,
+      slug: page.slug,
+      title: page.title,
+      content: page.content || {},
+      regions: page.regions || [], // Preserve regions (default pages have regions at top level)
+      published: page.published || page.settings?.visibility?.published || false,
+      status: page.status || (page.settings?.visibility?.published ? 'published' : 'draft'),
+      settings: page.settings || {}, // Preserve all settings
+      layoutTemplate: page.layoutTemplate || page.layout_id || site.default_layout_id,
+      layout_id: page.layoutId || page.layout_id || site.default_layout_id,
+      meta_description: page.metaDescription || page.meta_description || page.settings?.seo?.metaDescription || null,
+      meta_keywords: page.metaKeywords || page.meta_keywords || null,
     }));
 
     // Build config object (same structure as regular config)
