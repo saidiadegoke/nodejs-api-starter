@@ -187,39 +187,42 @@ router.get('/:id/config', async (req, res) => {
     // Get customization settings (site-specific)
     const customization = await CustomizationModel.getCustomization(id);
 
-    // Pages come from template.config.pages (filter to published only for public)
-    // Default pages use settings.visibility.published, not top-level published
+    // Pages come from template.config.pages
+    // For draft sites, return all pages regardless of published status
+    // For active sites, filter to published pages only
     const allPages = templateConfig?.pages || [];
-    const pages = allPages
-      .filter(page => {
-        // Check both top-level published and settings.visibility.published
-        // Default pages have settings.visibility.published = true
-        const isPublished = page.published === true || 
-                          page.settings?.visibility?.published === true;
-        // If published is true (via either method), include the page
-        // Status can be 'published', missing (defaults to published if visibility.published is true), or explicitly 'draft'
-        if (!isPublished) return false;
-        // Only exclude if explicitly set to 'draft' status AND not published
-        if (page.status === 'draft' && page.published !== true && page.settings?.visibility?.published !== true) {
-          return false;
-        }
-        return true;
-      })
-      .map(page => ({
-        id: `page-${page.slug}`, // Generate ID from slug
-        site_id: id,
-        slug: page.slug,
-        title: page.title,
-        content: page.content || {},
-        regions: page.regions || [], // Preserve regions (default pages have regions at top level)
-        published: page.published || page.settings?.visibility?.published || false,
-        status: page.status || (page.settings?.visibility?.published ? 'published' : 'draft'),
-        settings: page.settings || {}, // Preserve all settings
-        layoutTemplate: page.layoutTemplate || page.layout_id || site.default_layout_id,
-        layout_id: page.layoutId || page.layout_id || site.default_layout_id,
-        meta_description: page.metaDescription || page.meta_description || page.settings?.seo?.metaDescription || null,
-        meta_keywords: page.metaKeywords || page.meta_keywords || null,
-      }));
+    const filteredPages = site.status === 'draft'
+      ? allPages // Draft sites see all pages
+      : allPages.filter(page => {
+          // Check both top-level published and settings.visibility.published
+          // Default pages have settings.visibility.published = true
+          const isPublished = page.published === true || 
+                            page.settings?.visibility?.published === true;
+          // If published is true (via either method), include the page
+          // Status can be 'published', missing (defaults to published if visibility.published is true), or explicitly 'draft'
+          if (!isPublished) return false;
+          // Only exclude if explicitly set to 'draft' status AND not published
+          if (page.status === 'draft' && page.published !== true && page.settings?.visibility?.published !== true) {
+            return false;
+          }
+          return true;
+        });
+    
+    const pages = filteredPages.map(page => ({
+      id: `page-${page.slug}`, // Generate ID from slug
+      site_id: id,
+      slug: page.slug,
+      title: page.title,
+      content: page.content || {},
+      regions: page.regions || [], // Preserve regions (default pages have regions at top level)
+      published: page.published || page.settings?.visibility?.published || false,
+      status: page.status || (page.settings?.visibility?.published ? 'published' : 'draft'),
+      settings: page.settings || {}, // Preserve all settings
+      layoutTemplate: page.layoutTemplate || page.layout_id || site.default_layout_id,
+      layout_id: page.layoutId || page.layout_id || site.default_layout_id,
+      meta_description: page.metaDescription || page.meta_description || page.settings?.seo?.metaDescription || null,
+      meta_keywords: page.metaKeywords || page.meta_keywords || null,
+    }));
 
     // Build config object
     const config = {
