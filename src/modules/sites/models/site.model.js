@@ -20,10 +20,16 @@ class SiteModel {
 
   /**
    * Get site by ID
+   * Includes template_id from site_templates join
    */
   static async getSiteById(siteId) {
     const result = await pool.query(
-      'SELECT * FROM sites WHERE id = $1',
+      `SELECT 
+        s.*,
+        st.template_id
+      FROM sites s
+      LEFT JOIN site_templates st ON s.id = st.site_id
+      WHERE s.id = $1`,
       [siteId]
     );
     return result.rows[0];
@@ -31,10 +37,16 @@ class SiteModel {
 
   /**
    * Get site by slug
+   * Includes template_id from site_templates join
    */
   static async getSiteBySlug(slug) {
     const result = await pool.query(
-      'SELECT * FROM sites WHERE slug = $1',
+      `SELECT 
+        s.*,
+        st.template_id
+      FROM sites s
+      LEFT JOIN site_templates st ON s.id = st.site_id
+      WHERE s.slug = $1`,
       [slug]
     );
     return result.rows[0];
@@ -132,6 +144,7 @@ class SiteModel {
 
   /**
    * Get site by custom domain
+   * Includes template_id from site_templates join
    */
   static async getSiteByCustomDomain(domain) {
     // Normalize domain (remove www, lowercase)
@@ -139,15 +152,19 @@ class SiteModel {
     
     // Check both primary_domain and custom_domains table
     const result = await pool.query(
-      `SELECT s.* FROM sites s
-       WHERE (s.primary_domain IS NOT NULL 
-         AND LOWER(REPLACE(s.primary_domain, 'www.', '')) = $1)
-       OR EXISTS (
-         SELECT 1 FROM custom_domains cd
-         WHERE cd.site_id = s.id
-         AND LOWER(REPLACE(cd.domain, 'www.', '')) = $1
-         AND cd.verified = true
-       )`,
+      `SELECT 
+        s.*,
+        st.template_id
+      FROM sites s
+      LEFT JOIN site_templates st ON s.id = st.site_id
+      WHERE (s.primary_domain IS NOT NULL 
+        AND LOWER(REPLACE(s.primary_domain, 'www.', '')) = $1)
+      OR EXISTS (
+        SELECT 1 FROM custom_domains cd
+        WHERE cd.site_id = s.id
+        AND LOWER(REPLACE(cd.domain, 'www.', '')) = $1
+        AND cd.verified = true
+      )`,
       [normalizedDomain]
     );
     return result.rows[0];
