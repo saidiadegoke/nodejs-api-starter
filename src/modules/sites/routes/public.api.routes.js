@@ -131,20 +131,46 @@ router.get('/:id/config', async (req, res) => {
       return sendError(res, 'Valid site ID is required', BAD_REQUEST);
     }
 
-    // Get site (must be active for public config)
+    // Get site (allow active and draft sites)
     const site = await SiteModel.getSiteById(id);
 
     if (!site) {
       return sendError(res, `Site with ID "${id}" not found`, NOT_FOUND);
     }
 
-    if (site.status !== 'active') {
-      return sendError(res, `Site with ID "${id}" not found`, NOT_FOUND);
+    // Allow active and draft sites (block suspended)
+    if (site.status === 'suspended') {
+      return sendError(res, `Site with ID "${id}" is suspended`, NOT_FOUND);
     }
 
-    // Site MUST have a template (pages come from template)
+    // If site has no template, return minimal config (site can exist without template)
     if (!site.template_id) {
-      return sendError(res, `Site with ID "${id}" has no template`, NOT_FOUND);
+      // Return minimal config with empty pages
+      const customization = await CustomizationModel.getCustomization(id);
+      const config = {
+        site: {
+          id: site.id,
+          name: site.name,
+          slug: site.slug,
+          status: site.status,
+          owner_id: site.owner_id,
+          template_id: null,
+          primary_domain: site.primary_domain,
+          engine_version: site.engine_version,
+          default_layout_id: site.default_layout_id,
+          created_at: site.created_at,
+          updated_at: site.updated_at,
+        },
+        customization: customization ? {
+          ...customization,
+          colors: typeof customization.colors === 'string' ? JSON.parse(customization.colors) : customization.colors,
+          fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
+          spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
+        } : null,
+        pages: [],
+        template: null,
+      };
+      return sendSuccess(res, config, 'Site config retrieved (no template assigned)', OK);
     }
 
     // Get template - pages come from template.config.pages
@@ -189,6 +215,7 @@ router.get('/:id/config', async (req, res) => {
         template_id: site.template_id,
         primary_domain: site.primary_domain,
         engine_version: site.engine_version,
+        default_layout_id: site.default_layout_id,
         created_at: site.created_at,
         updated_at: site.updated_at,
       },
@@ -270,6 +297,7 @@ router.get('/:id/config/draft', async (req, res) => {
         template_id: site.template_id,
         primary_domain: site.primary_domain,
         engine_version: site.engine_version,
+        default_layout_id: site.default_layout_id,
         created_at: site.created_at,
         updated_at: site.updated_at,
       },
