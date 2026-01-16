@@ -230,17 +230,60 @@ router.get('/:id/config', async (req, res) => {
     
     // Filter pages based on published status (for active sites only)
     let pages = resolvedConfig.pages || [];
+    
+    // Debug: Log pages before filtering
+    console.log(`[PublicAPI] Pages before filtering for site ${site.id} (status: ${site.status}):`, {
+      totalPages: pages.length,
+      pageDetails: pages.map(p => ({
+        slug: p.slug,
+        published: p.published,
+        status: p.status,
+        settingsVisibilityPublished: p.settings?.visibility?.published,
+      })),
+    });
+    
     if (site.status === 'active') {
       // For active sites, filter to published pages only
+      const originalCount = pages.length;
       pages = pages.filter(page => {
+        // Check both top-level published and settings.visibility.published
         const isPublished = page.published === true || 
                           page.settings?.visibility?.published === true;
-        if (!isPublished) return false;
+        if (!isPublished) {
+          console.log(`[PublicAPI] Filtering out unpublished page "${page.slug}" for active site ${site.id}`, {
+            published: page.published,
+            settingsVisibilityPublished: page.settings?.visibility?.published,
+            status: page.status,
+            hasSettings: !!page.settings,
+            settingsKeys: page.settings ? Object.keys(page.settings) : [],
+          });
+          return false;
+        }
         // Only exclude if explicitly set to 'draft' status AND not published
         if (page.status === 'draft' && page.published !== true && page.settings?.visibility?.published !== true) {
+          console.log(`[PublicAPI] Filtering out draft page "${page.slug}" for active site ${site.id}`);
           return false;
         }
         return true;
+      });
+      
+      if (pages.length === 0 && originalCount > 0) {
+        console.error(`[PublicAPI] All ${originalCount} pages were filtered out for active site ${site.id}. This site has no published pages.`, {
+          filteredPages: pages.map(p => ({
+            slug: p.slug,
+            published: p.published,
+            status: p.status,
+            settingsVisibilityPublished: p.settings?.visibility?.published,
+          })),
+        });
+      } else if (pages.length < originalCount) {
+        console.warn(`[PublicAPI] Filtered ${originalCount - pages.length} unpublished pages for active site ${site.id}. Remaining: ${pages.length} published pages.`);
+      }
+      
+      // Debug: Log pages after filtering
+      console.log(`[PublicAPI] Pages after filtering for active site ${site.id}:`, {
+        remainingPages: pages.length,
+        pageSlugs: pages.map(p => p.slug),
       });
     }
     // For draft sites, return all pages (already resolved by preview service)
