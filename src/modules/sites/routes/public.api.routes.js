@@ -37,11 +37,13 @@ router.get('/by-slug/:slug', async (req, res) => {
       return sendError(res, `Site with slug "${slug}" not found`, NOT_FOUND);
     }
 
-    // Allow active sites and draft preview sites (preview sites have slug starting with 'template-preview-' or 'preview-')
-    // Draft preview sites can be accessed for preview purposes
+    // Allow active sites and draft sites (draft sites can be accessed for development/preview)
+    // Also allow preview sites (preview sites have slug starting with 'template-preview-' or 'preview-')
     const isPreviewSite = site.slug?.startsWith('template-preview-') || site.slug?.startsWith('preview-');
-    if (site.status !== 'active' && !isPreviewSite) {
-      return sendError(res, `Site with slug "${slug}" not found`, NOT_FOUND);
+    // Allow active and draft sites (draft sites are accessible for development)
+    // Only block suspended sites
+    if (site.status === 'suspended' && !isPreviewSite) {
+      return sendError(res, `Site with slug "${slug}" is suspended`, NOT_FOUND);
     }
 
     // Return minimal site data (exclude sensitive fields)

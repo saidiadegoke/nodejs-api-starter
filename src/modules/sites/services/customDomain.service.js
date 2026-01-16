@@ -115,6 +115,26 @@ class CustomDomainService {
         logger.warn(`[CustomDomainService] SSL provisioning failed for ${customDomain.domain}:`, sslError);
       }
       
+      // Generate Traefik configuration for verified domain
+      try {
+        const TraefikConfigService = require('./traefikConfig.service');
+        
+        // Test write permissions first
+        const writeTest = await TraefikConfigService.testWritePermissions();
+        if (!writeTest.success) {
+          logger.error(`[CustomDomainService] Cannot write to Traefik config directory: ${writeTest.error}`);
+          logger.error(`[CustomDomainService] Fix permissions: sudo mkdir -p ${writeTest.directory} && sudo chown -R $(whoami):docker ${writeTest.directory} && sudo chmod -R 775 ${writeTest.directory}`);
+          // Don't throw - allow verification to succeed, but log the issue
+        } else {
+          await TraefikConfigService.generateConfigForDomain(domainId);
+          logger.info(`[CustomDomainService] Traefik config generated for ${customDomain.domain}`);
+        }
+      } catch (traefikError) {
+        // Log error but don't fail verification
+        // Config can be regenerated later
+        logger.error(`[CustomDomainService] Traefik config generation failed for ${customDomain.domain}:`, traefikError);
+      }
+      
       return { verified: true, message: 'Domain verified successfully' };
     } else {
       return { verified: false, message: 'DNS verification failed. Please check your DNS settings.' };
@@ -126,7 +146,7 @@ class CustomDomainService {
    */
   static async deleteCustomDomain(domainId, siteId, userId) {
     // Import here to avoid circular dependency
-    const nginxService = require('./nginx.service');
+    const TraefikConfigService = require('./traefikConfig.service');
     // Verify site ownership
     const site = await SiteModel.getSiteById(siteId);
     if (!site) {
@@ -157,6 +177,14 @@ class CustomDomainService {
         logger.warn(`[CustomDomainService] Failed to remove domain from certificate:`, certError);
         // Continue with deletion even if certificate removal fails
       }
+    }
+
+    // Delete Traefik config if exists
+    try {
+      await TraefikConfigService.deleteDomainConfig(customDomain.domain);
+      logger.info(`[CustomDomainService] Traefik config deleted for ${customDomain.domain}`);
+    } catch (traefikError) {
+      logger.warn(`[CustomDomainService] Traefik config deletion failed for ${customDomain.domain}:`, traefikError);
     }
 
     // Delete custom domain
