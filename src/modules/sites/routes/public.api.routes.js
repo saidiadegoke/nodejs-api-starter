@@ -187,45 +187,12 @@ router.get('/:id/config', async (req, res) => {
     // Get customization settings (site-specific)
     const customization = await CustomizationModel.getCustomization(id);
 
-    // Pages come from template.config.pages
-    // For draft sites, return all pages regardless of published status
-    // For active sites, filter to published pages only
-    const allPages = templateConfig?.pages || [];
-    const filteredPages = site.status === 'draft'
-      ? allPages // Draft sites see all pages
-      : allPages.filter(page => {
-          // Check both top-level published and settings.visibility.published
-          // Default pages have settings.visibility.published = true
-          const isPublished = page.published === true || 
-                            page.settings?.visibility?.published === true;
-          // If published is true (via either method), include the page
-          // Status can be 'published', missing (defaults to published if visibility.published is true), or explicitly 'draft'
-          if (!isPublished) return false;
-          // Only exclude if explicitly set to 'draft' status AND not published
-          if (page.status === 'draft' && page.published !== true && page.settings?.visibility?.published !== true) {
-            return false;
-          }
-          return true;
-        });
+    // Use PreviewService to resolve pages (same logic as template preview)
+    // This ensures consistent page resolution with blockIds -> blocks conversion
+    const PreviewService = require('../services/preview.service');
     
-    const pages = filteredPages.map(page => ({
-      id: `page-${page.slug}`, // Generate ID from slug
-      site_id: id,
-      slug: page.slug,
-      title: page.title,
-      content: page.content || {},
-      regions: page.regions || [], // Preserve regions (default pages have regions at top level)
-      published: page.published || page.settings?.visibility?.published || false,
-      status: page.status || (page.settings?.visibility?.published ? 'published' : 'draft'),
-      settings: page.settings || {}, // Preserve all settings
-      layoutTemplate: page.layoutTemplate || page.layout_id || site.default_layout_id,
-      layout_id: page.layoutId || page.layout_id || site.default_layout_id,
-      meta_description: page.metaDescription || page.meta_description || page.settings?.seo?.metaDescription || null,
-      meta_keywords: page.metaKeywords || page.meta_keywords || null,
-    }));
-
-    // Build config object
-    const config = {
+    // Build config object for preview service
+    const previewConfig = {
       site: {
         id: site.id,
         name: site.name,
@@ -233,9 +200,9 @@ router.get('/:id/config', async (req, res) => {
         status: site.status,
         owner_id: site.owner_id,
         template_id: site.template_id,
+        default_layout_id: site.default_layout_id,
         primary_domain: site.primary_domain,
         engine_version: site.engine_version,
-        default_layout_id: site.default_layout_id,
         created_at: site.created_at,
         updated_at: site.updated_at,
       },
@@ -245,17 +212,45 @@ router.get('/:id/config', async (req, res) => {
         fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
-      pages: pages || [],
-      template: template ? {
+      pages: templateConfig?.pages || [],
+      template: {
         id: template.id,
         name: template.name,
         slug: template.slug,
         category: template.category,
-        config: typeof template.config === 'string' ? JSON.parse(template.config) : template.config, // Parse JSONB config
+        config: templateConfig,
         thumbnail_url: template.thumbnail_url,
         created_at: template.created_at,
         updated_at: template.updated_at,
-      } : null,
+      },
+    };
+
+    // Use preview service to resolve pages (converts blockIds to blocks)
+    const resolvedConfig = PreviewService.generateConfigForPreview(previewConfig);
+    
+    // Filter pages based on published status (for active sites only)
+    let pages = resolvedConfig.pages || [];
+    if (site.status === 'active') {
+      // For active sites, filter to published pages only
+      pages = pages.filter(page => {
+        const isPublished = page.published === true || 
+                          page.settings?.visibility?.published === true;
+        if (!isPublished) return false;
+        // Only exclude if explicitly set to 'draft' status AND not published
+        if (page.status === 'draft' && page.published !== true && page.settings?.visibility?.published !== true) {
+          return false;
+        }
+        return true;
+      });
+    }
+    // For draft sites, return all pages (already resolved by preview service)
+
+    // Build config object using resolved config from preview service
+    const config = {
+      site: resolvedConfig.site,
+      customization: resolvedConfig.customization,
+      pages: pages,
+      template: resolvedConfig.template,
     };
 
     return sendSuccess(res, config, 'Site config retrieved successfully', OK);
@@ -335,26 +330,12 @@ router.get('/:id/config/draft', async (req, res) => {
     // Get customization settings (site-specific)
     const customization = await CustomizationModel.getCustomization(id);
 
-    // For draft config, include ALL pages from template (published and draft) for preview
-    const allPages = templateConfig?.pages || [];
-    const pages = allPages.map(page => ({
-      id: `page-${page.slug}`, // Generate ID from slug
-      site_id: id,
-      slug: page.slug,
-      title: page.title,
-      content: page.content || {},
-      regions: page.regions || [], // Preserve regions (default pages have regions at top level)
-      published: page.published || page.settings?.visibility?.published || false,
-      status: page.status || (page.settings?.visibility?.published ? 'published' : 'draft'),
-      settings: page.settings || {}, // Preserve all settings
-      layoutTemplate: page.layoutTemplate || page.layout_id || site.default_layout_id,
-      layout_id: page.layoutId || page.layout_id || site.default_layout_id,
-      meta_description: page.metaDescription || page.meta_description || page.settings?.seo?.metaDescription || null,
-      meta_keywords: page.metaKeywords || page.meta_keywords || null,
-    }));
-
-    // Build config object (same structure as regular config)
-    const config = {
+    // Use PreviewService to resolve pages (same logic as template preview)
+    // This ensures consistent page resolution with blockIds -> blocks conversion
+    const PreviewService = require('../services/preview.service');
+    
+    // Build config object for preview service
+    const previewConfig = {
       site: {
         id: site.id,
         name: site.name,
@@ -362,9 +343,9 @@ router.get('/:id/config/draft', async (req, res) => {
         status: site.status,
         owner_id: site.owner_id,
         template_id: site.template_id,
+        default_layout_id: site.default_layout_id,
         primary_domain: site.primary_domain,
         engine_version: site.engine_version,
-        default_layout_id: site.default_layout_id,
         created_at: site.created_at,
         updated_at: site.updated_at,
       },
@@ -374,17 +355,31 @@ router.get('/:id/config/draft', async (req, res) => {
         fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
-      pages: pages || [], // Includes draft pages for preview
-      template: template ? {
+      pages: templateConfig?.pages || [],
+      template: {
         id: template.id,
         name: template.name,
         slug: template.slug,
         category: template.category,
-        config: template.config,
+        config: templateConfig,
         thumbnail_url: template.thumbnail_url,
         created_at: template.created_at,
         updated_at: template.updated_at,
-      } : null,
+      },
+    };
+
+    // Use preview service to resolve pages (converts blockIds to blocks)
+    const resolvedConfig = PreviewService.generateConfigForPreview(previewConfig);
+    
+    // For draft config, include ALL pages (already resolved by preview service)
+    const pages = resolvedConfig.pages || [];
+
+    // Build config object using resolved config from preview service
+    const config = {
+      site: resolvedConfig.site,
+      customization: resolvedConfig.customization,
+      pages: pages,
+      template: resolvedConfig.template,
     };
 
     return sendSuccess(res, config, 'Draft site config retrieved successfully', OK);
