@@ -178,6 +178,12 @@ router.get('/:id/config', async (req, res) => {
     if (!template) {
       return sendError(res, `Template for site "${id}" not found`, NOT_FOUND);
     }
+    
+    // Ensure template has an id (required for validation)
+    if (!template.id) {
+      logger.error(`Template ${site.template_id} is missing id field`, { template });
+      return sendError(res, `Template for site "${id}" is invalid (missing id)`, 500);
+    }
 
     // Parse template config
     const templateConfig = typeof template.config === 'string' 
@@ -213,7 +219,7 @@ router.get('/:id/config', async (req, res) => {
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
       pages: templateConfig?.pages || [],
-      template: {
+      template: template.id ? {
         id: template.id,
         name: template.name,
         slug: template.slug,
@@ -222,7 +228,7 @@ router.get('/:id/config', async (req, res) => {
         thumbnail_url: template.thumbnail_url,
         created_at: template.created_at,
         updated_at: template.updated_at,
-      },
+      } : null, // Only include template if it has an id (required for validation)
     };
 
     // Use preview service to resolve pages (converts blockIds to blocks)
@@ -330,6 +336,12 @@ router.get('/:id/config/draft', async (req, res) => {
     if (!template) {
       return sendError(res, `Template for site "${id}" not found`, NOT_FOUND);
     }
+    
+    // Ensure template has an id (required for validation)
+    if (!template.id) {
+      logger.error(`Template ${site.template_id} is missing id field`, { template });
+      return sendError(res, `Template for site "${id}" is invalid (missing id)`, 500);
+    }
 
     // Parse template config
     const templateConfig = typeof template.config === 'string' 
@@ -365,7 +377,7 @@ router.get('/:id/config/draft', async (req, res) => {
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
       pages: templateConfig?.pages || [],
-      template: {
+      template: template.id ? {
         id: template.id,
         name: template.name,
         slug: template.slug,
@@ -374,7 +386,7 @@ router.get('/:id/config/draft', async (req, res) => {
         thumbnail_url: template.thumbnail_url,
         created_at: template.created_at,
         updated_at: template.updated_at,
-      },
+      } : null, // Only include template if it has an id (required for validation)
     };
 
     // Use preview service to resolve pages (converts blockIds to blocks)

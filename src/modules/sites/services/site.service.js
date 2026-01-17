@@ -116,32 +116,9 @@ class SiteService {
         // Site stays in draft mode if template application fails
       }
     } else {
-      // No template provided - create a default template with default pages for this site
-      console.log(`[SiteService] No template provided, creating default template with default pages for site ${site.id}`);
-      try {
-        const { generateDefaultTemplateConfig } = require('../../../utils/defaultTemplateConfig');
-        const TemplateService = require('./template.service');
-        
-        // Create a default template with default pages
-        const defaultTemplateData = {
-          name: `Default Template - ${site.name}`,
-          description: 'Auto-generated default template with starter pages',
-          config: generateDefaultTemplateConfig(),
-        };
-        
-        const defaultTemplate = await TemplateService.createTemplate(defaultTemplateData, userId);
-        console.log(`[SiteService] Created default template ${defaultTemplate.id} with default pages`);
-        
-        // Apply the default template to the site
-        await this.applyTemplateToSite(site.id, defaultTemplate.id, userId);
-        console.log(`[SiteService] Applied default template to site ${site.id}`);
-        
-        // Return updated site
-        return await SiteModel.getSiteById(site.id);
-      } catch (defaultTemplateError) {
-        console.error(`[SiteService] Failed to create default template for site ${site.id}:`, defaultTemplateError);
-        // Continue without template - site can be configured later
-      }
+      // No template provided - site is created without template
+      // Template will be created/assigned in step 2 of the wizard
+      console.log(`[SiteService] Site ${site.id} created without template. Template will be assigned in step 2.`);
     }
 
     // If no template provided, create default customization for draft site
