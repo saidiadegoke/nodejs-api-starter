@@ -205,6 +205,27 @@ router.get('/:id/config', async (req, res) => {
     // Ensure template.id is a valid number/string (already validated above)
     const templateId = template.id;
     
+    // Build template object - ensure id is always a valid number/string
+    const templateObj = {
+      id: templateId, // Use validated templateId (already checked above)
+      name: template.name || null,
+      slug: template.slug || null,
+      category: template.category || null,
+      config: templateConfig,
+      thumbnail_url: template.thumbnail_url || null,
+      created_at: template.created_at || null,
+      updated_at: template.updated_at || null,
+    };
+    
+    // DEBUG: Log template object before passing to preview service
+    logger.info(`[PublicAPI] Template object before preview service for site ${id}:`, {
+      hasId: !!templateObj.id,
+      id: templateObj.id,
+      idType: typeof templateObj.id,
+      idValue: templateObj.id,
+      templateKeys: Object.keys(templateObj),
+    });
+    
     const previewConfig = {
       site: {
         id: site.id,
@@ -226,20 +247,20 @@ router.get('/:id/config', async (req, res) => {
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
       pages: templateConfig?.pages || [],
-      template: {
-        id: templateId, // Use validated templateId
-        name: template.name || null,
-        slug: template.slug || null,
-        category: template.category || null,
-        config: templateConfig,
-        thumbnail_url: template.thumbnail_url || null,
-        created_at: template.created_at || null,
-        updated_at: template.updated_at || null,
-      },
+      template: templateObj, // Use the validated template object
     };
 
     // Use preview service to resolve pages (converts blockIds to blocks)
     const resolvedConfig = PreviewService.generateConfigForPreview(previewConfig);
+    
+    // DEBUG: Log template after preview service
+    logger.info(`[PublicAPI] Template object after preview service for site ${id}:`, {
+      hasTemplate: !!resolvedConfig.template,
+      hasId: !!resolvedConfig.template?.id,
+      id: resolvedConfig.template?.id,
+      idType: resolvedConfig.template?.id ? typeof resolvedConfig.template.id : 'null',
+      templateKeys: resolvedConfig.template ? Object.keys(resolvedConfig.template) : [],
+    });
     
     // Filter pages based on published status (for active sites only)
     let pages = resolvedConfig.pages || [];
@@ -268,32 +289,22 @@ router.get('/:id/config', async (req, res) => {
     // For draft sites, return all pages (already resolved by preview service)
 
     // Build config object using resolved config from preview service
-    // Ensure template is valid before including it (double-check after preview service)
-    let finalTemplate = resolvedConfig.template;
-    
-    // Validate template has id before including it
-    if (finalTemplate && (!finalTemplate.id || finalTemplate.id === null || finalTemplate.id === undefined)) {
-      logger.error(`[PublicAPI] Template object from preview service is missing id for site ${id}`, {
-        template: finalTemplate,
-        templateKeys: finalTemplate ? Object.keys(finalTemplate) : [],
-        templateId: finalTemplate?.id,
-      });
-      finalTemplate = null; // Set to null if id is missing
-    }
-    
+    // PreviewService.generateConfigForPreview already validates the template, so we can trust it
     const config = {
       site: resolvedConfig.site,
       customization: resolvedConfig.customization,
       pages: pages,
-      template: finalTemplate,
+      template: resolvedConfig.template, // Use template as-is from preview service
     };
     
-    // DEBUG: Log template in final config
-    logger.info(`[PublicAPI] Final config for site ${id}:`, {
-      hasTemplate: !!config.template,
-      templateId: config.template?.id,
-      templateIdType: config.template?.id ? typeof config.template.id : 'null',
-    });
+    // DEBUG: Log template in final config (only if there's an issue)
+    if (!config.template || !config.template.id) {
+      logger.warn(`[PublicAPI] Template missing or invalid in final config for site ${id}:`, {
+        hasTemplate: !!config.template,
+        templateId: config.template?.id,
+        templateIdType: config.template?.id ? typeof config.template.id : 'null',
+      });
+    }
 
     return sendSuccess(res, config, 'Site config retrieved successfully', OK);
   } catch (error) {
@@ -430,24 +441,13 @@ router.get('/:id/config/draft', async (req, res) => {
     const pages = resolvedConfig.pages || [];
 
     // Build config object using resolved config from preview service
-    // Ensure template is valid before including it (double-check after preview service)
-    let finalTemplate = resolvedConfig.template;
-    
-    // Validate template has id before including it
-    if (finalTemplate && (!finalTemplate.id || finalTemplate.id === null || finalTemplate.id === undefined)) {
-      logger.error(`[PublicAPI] Template object from preview service is missing id for site ${id} (draft)`, {
-        template: finalTemplate,
-        templateKeys: finalTemplate ? Object.keys(finalTemplate) : [],
-        templateId: finalTemplate?.id,
-      });
-      finalTemplate = null; // Set to null if id is missing
-    }
-    
+    // Build config object using resolved config from preview service
+    // PreviewService.generateConfigForPreview already validates the template, so we can trust it
     const config = {
       site: resolvedConfig.site,
       customization: resolvedConfig.customization,
-      pages: pages,
-      template: finalTemplate,
+      pages: resolvedConfig.pages || [], // Draft config returns all pages
+      template: resolvedConfig.template, // Use template as-is from preview service
     };
     
     // DEBUG: Log template in final config

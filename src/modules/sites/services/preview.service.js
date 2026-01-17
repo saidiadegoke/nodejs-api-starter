@@ -706,14 +706,27 @@ class PreviewService {
     });
     
     // Ensure template has id if it exists (required for validation)
+    // Only set to null if template exists but id is explicitly missing (not 0, not empty string)
     let template = config.template || null;
-    if (template && !template.id) {
-      console.error('[PreviewService] Template object exists but missing id field:', {
-        templateKeys: Object.keys(template),
-        templateType: typeof template,
-        templateValue: template,
-      });
-      template = null; // Set to null if id is missing (validation will fail otherwise)
+    if (template) {
+      // Check if id is null or undefined (but allow 0 and empty string as valid)
+      if (template.id === null || template.id === undefined) {
+        console.error('[PreviewService] Template object exists but missing id field:', {
+          templateKeys: Object.keys(template),
+          templateType: typeof template,
+          templateValue: template,
+        });
+        template = null; // Set to null if id is missing (validation will fail otherwise)
+      } else {
+        // Ensure id is a string or number (convert if needed)
+        if (typeof template.id !== 'string' && typeof template.id !== 'number') {
+          console.error('[PreviewService] Template id is not a string or number:', {
+            id: template.id,
+            idType: typeof template.id,
+          });
+          template = null;
+        }
+      }
     }
     
     return {
