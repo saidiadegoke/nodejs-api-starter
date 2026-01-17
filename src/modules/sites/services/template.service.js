@@ -41,6 +41,11 @@ class TemplateService {
    * Defaults are merged without duplicating existing pages/blocks.
    */
   static async createTemplate(templateData, userId = null) {
+    // Require userId - all templates must be associated with a user
+    if (!userId) {
+      throw new Error('User ID is required to create a template - all templates must be associated with a user');
+    }
+    
     // Parse config if it's a string
     let config = typeof templateData.config === 'string' 
       ? JSON.parse(templateData.config) 
@@ -54,7 +59,7 @@ class TemplateService {
     const finalTemplateData = {
       ...templateData,
       config: JSON.stringify(config),
-      createdBy: userId, // Set created_by to the user ID
+      createdBy: userId, // Set created_by to the user ID (required)
     };
 
     return await TemplateModel.createTemplate(finalTemplateData);

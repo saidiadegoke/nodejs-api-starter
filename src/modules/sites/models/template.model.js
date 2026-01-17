@@ -7,7 +7,8 @@ class TemplateModel {
    * Otherwise, return all active templates (for public browsing)
    */
   static async getAllTemplates(filters = {}) {
-    let query = 'SELECT * FROM templates WHERE is_active = true';
+    // Only return templates that have a created_by (user association required)
+    let query = 'SELECT * FROM templates WHERE is_active = true AND created_by IS NOT NULL';
     const params = [];
     let paramCount = 1;
 
@@ -52,11 +53,17 @@ class TemplateModel {
    */
   static async createTemplate(templateData) {
     const { name, description, category, previewImageUrl, thumbnailUrl, config, isPremium, createdBy } = templateData;
+    
+    // Ensure created_by is provided (required for all templates)
+    if (!createdBy) {
+      throw new Error('Template must have a created_by (user ID) - all templates must be associated with a user');
+    }
+    
     const result = await pool.query(
       `INSERT INTO templates (name, description, category, preview_image_url, thumbnail_url, config, is_premium, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [name, description, category, previewImageUrl, thumbnailUrl, JSON.stringify(config), isPremium || false, createdBy || null]
+      [name, description, category, previewImageUrl, thumbnailUrl, JSON.stringify(config), isPremium || false, createdBy]
     );
     return result.rows[0];
   }
