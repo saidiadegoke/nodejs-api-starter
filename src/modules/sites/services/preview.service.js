@@ -705,11 +705,22 @@ class PreviewService {
       }, 0),
     });
     
+    // Ensure template has id if it exists (required for validation)
+    let template = config.template || null;
+    if (template && !template.id) {
+      console.error('[PreviewService] Template object exists but missing id field:', {
+        templateKeys: Object.keys(template),
+        templateType: typeof template,
+        templateValue: template,
+      });
+      template = null; // Set to null if id is missing (validation will fail otherwise)
+    }
+    
     return {
       site: site,
       customization: customization,
       pages: resolvedPages,
-      template: config.template || null,
+      template: template,
       components: config.components || [],
       previewPage: config.previewPage || null,
       previewType: config.previewType || 'site', // 'component', 'template', 'page', 'site'
