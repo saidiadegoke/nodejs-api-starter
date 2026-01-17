@@ -206,15 +206,17 @@ router.get('/:id/config', async (req, res) => {
     const templateId = template.id;
     
     // Build template object - ensure id is always a valid number/string
+    // Use undefined instead of null for optional fields to match Zod schema expectations
+    // thumbnail_url is nullable, so include it even if null
     const templateObj = {
       id: templateId, // Use validated templateId (already checked above)
-      name: template.name || null,
-      slug: template.slug || null,
-      category: template.category || null,
+      ...(template.name ? { name: template.name } : {}),
+      ...(template.slug ? { slug: template.slug } : {}),
+      ...(template.category ? { category: template.category } : {}),
       config: templateConfig,
-      thumbnail_url: template.thumbnail_url || null,
-      created_at: template.created_at || null,
-      updated_at: template.updated_at || null,
+      ...(template.thumbnail_url !== undefined ? { thumbnail_url: template.thumbnail_url } : {}),
+      ...(template.created_at ? { created_at: template.created_at } : {}),
+      ...(template.updated_at ? { updated_at: template.updated_at } : {}),
     };
     
     // DEBUG: Log template object before passing to preview service
@@ -424,13 +426,13 @@ router.get('/:id/config/draft', async (req, res) => {
       pages: templateConfig?.pages || [],
       template: {
         id: templateId, // Use validated templateId
-        name: template.name || null,
-        slug: template.slug || null,
-        category: template.category || null,
+        name: template.name || undefined,
+        slug: template.slug || undefined,
+        category: template.category || undefined,
         config: templateConfig,
-        thumbnail_url: template.thumbnail_url || null,
-        created_at: template.created_at || null,
-        updated_at: template.updated_at || null,
+        thumbnail_url: template.thumbnail_url || null, // thumbnail_url is nullable in schema
+        created_at: template.created_at || undefined,
+        updated_at: template.updated_at || undefined,
       },
     };
 
