@@ -219,16 +219,16 @@ router.get('/:id/config', async (req, res) => {
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
       pages: templateConfig?.pages || [],
-      template: template.id ? {
+      template: template && template.id ? {
         id: template.id,
-        name: template.name,
-        slug: template.slug,
-        category: template.category,
+        name: template.name || null,
+        slug: template.slug || null,
+        category: template.category || null,
         config: templateConfig,
-        thumbnail_url: template.thumbnail_url,
-        created_at: template.created_at,
-        updated_at: template.updated_at,
-      } : null, // Only include template if it has an id (required for validation)
+        thumbnail_url: template.thumbnail_url || null,
+        created_at: template.created_at || null,
+        updated_at: template.updated_at || null,
+      } : null, // Only include template if it exists and has an id (required for validation)
     };
 
     // Use preview service to resolve pages (converts blockIds to blocks)
@@ -377,16 +377,16 @@ router.get('/:id/config/draft', async (req, res) => {
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
       } : null,
       pages: templateConfig?.pages || [],
-      template: template.id ? {
+      template: template && template.id ? {
         id: template.id,
-        name: template.name,
-        slug: template.slug,
-        category: template.category,
+        name: template.name || null,
+        slug: template.slug || null,
+        category: template.category || null,
         config: templateConfig,
-        thumbnail_url: template.thumbnail_url,
-        created_at: template.created_at,
-        updated_at: template.updated_at,
-      } : null, // Only include template if it has an id (required for validation)
+        thumbnail_url: template.thumbnail_url || null,
+        created_at: template.created_at || null,
+        updated_at: template.updated_at || null,
+      } : null, // Only include template if it exists and has an id (required for validation)
     };
 
     // Use preview service to resolve pages (converts blockIds to blocks)
