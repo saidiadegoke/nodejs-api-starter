@@ -213,12 +213,18 @@ class AuthController {
       
       // Send email if user has email
       if (user.email) {
-        const resetUrl = `${process.env.FRONTEND_URL || 'https://opinionpulse.org'}/reset-password?token=${resetToken}`;
+        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://app.smartstore.ng';
+        const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+        
+        // Log reset URL for testing
+        // console.log('[Password Reset] Reset URL generated:', resetUrl);
+        // console.log('[Password Reset] Token (for testing):', resetToken);
+        // console.log('[Password Reset] Sending email to:', user.email);
         
         // Send email asynchronously - don't wait for it
         sendEmail({
           to: user.email,
-          subject: 'Reset Your OpinionPulse Password',
+          subject: 'Reset Your SmartStore Password',
           templateFile: 'forgot-password.html',
           placeholders: [
             user.first_name || user.display_name || 'User',
@@ -259,6 +265,7 @@ class AuthController {
   static async resetPassword(req, res) {
     try {
       const { token, new_password } = req.body;
+      const sendEmail = require('../../../shared/utils/sendEmail');
       
       if (!token || !new_password) {
         return sendError(res, 'Reset token and new password are required', BAD_REQUEST);
@@ -270,6 +277,54 @@ class AuthController {
       
       // Hash the provided token to match against stored hash
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      
+      // console.log('[Password Reset] Token provided:', token);
+      // console.log('[Password Reset] Token hash:', tokenHash);
+      
+      // First, check if token exists (without expiration/used checks for debugging)
+      const allTokensResult = await pool.query(
+        `SELECT pr.*, u.id as user_id, u.email, p.first_name,
+                pr.expires_at > NOW() as is_valid,
+                pr.used_at IS NULL as is_unused
+         FROM password_resets pr 
+         JOIN users u ON pr.user_id = u.id 
+         LEFT JOIN profiles p ON u.id = p.user_id
+         WHERE pr.token_hash = $1`,
+        [tokenHash]
+      );
+      
+      if (allTokensResult.rows.length === 0) {
+        console.log('[Password Reset] No token found with hash:', tokenHash);
+        // Check if there are any recent password resets for debugging
+        const recentResets = await pool.query(
+          `SELECT pr.id, pr.token_hash, pr.expires_at, pr.used_at, pr.created_at, u.email
+           FROM password_resets pr
+           JOIN users u ON pr.user_id = u.id
+           ORDER BY pr.created_at DESC
+           LIMIT 5`
+        );
+        console.log('[Password Reset] Recent password resets:', recentResets.rows.map(r => ({
+          id: r.id,
+          email: r.email,
+          expires_at: r.expires_at,
+          used_at: r.used_at,
+          created_at: r.created_at,
+          is_expired: r.expires_at < new Date(),
+          is_used: r.used_at !== null
+        })));
+        return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
+      }
+      
+      const tokenRecord = allTokensResult.rows[0];
+      console.log('[Password Reset] Token found:', {
+        id: tokenRecord.id,
+        email: tokenRecord.email,
+        expires_at: tokenRecord.expires_at,
+        used_at: tokenRecord.used_at,
+        is_valid: tokenRecord.is_valid,
+        is_unused: tokenRecord.is_unused,
+        now: new Date()
+      });
       
       // Check if token exists and is valid
       const result = await pool.query(
@@ -284,6 +339,14 @@ class AuthController {
       const resetRecord = result.rows[0];
       
       if (!resetRecord) {
+        if (tokenRecord.used_at) {
+          console.log('[Password Reset] Token has already been used');
+          return sendError(res, 'This password reset link has already been used. Please request a new one.', BAD_REQUEST);
+        }
+        if (tokenRecord.expires_at <= new Date()) {
+          console.log('[Password Reset] Token has expired. Expires at:', tokenRecord.expires_at, 'Now:', new Date());
+          return sendError(res, 'This password reset link has expired. Please request a new one.', BAD_REQUEST);
+        }
         return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
       }
       
@@ -307,7 +370,8 @@ class AuthController {
       
       // Send password reset success email asynchronously
       if (resetRecord.email) {
-        const loginUrl = `${process.env.FRONTEND_URL || 'https://opinionpulse.org'}/login`;
+        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://app.smartstore.ng';
+        const loginUrl = `${frontendUrl}/auth/login`;
         const resetDate = new Date().toLocaleDateString('en-US', { 
           year: 'numeric', 
           month: 'long', 
@@ -316,9 +380,11 @@ class AuthController {
           minute: '2-digit'
         });
         
+        console.log('[Password Reset Success] Sending confirmation email to:', resetRecord.email);
+        
         sendEmail({
           to: resetRecord.email,
-          subject: 'Password Reset Successful - OpinionPulse',
+          subject: 'Password Reset Successful - SmartStore',
           templateFile: 'password-reset-success.html',
           placeholders: [
             resetRecord.first_name || 'User',

@@ -46,12 +46,23 @@ const sendEmail = async ({ to, subject, templateFile, placeholders, replyTo, fro
 
     // Mail options configuration
     const mailOptions = {
-      from: `"OpinionPulse" <${fromEmail || process.env.FROM_EMAIL}>`,
+      from: `"SmartStore" <${fromEmail || process.env.FROM_EMAIL}>`,
       to,
       subject,
       html: htmlContent,
       ...(replyTo && { replyTo }), // Include replyTo if provided
     };
+
+    // Log email content for testing (in development/test environments)
+    if (process.env.NODE_ENV !== 'production' || process.env.LOG_EMAILS === 'true') {
+      console.log('\n========== EMAIL LOG (FOR TESTING) ==========');
+      console.log('To:', to);
+      console.log('Subject:', subject);
+      console.log('From:', mailOptions.from);
+      console.log('HTML Content:');
+      console.log(htmlContent);
+      console.log('===========================================\n');
+    }
 
     const info = await transporter.sendMail(mailOptions);
     console.log('Email sent: %s', info.messageId);
