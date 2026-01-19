@@ -1,6 +1,7 @@
 const PageService = require('../services/page.service');
+const PlanAccessService = require('../../payments/services/planAccess.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, BAD_REQUEST, NOT_FOUND } = require('../../../shared/constants/statusCodes');
+const { OK, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 
 class PageController {
   /**
@@ -38,7 +39,19 @@ class PageController {
   static async createPage(req, res) {
     try {
       const { siteId } = req.params;
-      const page = await PageService.createPage({ ...req.body, siteId }, req.user.user_id);
+      const userId = req.user.user_id;
+
+      // Check page limit before creating
+      const canCreate = await PlanAccessService.checkPageLimit(userId, parseInt(siteId));
+      if (!canCreate.allowed) {
+        return sendError(res, canCreate.message || 'Page limit reached', FORBIDDEN);
+      }
+
+      const page = await PageService.createPage({ ...req.body, siteId }, userId);
+      
+      // Update site page usage after creation
+      await PlanAccessService.updateSitePageUsage(parseInt(siteId));
+      
       sendSuccess(res, page, 'Page created successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
@@ -65,6 +78,10 @@ class PageController {
     try {
       const { siteId, pageId } = req.params;
       await PageService.deletePage(pageId, siteId, req.user.user_id);
+      
+      // Update site page usage after deletion
+      await PlanAccessService.updateSitePageUsage(parseInt(siteId));
+      
       sendSuccess(res, null, 'Page deleted successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);

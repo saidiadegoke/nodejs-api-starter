@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Receipt - SmartStore</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            color: #4D16D1;
+            margin-bottom: 10px;
+        }
+        .title {
+            font-size: 24px;
+            color: #1a1a1a;
+            margin-bottom: 10px;
+        }
+        .receipt-box {
+            border: 2px solid #4D16D1;
+            border-radius: 8px;
+            padding: 25px;
+            margin: 20px 0;
+            background-color: #fff;
+        }
+        .receipt-header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .receipt-number {
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        .amount {
+            font-size: 36px;
+            font-weight: bold;
+            color: #4D16D1;
+            margin: 15px 0;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            font-weight: 600;
+            color: #555;
+        }
+        .info-value {
+            color: #1a1a1a;
+            text-align: right;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+        }
+        .note {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">SmartStore</div>
+            <div class="title">Payment Receipt</div>
+        </div>
+
+        <div class="receipt-box">
+            <div class="receipt-header">
+                <div class="receipt-number">Receipt #%s</div>
+                <div class="amount">%s %s</div>
+                <div style="color: #28a745; font-weight: 600; margin-top: 10px;">PAID</div>
+            </div>
+
+            <div class="info-row">
+                <span class="info-label">Date:</span>
+                <span class="info-value">%s</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Payment Method:</span>
+                <span class="info-value">%s</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Transaction Reference:</span>
+                <span class="info-value" style="font-family: monospace; font-size: 12px;">%s</span>
+            </div>
+            %s
+        </div>
+
+        <div class="note">
+            <strong>Note:</strong> This is an official receipt for your payment. Please keep this email for your records. If you need a printable PDF receipt, you can download it from your dashboard.
+        </div>
+
+        <p style="margin-top: 20px;">Thank you for your payment!</p>
+
+        <p>Best regards,<br><strong>The SmartStore Team</strong></p>
+
+        <div class="footer">
+            <p style="margin: 8px 0; font-weight: 600; color: #1e293b;">This email was sent to %s</p>
+            <p style="margin: 8px 0;">You received this receipt for a payment processed on <a href="https://smartstore.ng" style="color: #4D16D1; text-decoration: none; font-weight: bold;">SmartStore</a></p>
+            
+            <p style="margin: 24px 0; font-size: 12px;">
+                <a href="https://twitter.com/smartstore" style="color: #64748b; text-decoration: none; margin: 0 8px;">Twitter</a> •
+                <a href="https://facebook.com/smartstore" style="color: #64748b; text-decoration: none; margin: 0 8px;">Facebook</a> •
+                <a href="https://instagram.com/smartstore" style="color: #64748b; text-decoration: none; margin: 0 8px;">Instagram</a>
+            </p>
+            
+            <p style="margin: 20px 0; color: #cbd5e1;">• • •</p>
+            
+            <p style="margin: 8px 0;">
+                <a href="https://smartstore.ng/help" style="color: #4D16D1; text-decoration: none; font-weight: bold;">Help</a> • 
+                <a href="https://smartstore.ng/contact" style="color: #4D16D1; text-decoration: none; font-weight: bold;">Contact Us</a> •
+                <a href="https://smartstore.ng/privacy" style="color: #4D16D1; text-decoration: none; font-weight: bold;">Privacy</a>
+            </p>
+            
+            <p style="margin: 20px 0 8px 0; font-weight: bold; color: #1e293b;">&copy; 2026 SmartStore. All rights reserved.</p>
+            <p style="font-size: 12px; margin: 8px 0; color: #94a3b8;">
+                Building powerful online stores, one site at a time
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+

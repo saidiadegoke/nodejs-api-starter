@@ -1,6 +1,7 @@
 const SiteService = require('../services/site.service');
+const PlanAccessService = require('../../payments/services/planAccess.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, BAD_REQUEST, NOT_FOUND, UNAUTHORIZED } = require('../../../shared/constants/statusCodes');
+const { OK, BAD_REQUEST, NOT_FOUND, UNAUTHORIZED, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 
 class SiteController {
   /**
@@ -50,7 +51,15 @@ class SiteController {
    */
   static async createSite(req, res) {
     try {
-      const site = await SiteService.createSite(req.body, req.user.user_id);
+      const userId = req.user.user_id;
+
+      // Check site limit before creating
+      const canCreate = await PlanAccessService.checkSiteLimit(userId);
+      if (!canCreate.allowed) {
+        return sendError(res, canCreate.message || 'Site limit reached', FORBIDDEN);
+      }
+
+      const site = await SiteService.createSite(req.body, userId);
       sendSuccess(res, site, 'Site created successfully', OK);
     } catch (error) { console.error(error);
       sendError(res, error.message, BAD_REQUEST);

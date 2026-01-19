@@ -1,6 +1,7 @@
 const CustomDomainService = require('../services/customDomain.service');
+const PlanAccessService = require('../../payments/services/planAccess.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, BAD_REQUEST, NOT_FOUND, UNAUTHORIZED } = require('../../../shared/constants/statusCodes');
+const { OK, BAD_REQUEST, NOT_FOUND, UNAUTHORIZED, FORBIDDEN } = require('../../../shared/constants/statusCodes');
 
 class CustomDomainController {
   /**
@@ -11,15 +12,22 @@ class CustomDomainController {
     try {
       const { siteId } = req.params;
       const { domain } = req.body;
+      const userId = req.user.user_id;
 
       if (!domain) {
         return sendError(res, 'Domain is required', BAD_REQUEST);
       }
 
+      // Check custom domain access before creating
+      const hasAccess = await PlanAccessService.checkCustomDomainAccess(userId, parseInt(siteId));
+      if (!hasAccess.allowed) {
+        return sendError(res, hasAccess.message || 'Custom domains require Small Scale plan or higher', FORBIDDEN);
+      }
+
       const customDomain = await CustomDomainService.createCustomDomain(
         siteId,
         domain,
-        req.user.user_id
+        userId
       );
 
       sendSuccess(res, customDomain, 'Custom domain added successfully', OK);
