@@ -38,7 +38,7 @@ class EarlyAdopterController {
         user_agent: req.headers['user-agent'],
       });
 
-      // Send notification email
+      // Send notification email to admin
       try {
         await earlyAdopterService.sendNotificationEmail({
           name: earlyAdopter.name,
@@ -48,6 +48,17 @@ class EarlyAdopterController {
       } catch (emailError) {
         // Log error but don't fail the request
         console.error('Failed to send notification email:', emailError);
+      }
+
+      // Send welcome email to early adopter
+      try {
+        await earlyAdopterService.sendWelcomeEmail({
+          name: earlyAdopter.name,
+          email: earlyAdopter.email,
+        });
+      } catch (emailError) {
+        // Log error but don't fail the request
+        console.error('Failed to send welcome email:', emailError);
       }
 
       sendSuccess(res, earlyAdopter, 'Early adopter application submitted successfully', CREATED);

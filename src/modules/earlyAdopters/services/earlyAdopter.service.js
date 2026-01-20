@@ -151,6 +151,30 @@ class EarlyAdopterService {
     const result = await pool.query(query, params);
     return result.rows[0] || null;
   }
+
+  /**
+   * Send welcome email to early adopter
+   */
+  static async sendWelcomeEmail(data) {
+    const { name, email } = data;
+    const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://app.smartstore.ng';
+    const discordUrl = 'https://discord.gg/jD4UwTky';
+
+    // Send email using the sendEmail utility with template
+    await sendEmail({
+      to: email,
+      subject: 'Welcome to SmartStore Early Adopter Program! 🎉',
+      templateFile: 'early-adopter-welcome.html',
+      placeholders: {
+        name: name,
+        discord_url: discordUrl,
+        dashboard_url: `${frontendUrl}/dashboard`,
+        signup_url: `${frontendUrl}/auth/signup`,
+        year: new Date().getFullYear().toString()
+      },
+      fromEmail: process.env.FROM_EMAIL || 'noreply@smartstore.ng',
+    });
+  }
 }
 
 module.exports = EarlyAdopterService;
