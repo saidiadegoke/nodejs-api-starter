@@ -15,6 +15,7 @@ const sitesRoutes = require('../modules/sites/routes');
 const templatesRoutes = require('../modules/sites/routes/templates.routes');
 const componentsRoutes = require('../modules/sites/routes/components.routes');
 const paymentsRoutes = require('../modules/payments/routes');
+const earlyAdoptersRoutes = require('../modules/earlyAdopters/routes');
 // const authoringRoutes = require('../modules/authoring/routes');
 // const adsRoutes = require('../modules/ads/routes');
 const testRoutes = require('./test-routes');
@@ -81,6 +82,7 @@ router.use('/sites', sitesRoutes);
 router.use('/templates', templatesRoutes);
 router.use('/components', componentsRoutes);
 router.use('/payments', paymentsRoutes);
+router.use('/early-adopters', earlyAdoptersRoutes);
 // Preview routes (public, accessible without /sites prefix)
 // Unified preview system: component, template, page, site
 const previewRouter = require('express').Router();
