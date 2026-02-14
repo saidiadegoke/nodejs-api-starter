@@ -66,8 +66,45 @@ function getDefaultPages() {
 }
 
 /**
+ * First color set (Teal default) and first font (Modern Sans / Inter) for new templates.
+ * Matches ThemeCustomizer STANDARD_THEME_PRESETS['teal-default'] and first font pairing.
+ */
+const DEFAULT_THEME_FOR_NEW_TEMPLATE = {
+  colors: {
+    primary: '#008284',
+    primaryLight: '#00a3a5',
+    primaryDark: '#006263',
+    secondary: '#475569',
+    secondaryLight: '#64748b',
+    secondaryDark: '#334155',
+    accent: '#008284',
+    accentLight: '#e0f7f7',
+    accentDark: '#006263',
+    background: '#ffffff',
+    backgroundAlt: '#f9fafb',
+    surface: '#ffffff',
+    textPrimary: '#111827',
+    textSecondary: '#6b7280',
+    textInverse: '#ffffff',
+    border: '#e5e7eb',
+    borderLight: '#f3f4f6',
+    borderDark: '#d1d5db',
+    success: '#10b981',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#3b82f6',
+  },
+  fonts: {
+    heading: 'Inter, sans-serif',
+    body: 'Inter, sans-serif',
+    button: 'Inter, sans-serif',
+  },
+};
+
+/**
  * Generate complete default template config
- * Returns an object that can be merged into template.config
+ * Returns an object that can be merged into template.config.
+ * Uses first color set (Teal) and first font (Modern Sans / Inter).
  */
 function generateDefaultTemplateConfig() {
   const blocks = getDefaultBlocks();
@@ -76,21 +113,7 @@ function generateDefaultTemplateConfig() {
   return {
     blocks,
     pages,
-    theme: {
-      colors: {
-        primary: '#3b82f6',
-        secondary: '#6b7280',
-        accent: '#f59e0b',
-        background: '#ffffff',
-        text: '#1f2937',
-        textSecondary: '#6b7280',
-      },
-      fonts: {
-        heading: 'Inter, sans-serif',
-        body: 'Inter, sans-serif',
-        button: 'Inter, sans-serif',
-      },
-    },
+    theme: { ...DEFAULT_THEME_FOR_NEW_TEMPLATE },
     defaultLayout: 'regions',
     defaultPage: 'home',
   };
@@ -132,12 +155,33 @@ function mergeWithDefaults(config = {}) {
   const existingBlockIds = new Set((config.blocks || []).map(b => b.id));
 
   // Merge blocks (only add defaults that don't exist)
+  const defaultBlocksById = new Map((defaults.blocks || []).map((b) => [b.id, b]));
   const mergedBlocks = [
     ...(config.blocks || []), // Keep existing blocks first
     ...(defaults.blocks || []).filter(
       (defaultBlock) => !existingBlockIds.has(defaultBlock.id)
     ),
-  ];
+  ].map((block) => {
+    const defaultBlock = defaultBlocksById.get(block.id);
+    if (!defaultBlock) return block;
+    // Enrich existing blocks that match a default: ensure templateId and componentName for builder UI
+    const enriched = { ...block };
+    if (!enriched.templateId && defaultBlock.templateId) enriched.templateId = defaultBlock.templateId;
+    if (!enriched.componentName && defaultBlock.componentName) enriched.componentName = defaultBlock.componentName;
+    // For hero blocks with subdued defaults (about/contact/services), ensure subdued keys exist so override works
+    const subduedHeroIds = ['block-about-hero', 'block-contact-hero', 'block-services-hero'];
+    const subduedKeys = ['showPrimaryButton', 'showSecondaryButton', 'showStats', 'headlineSize'];
+    if (subduedHeroIds.includes(block.id) && defaultBlock.data) {
+      const data = enriched.data || {};
+      enriched.data = { ...data };
+      subduedKeys.forEach((key) => {
+        if (defaultBlock.data[key] !== undefined && data[key] === undefined) {
+          enriched.data[key] = defaultBlock.data[key];
+        }
+      });
+    }
+    return enriched;
+  });
 
   // Merge pages: merge default structure into existing pages if they're incomplete
   const mergedPages = (config.pages || []).map(existingPage => {
@@ -217,10 +261,54 @@ function hasDefaultPages(config = {}) {
   return defaultSlugs.every(slug => existingSlugs.has(slug));
 }
 
+const PAGE_TYPE_TO_FILE = {
+  home: homePagePath,
+  about: aboutPagePath,
+  contact: contactPagePath,
+  services: servicesPagePath,
+  store: storePagePath,
+};
+
+/**
+ * Get default page structure for a single page type.
+ * Used when adding a page from a template (e.g. "Add Page" → choose "About").
+ * @param {string} pageType - One of: 'home' | 'about' | 'contact' | 'services' | 'store'
+ * @returns {object|null} Page object (slug, title, layout, regions, blockIds, settings) or null
+ */
+function getDefaultPageStructure(pageType) {
+  const filePath = PAGE_TYPE_TO_FILE[pageType];
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    const pageData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return pageData;
+  } catch (error) {
+    console.error(`Error loading default page structure for ${pageType}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Get blocks required for a specific page type (all blockIds referenced in that page's regions).
+ * @param {string} pageType - One of: 'home' | 'about' | 'contact' | 'services' | 'store'
+ * @returns {Array} Block configs for that page
+ */
+function getDefaultBlocksForPage(pageType) {
+  const page = getDefaultPageStructure(pageType);
+  if (!page || !page.regions) return [];
+  const blockIds = new Set();
+  for (const region of page.regions) {
+    (region.blockIds || []).forEach((id) => blockIds.add(id));
+  }
+  const allBlocks = getDefaultBlocks();
+  return allBlocks.filter((b) => blockIds.has(b.id));
+}
+
 module.exports = {
   generateDefaultTemplateConfig,
   getDefaultBlocks,
   getDefaultPages,
+  getDefaultPageStructure,
+  getDefaultBlocksForPage,
   isMinimalConfig,
   mergeWithDefaults,
   hasDefaultPages,

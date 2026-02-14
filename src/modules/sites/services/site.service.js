@@ -2,18 +2,33 @@ const SiteModel = require('../models/site.model');
 const TemplateModel = require('../models/template.model');
 const PageModel = require('../models/page.model');
 const CustomizationModel = require('../models/customization.model');
+const FormInstanceModel = require('../../formSubmissions/models/form-instance.model');
+const SiteFeatureModel = require('../models/site-feature.model');
 const pool = require('../../../db/pool');
 
 class SiteService {
   /**
-   * Get all sites for user
+   * Get all sites for user (includes computed has_forms and has_ecommerce per site).
    */
   static async getUserSites(userId) {
-    return await SiteModel.getUserSites(userId);
+    const sites = await SiteModel.getUserSites(userId);
+    if (sites.length === 0) return sites;
+    const siteIds = sites.map((s) => s.id);
+    const [idsWithForms, idsWithEcommerce] = await Promise.all([
+      FormInstanceModel.getSiteIdsWithForms(siteIds),
+      SiteFeatureModel.getSiteIdsWithEcommerce(siteIds),
+    ]);
+    const setWithForms = new Set(idsWithForms);
+    const setWithEcommerce = new Set(idsWithEcommerce);
+    sites.forEach((s) => {
+      s.has_forms = setWithForms.has(s.id);
+      s.has_ecommerce = setWithEcommerce.has(s.id);
+    });
+    return sites;
   }
 
   /**
-   * Get site by ID with ownership check
+   * Get site by ID with ownership check (includes computed has_forms and has_ecommerce).
    */
   static async getSiteById(siteId, userId) {
     const site = await SiteModel.getSiteById(siteId);
@@ -23,11 +38,17 @@ class SiteService {
     if (site.owner_id !== userId) {
       throw new Error('Unauthorized');
     }
+    const [has_forms, has_ecommerce] = await Promise.all([
+      FormInstanceModel.hasAny(siteId),
+      SiteFeatureModel.hasEcommerce(siteId),
+    ]);
+    site.has_forms = has_forms;
+    site.has_ecommerce = has_ecommerce;
     return site;
   }
 
   /**
-   * Get site by slug with ownership check
+   * Get site by slug with ownership check (includes computed has_forms and has_ecommerce).
    */
   static async getSiteBySlug(slug, userId) {
     const site = await SiteModel.getSiteBySlug(slug);
@@ -37,6 +58,12 @@ class SiteService {
     if (site.owner_id !== userId) {
       throw new Error('Unauthorized');
     }
+    const [has_forms, has_ecommerce] = await Promise.all([
+      FormInstanceModel.hasAny(site.id),
+      SiteFeatureModel.hasEcommerce(site.id),
+    ]);
+    site.has_forms = has_forms;
+    site.has_ecommerce = has_ecommerce;
     return site;
   }
 

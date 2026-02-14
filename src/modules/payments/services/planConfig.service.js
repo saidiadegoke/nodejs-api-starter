@@ -30,7 +30,10 @@ class PlanConfigService {
       prices: typeof config.prices === 'string' ? JSON.parse(config.prices) : config.prices,
       limits: typeof config.limits === 'string' ? JSON.parse(config.limits) : config.limits,
       features: typeof config.features === 'string' ? JSON.parse(config.features) : config.features,
-      metadata: typeof config.metadata === 'string' ? JSON.parse(config.metadata) : config.metadata
+      metadata: typeof config.metadata === 'string' ? JSON.parse(config.metadata) : config.metadata,
+      overage_rates: config.overage_rates != null
+        ? (typeof config.overage_rates === 'string' ? JSON.parse(config.overage_rates) : config.overage_rates)
+        : {}
     }));
 
     // Update cache

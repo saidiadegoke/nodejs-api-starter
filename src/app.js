@@ -115,15 +115,27 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const passport = require('./shared/config/passport.config');
 app.use(passport.initialize());
 
-// Request logging middleware
+// Request ID for correlating logs (dashboard / monitoring)
+const crypto = require('crypto');
+app.use((req, res, next) => {
+  req.id = req.get('x-request-id') || crypto.randomBytes(8).toString('hex');
+  res.setHeader('X-Request-ID', req.id);
+  next();
+});
+
+// Request logging middleware (structured for dashboards: method, path, statusCode, durationMs, requestId)
 app.use((req, res, next) => {
   const startTime = Date.now();
-  
   res.on('finish', () => {
-    const duration = Date.now() - startTime;
-    logger.info(`${req.method} ${req.path} ${res.statusCode} - ${duration}ms`);
+    const durationMs = Date.now() - startTime;
+    logger.request({
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs,
+      requestId: req.id,
+    });
   });
-  
   next();
 });
 

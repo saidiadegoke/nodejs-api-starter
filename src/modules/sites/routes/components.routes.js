@@ -48,6 +48,13 @@ router.get('/custom', requireAuth, ComponentController.getCustomComponents);
 router.get('/composite', requireAuth, ComponentController.getCompositeComponents);
 
 /**
+ * @route   GET /api/components/by-type/:componentType
+ * @desc    Get component by component type (e.g., 'hero', 'text')
+ * @access  Public (or Private for authenticated users)
+ */
+router.get('/by-type/:componentType', ComponentController.getComponentByType);
+
+/**
  * @route   GET /api/components/:id
  * @desc    Get component by ID
  * @access  Public (or Private for authenticated users)
@@ -64,7 +71,7 @@ router.post(
   requireAuth,
   [
     body('name').notEmpty().withMessage('Component name is required'),
-    body('type').isIn(['regular', 'composite']).withMessage('Type must be "regular" or "composite"'),
+    body('type').isIn(['system', 'custom', 'composite']).withMessage('Type must be "system", "custom", or "composite"'),
     body('componentType').notEmpty().withMessage('Component type is required (maps to React component in smartstore-app)'),
     body('category').optional().isIn(['layout', 'content', 'marketing', 'ecommerce']).withMessage('Invalid category'),
     body('description').optional().isString(),
@@ -84,7 +91,7 @@ router.put(
   requireAuth,
   [
     body('name').optional().notEmpty().withMessage('Component name cannot be empty'),
-    body('type').optional().isIn(['regular', 'composite']).withMessage('Type must be "regular" or "composite"'),
+    body('type').optional().isIn(['system', 'custom', 'composite']).withMessage('Type must be "system", "custom", or "composite"'),
     body('componentType').optional().notEmpty().withMessage('Component type cannot be empty'),
     body('category').optional().isIn(['layout', 'content', 'marketing', 'ecommerce']).withMessage('Invalid category'),
     body('description').optional().isString(),

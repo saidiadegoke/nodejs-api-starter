@@ -1,5 +1,7 @@
 const PageModel = require('../models/page.model');
 const SiteModel = require('../models/site.model');
+const FormInstanceService = require('../../formSubmissions/services/form-instance.service');
+const { logger } = require('../../../shared/utils/logger');
 
 class PageService {
   /**
@@ -41,7 +43,16 @@ class PageService {
       pageData.layoutId = 'header-main-footer'; // Fallback
     }
     
-    return await PageModel.createPage(pageData);
+    const page = await PageModel.createPage(pageData);
+    if (page && pageData.content && typeof pageData.content === 'object' && (pageData.content.regions || pageData.content.blocks)) {
+      try {
+        const { synced } = await FormInstanceService.syncFormInstancesForPage(siteId, page.id, pageData.content);
+        if (synced > 0) logger.info(`[PageService] Synced ${synced} form instance(s) for page ${page.id}`);
+      } catch (err) {
+        logger.warn('[PageService] Form instance sync failed after page create:', err.message);
+      }
+    }
+    return page;
   }
 
   /**
@@ -57,7 +68,16 @@ class PageService {
       await PageModel.createPageVersion(pageId, currentPage.content, userId);
     }
 
-    return await PageModel.updatePage(pageId, siteId, updates);
+    const page = await PageModel.updatePage(pageId, siteId, updates);
+    if (page && updates.content && typeof updates.content === 'object' && (updates.content.regions || updates.content.blocks)) {
+      try {
+        const { synced } = await FormInstanceService.syncFormInstancesForPage(siteId, pageId, updates.content);
+        if (synced > 0) logger.info(`[PageService] Synced ${synced} form instance(s) for page ${pageId}`);
+      } catch (err) {
+        logger.warn('[PageService] Form instance sync failed after page update:', err.message);
+      }
+    }
+    return page;
   }
 
   /**

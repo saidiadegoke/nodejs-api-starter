@@ -1,6 +1,30 @@
 const pool = require('../../../db/pool');
 
 /**
+ * Safely handle config from database
+ * PostgreSQL JSONB columns are automatically parsed by node-postgres
+ * This function only handles edge cases (null, undefined, or unexpected types)
+ */
+function parseConfig(config) {
+  // PostgreSQL JSONB is automatically parsed by node-postgres (pg library)
+  // So config should already be an object, not a string
+  if (config && typeof config === 'object') {
+    return config;
+  } else if (config === null || config === undefined) {
+    return {};
+  } else {
+    // Edge case: if somehow it's still a string (shouldn't happen with JSONB)
+    console.warn('Component config is not an object, got:', typeof config);
+    try {
+      return typeof config === 'string' ? JSON.parse(config) : {};
+    } catch (parseError) {
+      console.error('Error parsing component config:', parseError);
+      return {};
+    }
+  }
+}
+
+/**
  * Component Model
  * 
  * Components are stored globally and can be:
@@ -68,6 +92,13 @@ class ComponentModel {
       paramCount++;
     }
 
+    // Filter by component_type prefix (e.g., 'hero-template-' for hero templates)
+    if (filters.componentTypePrefix) {
+      query += ` AND component_type LIKE $${paramCount}`;
+      params.push(`${filters.componentTypePrefix}%`);
+      paramCount++;
+    }
+
     query += ' ORDER BY is_system DESC, created_at DESC';
 
     const result = await pool.query(query, params);
@@ -79,13 +110,62 @@ class ComponentModel {
       baseComponentType: row.base_component_type,
       category: row.category,
       description: row.description,
-      config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
+      config: parseConfig(row.config),
       isSystem: row.is_system,
       createdBy: row.created_by,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       provider: 'smartstore', // Default provider for all components
     }));
+  }
+
+  /**
+   * Get component by component type (e.g., 'hero', 'text')
+   * For system components, component_type is unique
+   */
+  static async getComponentByType(componentType) {
+    const result = await pool.query(
+      `SELECT 
+        id,
+        name,
+        type,
+        component_type,
+        base_component_type,
+        category,
+        description,
+        config,
+        is_system,
+        created_by,
+        created_at,
+        updated_at
+      FROM component_registry
+      WHERE component_type = $1
+      AND is_system = true
+      LIMIT 1`,
+      [componentType]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.component_type, // Map component_type to type for component lookup
+      componentType: row.type, // Keep original type as componentType
+      baseComponentType: row.base_component_type,
+      category: row.category,
+      description: row.description,
+      config: parseConfig(row.config),
+      isSystem: row.is_system,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      provider: 'smartstore',
+    };
   }
 
   /**
@@ -116,6 +196,7 @@ class ComponentModel {
     }
 
     const row = result.rows[0];
+    
     return {
       id: row.id,
       name: row.name,
@@ -124,7 +205,7 @@ class ComponentModel {
       baseComponentType: row.base_component_type,
       category: row.category,
       description: row.description,
-      config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
+      config: parseConfig(row.config),
       isSystem: row.is_system,
       createdBy: row.created_by,
       createdAt: row.created_at,
@@ -180,7 +261,7 @@ class ComponentModel {
       createdBy: row.created_by,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
+      config: parseConfig(row.config),
     };
   }
 
@@ -265,7 +346,7 @@ class ComponentModel {
       createdBy: row.created_by,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
+      config: parseConfig(row.config),
     };
   }
 
@@ -310,7 +391,7 @@ class ComponentModel {
       createdBy: row.created_by,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
+      config: parseConfig(row.config),
     };
   }
 

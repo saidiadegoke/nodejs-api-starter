@@ -235,6 +235,14 @@ class PaymentService {
         }
       }
 
+      // Merchandise: send order confirmation & receipt email to customer (non-blocking)
+      if (payment.type === 'merchandise' || payment.payment_type === 'merchandise') {
+        const orderEmailService = require('./orderEmail.service');
+        orderEmailService.sendOrderConfirmationEmail(updatedPayment).catch((err) => {
+          console.error('[Payment] Order confirmation email failed (non-critical):', err.message);
+        });
+      }
+
       return updatedPayment;
     } catch (error) {
       throw new Error(`Error verifying payment: ${error.message}`);

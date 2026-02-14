@@ -11,6 +11,9 @@ const SiteModel = require('../models/site.model');
 const CustomizationModel = require('../models/customization.model');
 const PageModel = require('../models/page.model');
 const TemplateModel = require('../models/template.model');
+const SiteFeatureModel = require('../models/site-feature.model');
+const ProductService = require('../services/catalog/product.service');
+const CategoryService = require('../services/catalog/category.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, NOT_FOUND, BAD_REQUEST } = require('../../../shared/constants/statusCodes');
 const { logger } = require('../../../shared/utils/logger');
@@ -147,6 +150,7 @@ router.get('/:id/config', async (req, res) => {
     if (!site.template_id) {
       // Return minimal config with empty pages
       const customization = await CustomizationModel.getCustomization(id);
+      const has_ecommerce = await SiteFeatureModel.hasEcommerce(id);
       const config = {
         site: {
           id: site.id,
@@ -160,6 +164,7 @@ router.get('/:id/config', async (req, res) => {
           default_layout_id: site.default_layout_id,
           created_at: site.created_at,
           updated_at: site.updated_at,
+          has_ecommerce: !!has_ecommerce,
         },
         customization: customization ? {
           ...customization,
@@ -290,10 +295,13 @@ router.get('/:id/config', async (req, res) => {
     }
     // For draft sites, return all pages (already resolved by preview service)
 
+    // Add has_ecommerce for storefront (e.g. topnav cart icon)
+    const has_ecommerce = await SiteFeatureModel.hasEcommerce(id);
+
     // Build config object using resolved config from preview service
     // PreviewService.generateConfigForPreview already validates the template, so we can trust it
     const config = {
-      site: resolvedConfig.site,
+      site: { ...resolvedConfig.site, has_ecommerce: !!has_ecommerce },
       customization: resolvedConfig.customization,
       pages: pages,
       template: resolvedConfig.template, // Use template as-is from preview service
@@ -463,6 +471,70 @@ router.get('/:id/config/draft', async (req, res) => {
   } catch (error) {
     logger.error('Error getting draft site config (public):', error);
     return sendError(res, error.message || 'Failed to retrieve draft site config', 500);
+  }
+});
+
+/**
+ * Public catalog (products & categories) – read-only for storefront
+ * Only returns published products. Site must exist and not be suspended.
+ */
+router.get('/:id/products', async (req, res) => {
+  try {
+    const { id: siteId } = req.params;
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', NOT_FOUND);
+    if (site.status === 'suspended') return sendError(res, 'Site not available', NOT_FOUND);
+    const { category_slug, category_id, type, limit, offset, sort, tag, exclude, q, min_price, max_price } = req.query;
+    const options = { status: 'published' };
+    if (category_slug) options.categorySlug = category_slug;
+    if (category_id) options.categoryId = category_id;
+    if (type) options.type = type;
+    if (limit) options.limit = Math.min(parseInt(limit, 10) || 50, 100);
+    if (offset) options.offset = parseInt(offset, 10) || 0;
+    if (sort) options.sort = sort;
+    if (tag) options.tag = tag;
+    if (exclude) options.exclude = Array.isArray(exclude) ? exclude : exclude.split(',').map((id) => id.trim()).filter(Boolean);
+    if (q) options.q = q;
+    if (min_price !== undefined && min_price !== '') options.min_price = min_price;
+    if (max_price !== undefined && max_price !== '') options.max_price = max_price;
+    const [items, total] = await Promise.all([
+      ProductService.listBySite(siteId, options),
+      ProductService.countBySite(siteId, options),
+    ]);
+    return sendSuccess(res, { items, total }, 'Products retrieved successfully', OK);
+  } catch (error) {
+    logger.error('Error listing products (public):', error);
+    return sendError(res, error.message || 'Failed to retrieve products', 500);
+  }
+});
+
+router.get('/:id/products/:slugOrId', async (req, res) => {
+  try {
+    const { id: siteId, slugOrId } = req.params;
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', NOT_FOUND);
+    if (site.status === 'suspended') return sendError(res, 'Site not available', NOT_FOUND);
+    const product = await ProductService.getBySlugOrId(slugOrId, siteId);
+    if (!product) return sendError(res, 'Product not found', NOT_FOUND);
+    if (product.status !== 'published') return sendError(res, 'Product not found', NOT_FOUND);
+    return sendSuccess(res, product, 'Product retrieved successfully', OK);
+  } catch (error) {
+    logger.error('Error getting product (public):', error);
+    return sendError(res, error.message || 'Failed to retrieve product', 500);
+  }
+});
+
+router.get('/:id/categories', async (req, res) => {
+  try {
+    const { id: siteId } = req.params;
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', NOT_FOUND);
+    if (site.status === 'suspended') return sendError(res, 'Site not available', NOT_FOUND);
+    const categories = await CategoryService.listBySite(siteId);
+    return sendSuccess(res, categories, 'Categories retrieved successfully', OK);
+  } catch (error) {
+    logger.error('Error listing categories (public):', error);
+    return sendError(res, error.message || 'Failed to retrieve categories', 500);
   }
 });
 

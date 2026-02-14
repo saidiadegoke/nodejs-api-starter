@@ -1,9 +1,9 @@
 const axios = require('axios');
 const { cleanupAll, logCleanupResults } = require('./cleanup-helper');
 
-// Ensure environment is loaded before getting BASE_URL
-// Routes are mounted at root, so BASE_URL should be the server URL
-const BASE_URL = process.env.API_BASE_URL || 'http://localhost:4050';
+require('dotenv').config();
+const port = process.env.PORT || 4050;
+const BASE_URL = process.env.API_BASE_URL || `http://localhost:${port}`;
 const TEST_TIMEOUT = 30000; // 30 seconds
 
 // Log configuration at start

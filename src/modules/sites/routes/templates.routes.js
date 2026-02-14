@@ -11,6 +11,8 @@ const { validate } = require('../../../shared/validations/validator');
  * If not authenticated, returns all active templates (for public browsing)
  */
 router.get('/', optionalAuth, TemplateController.getAllTemplates);
+/** GET /templates/default-page-structure?pageType=home|about|contact|services|store - must be before /:templateId */
+router.get('/default-page-structure', requireAuth, TemplateController.getDefaultPageStructure);
 router.get('/:templateId', optionalAuth, TemplateController.getTemplateById);
 
 /**

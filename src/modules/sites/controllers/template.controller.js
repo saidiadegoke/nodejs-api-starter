@@ -1,6 +1,10 @@
 const TemplateService = require('../services/template.service');
+const { getDefaultPageStructure, getDefaultBlocksForPage } = require('../../../utils/defaultTemplateConfig');
+const FormInstanceService = require('../../formSubmissions/services/form-instance.service');
+const EcommerceSyncService = require('../services/ecommerce-sync.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, BAD_REQUEST, NOT_FOUND } = require('../../../shared/constants/statusCodes');
+const { logger } = require('../../../shared/utils/logger');
 
 class TemplateController {
   /**
@@ -127,6 +131,26 @@ class TemplateController {
         return sendError(res, 'Template not found', NOT_FOUND);
       }
 
+      if (config != null && template.config) {
+        const configObj = typeof template.config === 'string' ? JSON.parse(template.config) : template.config;
+        try {
+          const { sitesProcessed, totalSynced } = await FormInstanceService.syncFormInstancesForSitesUsingTemplate(templateId, configObj);
+          if (totalSynced > 0) {
+            logger.info(`[TemplateController] After template ${templateId} update: synced ${totalSynced} form instance(s) across ${sitesProcessed} site(s)`);
+          }
+        } catch (syncErr) {
+          logger.warn('[TemplateController] Form instance sync after template update failed:', syncErr.message);
+        }
+        try {
+          const { sitesProcessed: ecomSites, hasEcommerce } = await EcommerceSyncService.syncEcommerceForSitesUsingTemplate(templateId, configObj);
+          if (hasEcommerce && ecomSites > 0) {
+            logger.info(`[TemplateController] After template ${templateId} update: set has_ecommerce for ${ecomSites} site(s)`);
+          }
+        } catch (syncErr) {
+          logger.warn('[TemplateController] E-commerce sync after template update failed:', syncErr.message);
+        }
+      }
+
       sendSuccess(res, template, 'Template updated successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
@@ -155,6 +179,30 @@ class TemplateController {
       const { templateId } = req.params;
       const template = await TemplateService.addDefaultPages(templateId);
       sendSuccess(res, template, 'Default pages added successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Get default page structure and blocks for a page type (for "Add Page from template").
+   * GET /templates/default-page-structure?pageType=home|about|contact|services|store
+   */
+  static async getDefaultPageStructure(req, res) {
+    try {
+      const pageType = (req.query.pageType || '').toLowerCase();
+      const allowed = ['home', 'about', 'contact', 'services', 'store'];
+      if (!allowed.includes(pageType)) {
+        sendError(res, `pageType must be one of: ${allowed.join(', ')}`, BAD_REQUEST);
+        return;
+      }
+      const page = getDefaultPageStructure(pageType);
+      if (!page) {
+        sendError(res, `Default page structure not found for: ${pageType}`, NOT_FOUND);
+        return;
+      }
+      const blocks = getDefaultBlocksForPage(pageType);
+      sendSuccess(res, { page, blocks }, 'Default page structure retrieved', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
     }

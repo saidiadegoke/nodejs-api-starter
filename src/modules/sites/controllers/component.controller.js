@@ -22,6 +22,7 @@ class ComponentController {
         type: req.query.type,
         category: req.query.category,
         search: req.query.search,
+        componentTypePrefix: req.query.componentTypePrefix, // e.g., 'hero-template-' to get all hero templates
       };
 
       const components = await ComponentService.getAllComponents(filters);
@@ -34,18 +35,51 @@ class ComponentController {
   }
 
   /**
-   * @route   GET /api/components/:id
-   * @desc    Get component by ID
+   * @route   GET /api/components/by-type/:componentType
+   * @desc    Get component by component type (e.g., 'hero', 'text')
    * @access  Public (or Private for authenticated users)
+   */
+  static async getComponentByType(req, res) {
+    try {
+      const { componentType } = req.params;
+      const component = await ComponentService.getComponentByType(componentType);
+
+      sendSuccess(res, component, 'Component fetched successfully', OK);
+    } catch (error) {
+      console.error('Get component by type error:', error);
+      if (error.statusCode === 404) {
+        return sendError(res, error.message, NOT_FOUND);
+      }
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * @route   GET /api/components/:id
+   * @desc    Get component by ID or component type
+   * @access  Public (or Private for authenticated users)
+   * 
+   * If id is a number, treat as ID. If it's a string, try to find by component type.
    */
   static async getComponentById(req, res) {
     try {
       const { id } = req.params;
-      const component = await ComponentService.getComponentById(id);
+      
+      // Check if id is a number (component ID) or string (component type)
+      const isNumericId = /^\d+$/.test(id);
+      
+      let component;
+      if (isNumericId) {
+        // Treat as numeric ID
+        component = await ComponentService.getComponentById(id);
+      } else {
+        // Treat as component type (e.g., 'hero', 'text')
+        component = await ComponentService.getComponentByType(id);
+      }
 
       sendSuccess(res, component, 'Component fetched successfully', OK);
     } catch (error) {
-      console.error('Get component by ID error:', error);
+      console.error('Get component by ID/type error:', error);
       if (error.statusCode === 404) {
         return sendError(res, error.message, NOT_FOUND);
       }

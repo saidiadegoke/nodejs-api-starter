@@ -18,7 +18,10 @@ class FileService {
     const fileId = uuidv4();
     const fileExtension = path.extname(file.originalname);
     const fileName = `${fileId}${fileExtension}`;
-    const s3Key = `${context}/${fileName}`;
+    // For user_assets context, include user ID in path: user_assets/{userId}/{fileName}
+    const s3Key = context === 'user_assets' 
+      ? `${context}/${uploadedBy}/${fileName}`
+      : `${context}/${fileName}`;
 
     try {
       // Upload to S3

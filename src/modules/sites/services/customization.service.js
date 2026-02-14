@@ -8,9 +8,9 @@ class CustomizationService {
   static async getCustomization(siteId, userId) {
     // Verify site ownership
     await this.verifySiteOwnership(siteId, userId);
-    
+
     let customization = await CustomizationModel.getCustomization(siteId);
-    
+
     // If no customization exists, return default structure
     if (!customization) {
       return {
@@ -19,6 +19,8 @@ class CustomizationService {
         fonts: null,
         logo_url: null,
         spacing: null,
+        theme: null,
+        email_settings: null,
       };
     }
 
@@ -31,6 +33,12 @@ class CustomizationService {
     }
     if (customization.spacing && typeof customization.spacing === 'string') {
       customization.spacing = JSON.parse(customization.spacing);
+    }
+    if (customization.theme && typeof customization.theme === 'string') {
+      customization.theme = JSON.parse(customization.theme);
+    }
+    if (customization.email_settings && typeof customization.email_settings === 'string') {
+      customization.email_settings = JSON.parse(customization.email_settings);
     }
 
     return customization;

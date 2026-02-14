@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { requireAuth, requireRole } = require('../../shared/middleware/rbac.middleware');
 const { body } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
+const { uploadSingle } = require('../../shared/middleware/upload.middleware');
 
 const SiteController = require('./controllers/site.controller');
 const TemplateController = require('./controllers/template.controller');
@@ -14,11 +15,19 @@ const CustomDomainController = require('./controllers/customDomain.controller');
 const SSLController = require('./controllers/ssl.controller');
 const DeploymentController = require('./controllers/deployment.controller');
 const CertificateController = require('./controllers/certificate.controller');
+const AssetController = require('./controllers/asset.controller');
+const FormInstanceController = require('../formSubmissions/controllers/form-instance.controller');
+const FormSubmissionController = require('../formSubmissions/controllers/form-submission.controller');
+const formSubmitRateLimiter = require('../formSubmissions/middleware/form-submit-rate-limit');
+const ProductController = require('./controllers/catalog/product.controller');
+const CategoryController = require('./controllers/catalog/category.controller');
+const CurrencyRatesController = require('./controllers/catalog/currency-rates.controller');
 
 /**
  * Sites Routes
  */
 router.get('/', requireAuth, SiteController.getMySites);
+router.get('/currency-rates', CurrencyRatesController.getRates);
 router.get('/:siteId', requireAuth, SiteController.getSiteById);
 router.get('/slug/:slug', requireAuth, SiteController.getSiteBySlug);
 router.post(
@@ -121,6 +130,58 @@ router.get('/:siteId/pages/:pageId/versions', requireAuth, PageController.getPag
 router.get('/:siteId/customization', requireAuth, CustomizationController.getCustomization);
 router.put('/:siteId/customization', requireAuth, CustomizationController.updateCustomization);
 router.post('/:siteId/customization/reset', requireAuth, CustomizationController.resetCustomization);
+
+/**
+ * Site Assets Library (nested under sites) – files stored in S3, context site_assets_${siteId}
+ */
+router.get('/:siteId/assets', requireAuth, AssetController.getSiteAssets);
+router.post('/:siteId/assets/upload', requireAuth, uploadSingle('file'), AssetController.uploadSiteAsset);
+router.delete('/:siteId/assets/:fileId', requireAuth, AssetController.deleteSiteAsset);
+
+/**
+ * Form submissions (public submit + dashboard)
+ * See docs/FORM_SUBMISSIONS_SERVICE_DESIGN.md
+ * Order: literal "submissions" before :formInstanceId so /forms/submissions/:id is matched first.
+ */
+router.post('/:siteId/forms/submit', formSubmitRateLimiter, FormSubmissionController.submit);
+router.get('/:siteId/forms', requireAuth, FormInstanceController.listForms);
+router.get('/:siteId/forms/submissions/:submissionId', requireAuth, FormSubmissionController.getSubmission);
+router.patch('/:siteId/forms/submissions/:submissionId', requireAuth, FormSubmissionController.updateSubmission);
+router.post('/:siteId/forms/submissions/:submissionId/responses', requireAuth, FormSubmissionController.addResponse);
+router.get('/:siteId/forms/:formInstanceId/submissions', requireAuth, FormSubmissionController.listSubmissions);
+
+/**
+ * Catalog (products & categories) – dashboard CRUD
+ */
+router.get('/:siteId/products', requireAuth, ProductController.list);
+router.get('/:siteId/products/:productId', requireAuth, ProductController.getById);
+router.post(
+  '/:siteId/products',
+  requireAuth,
+  [
+    body('name').notEmpty().withMessage('Name is required'),
+    body('type').optional().isIn(['product', 'service']).withMessage('Type must be product or service'),
+    body('status').optional().isIn(['draft', 'published']).withMessage('Status must be draft or published'),
+    body('price_currency').optional().isIn(['NGN', 'USD', 'EUR', 'GBP']).withMessage('Price currency must be NGN, USD, EUR, or GBP'),
+    validate,
+  ],
+  ProductController.create
+);
+router.patch('/:siteId/products/:productId', requireAuth, ProductController.update);
+router.delete('/:siteId/products/:productId', requireAuth, ProductController.remove);
+router.get('/:siteId/categories', requireAuth, CategoryController.list);
+router.get('/:siteId/categories/:categoryId', requireAuth, CategoryController.getById);
+router.post(
+  '/:siteId/categories',
+  requireAuth,
+  [
+    body('name').notEmpty().withMessage('Name is required'),
+    validate,
+  ],
+  CategoryController.create
+);
+router.patch('/:siteId/categories/:categoryId', requireAuth, CategoryController.update);
+router.delete('/:siteId/categories/:categoryId', requireAuth, CategoryController.remove);
 
 /**
  * Preview Routes (public, no auth required)

@@ -134,16 +134,30 @@ class TemplateModel {
 
   /**
    * Get site template
+   * Select template columns explicitly so "id" is always templates.id (st.id would otherwise shadow it).
    */
   static async getSiteTemplate(siteId) {
     const result = await pool.query(
-      `SELECT st.*, t.* 
+      `SELECT t.id, t.name, t.description, t.category, t.preview_image_url, t.thumbnail_url,
+              t.config, t.is_premium, t.is_active, t.created_at, t.updated_at,
+              st.template_id, st.customization_settings, st.applied_at
        FROM site_templates st
        JOIN templates t ON st.template_id = t.id
        WHERE st.site_id = $1`,
       [siteId]
     );
-    return result.rows[0];
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Get site IDs that use this template (for syncing form instances on template update).
+   */
+  static async getSiteIdsByTemplateId(templateId) {
+    const result = await pool.query(
+      'SELECT site_id FROM site_templates WHERE template_id = $1',
+      [templateId]
+    );
+    return result.rows.map((r) => r.site_id);
   }
 
   /**

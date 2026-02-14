@@ -14,6 +14,7 @@ const analyticsRoutes = require('../modules/analytics/routes');
 const sitesRoutes = require('../modules/sites/routes');
 const templatesRoutes = require('../modules/sites/routes/templates.routes');
 const componentsRoutes = require('../modules/sites/routes/components.routes');
+const assetsRoutes = require('../modules/assets/routes');
 const paymentsRoutes = require('../modules/payments/routes');
 const earlyAdoptersRoutes = require('../modules/earlyAdopters/routes');
 // const authoringRoutes = require('../modules/authoring/routes');
@@ -81,8 +82,13 @@ router.use('/analytics', analyticsRoutes);
 router.use('/sites', sitesRoutes);
 router.use('/templates', templatesRoutes);
 router.use('/components', componentsRoutes);
+router.use('/assets', assetsRoutes);
 router.use('/payments', paymentsRoutes);
 router.use('/early-adopters', earlyAdoptersRoutes);
+// Preview draft (store block config for iframe preview; avoids long URLs)
+const previewDraftRoutes = require('../modules/preview-draft/preview-draft.routes');
+router.use('/preview-draft', previewDraftRoutes);
+
 // Preview routes (public, accessible without /sites prefix)
 // Unified preview system: component, template, page, site
 const previewRouter = require('express').Router();

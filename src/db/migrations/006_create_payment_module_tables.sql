@@ -445,3 +445,186 @@ CREATE INDEX idx_early_adopters_email ON early_adopters(email);
 CREATE INDEX idx_early_adopters_status ON early_adopters(status);
 CREATE INDEX idx_early_adopters_created_at ON early_adopters(created_at);
 
+
+-- ============================================================================
+-- GLOBAL ASSET LIBRARY - Asset Groups and Files Table Updates
+-- ============================================================================
+-- Migration: 007
+-- Description: Creates asset_groups table for organizing user assets into folders,
+--              and adds asset_group_id, tags, and alt_text columns to files table.
+--              Migrates existing site assets to user_assets context.
+-- ============================================================================
+
+-- ============================================================================
+-- ASSET GROUPS TABLE - Folders/groupings for organizing user assets
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS asset_groups (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  parent_id UUID NULL,                    -- For nested folders
+  color VARCHAR(7),                       -- Optional folder color (hex, e.g. #3B82F6)
+  icon VARCHAR(50),                       -- Optional icon identifier (e.g. 'folder-image')
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL,
+  
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES asset_groups(id) ON DELETE SET NULL,
+  CONSTRAINT unique_group_name_per_level UNIQUE(user_id, name, parent_id)
+);
+
+CREATE INDEX idx_asset_groups_user_id ON asset_groups(user_id);
+CREATE INDEX idx_asset_groups_parent_id ON asset_groups(parent_id);
+CREATE INDEX idx_asset_groups_deleted ON asset_groups(deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_asset_groups_user_active ON asset_groups(user_id, deleted_at) WHERE deleted_at IS NULL;
+
+COMMENT ON TABLE asset_groups IS 'Folders/groupings for organizing user assets. Supports nested folder hierarchies.';
+COMMENT ON COLUMN asset_groups.parent_id IS 'Parent folder ID for nested folders. NULL for root-level folders.';
+COMMENT ON COLUMN asset_groups.color IS 'Hex color code for folder display (e.g. #3B82F6)';
+COMMENT ON COLUMN asset_groups.icon IS 'Icon identifier for folder display (e.g. folder-image, folder-video)';
+
+-- ============================================================================
+-- FILES TABLE UPDATES - Add asset grouping and metadata columns
+-- ============================================================================
+
+-- Add asset_group_id column to files table
+ALTER TABLE files ADD COLUMN IF NOT EXISTS asset_group_id UUID NULL;
+ALTER TABLE files ADD CONSTRAINT fk_files_asset_group 
+  FOREIGN KEY (asset_group_id) REFERENCES asset_groups(id) ON DELETE SET NULL;
+
+-- Add tags array column for searchability
+ALTER TABLE files ADD COLUMN IF NOT EXISTS tags TEXT[];
+
+-- Add alt_text column for accessibility
+ALTER TABLE files ADD COLUMN IF NOT EXISTS alt_text TEXT;
+
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_files_asset_group_id ON files(asset_group_id);
+CREATE INDEX IF NOT EXISTS idx_files_tags ON files USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_files_user_assets_context ON files(context, uploaded_by) WHERE context = 'user_assets';
+
+COMMENT ON COLUMN files.asset_group_id IS 'Asset group/folder this file belongs to. NULL for ungrouped assets.';
+COMMENT ON COLUMN files.tags IS 'Array of tags for searchability and filtering';
+COMMENT ON COLUMN files.alt_text IS 'Alt text for images/videos for accessibility';
+
+-- ============================================================================
+-- MIGRATE EXISTING SITE ASSETS TO USER ASSETS
+-- ============================================================================
+
+-- Update context from site_assets_* to user_assets
+-- Preserve original site_id in metadata for reference
+UPDATE files 
+SET 
+  context = 'user_assets',
+  metadata = jsonb_set(
+    COALESCE(metadata, '{}'::jsonb),
+    '{migrated_from_site_id}',
+    to_jsonb(SUBSTRING(context FROM 'site_assets_(.+)'))
+  )
+WHERE context LIKE 'site_assets_%'
+  AND context != 'user_assets';
+
+-- Add migration timestamp to metadata
+UPDATE files
+SET metadata = jsonb_set(
+  COALESCE(metadata, '{}'::jsonb),
+  '{migrated_at}',
+  to_jsonb(CURRENT_TIMESTAMP::text)
+)
+WHERE metadata ? 'migrated_from_site_id';
+
+-- ============================================================================
+-- FUNCTION: Update updated_at timestamp for asset_groups
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION update_asset_groups_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_asset_groups_updated_at
+  BEFORE UPDATE ON asset_groups
+  FOR EACH ROW
+  EXECUTE FUNCTION update_asset_groups_updated_at();
+
+-- ============================================================================
+-- FUNCTION: Get asset count for a group (including nested groups)
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION get_asset_group_count(group_id UUID)
+RETURNS INTEGER AS $$
+DECLARE
+  count_result INTEGER;
+BEGIN
+  -- Count direct assets in this group
+  SELECT COUNT(*) INTO count_result
+  FROM files
+  WHERE asset_group_id = group_id
+    AND deleted_at IS NULL;
+  
+  RETURN COALESCE(count_result, 0);
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION get_asset_group_count(UUID) IS 'Returns the count of assets in a group (direct assets only, not nested groups)';
+
+-- ============================================================================
+-- ASSET USAGE TRACKING & OVERAGE RATES (Phase 7)
+-- ============================================================================
+-- - asset_usage: per-user storage used/limit (limit from plan)
+-- - asset_usage_events: overage/billing events per period
+-- - plan_configs.overage_rates: per-plan overage pricing (storage, pages, bandwidth)
+
+-- ============================================================================
+-- ASSET USAGE TABLE
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS asset_usage (
+  user_id UUID PRIMARY KEY,
+  storage_used_bytes BIGINT NOT NULL DEFAULT 0,
+  storage_limit_bytes BIGINT NOT NULL,
+  last_calculated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_usage_user_id ON asset_usage(user_id);
+
+-- ============================================================================
+-- ASSET USAGE EVENTS (overage/billing)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS asset_usage_events (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  included_bytes BIGINT NOT NULL,
+  used_bytes BIGINT NOT NULL,
+  overage_bytes BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_usage_events_user_id ON asset_usage_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_asset_usage_events_period ON asset_usage_events(period_start, period_end);
+
+-- ============================================================================
+-- ADD OVERAGE_RATES TO PLAN_CONFIGS
+-- ============================================================================
+ALTER TABLE plan_configs ADD COLUMN IF NOT EXISTS overage_rates JSONB DEFAULT '{}'::jsonb;
+
+-- Seed default overage rates (per plan; adjust values as needed)
+-- Storage: per GB per month; pages: per extra page per month; bandwidth: per GB
+UPDATE plan_configs SET overage_rates = jsonb_build_object(
+  'storage_per_gb_month', jsonb_build_object('NGN', 50, 'USD', 0.10, 'EUR', 0.09, 'GBP', 0.08),
+  'pages_per_page_month', jsonb_build_object('NGN', 100, 'USD', 1, 'EUR', 0.90, 'GBP', 0.80),
+  'bandwidth_per_gb', jsonb_build_object('NGN', 20, 'USD', 0.05, 'EUR', 0.04, 'GBP', 0.04)
+)
+WHERE overage_rates = '{}'::jsonb OR overage_rates IS NULL;

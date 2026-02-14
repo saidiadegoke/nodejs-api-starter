@@ -1,6 +1,12 @@
 const CustomizationService = require('../services/customization.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, BAD_REQUEST } = require('../../../shared/constants/statusCodes');
+const { OK, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
+
+function statusForError(message) {
+  if (message === 'Site not found') return NOT_FOUND;
+  if (message === 'Unauthorized') return FORBIDDEN;
+  return BAD_REQUEST;
+}
 
 class CustomizationController {
   /**
@@ -12,7 +18,7 @@ class CustomizationController {
       const customization = await CustomizationService.getCustomization(siteId, req.user.user_id);
       sendSuccess(res, customization, 'Customization retrieved successfully', OK);
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      sendError(res, error.message, statusForError(error.message));
     }
   }
 
@@ -25,7 +31,7 @@ class CustomizationController {
       const customization = await CustomizationService.updateCustomization(siteId, req.body, req.user.user_id);
       sendSuccess(res, customization, 'Customization updated successfully', OK);
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      sendError(res, error.message, statusForError(error.message));
     }
   }
 
@@ -38,7 +44,7 @@ class CustomizationController {
       const customization = await CustomizationService.resetCustomization(siteId, req.user.user_id);
       sendSuccess(res, customization, 'Customization reset successfully', OK);
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      sendError(res, error.message, statusForError(error.message));
     }
   }
 }

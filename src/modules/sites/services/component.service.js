@@ -1,5 +1,6 @@
 const ComponentModel = require('../models/component.model');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../../../shared/errors');
+const { hasRole } = require('../../../shared/middleware/rbac.middleware');
 
 /**
  * Component Service
@@ -39,6 +40,25 @@ class ComponentService {
   }
 
   /**
+   * Get component by component type (e.g., 'hero', 'text')
+   * For system components, component_type is unique
+   */
+  static async getComponentByType(componentType) {
+    try {
+      const component = await ComponentModel.getComponentByType(componentType);
+      if (!component) {
+        throw new NotFoundError(`Component with type "${componentType}" not found`);
+      }
+      return component;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+      throw new Error(`Failed to fetch component by type: ${error.message}`);
+    }
+  }
+
+  /**
    * Create component
    */
   static async createComponent(componentData, userId) {
@@ -58,9 +78,12 @@ class ComponentService {
         throw new ValidationError('Custom components must specify baseComponentType (the system component they are based on)');
       }
 
-      // System components cannot be created by users
+      // System components can only be created by admins or system (no userId)
       if (componentData.type === 'system' && userId) {
-        throw new ForbiddenError('System components cannot be created by users');
+        const isAdmin = await hasRole(userId, 'admin');
+        if (!isAdmin) {
+          throw new ForbiddenError('System components can only be created by administrators');
+        }
       }
 
       // Validate category if provided
@@ -68,8 +91,19 @@ class ComponentService {
         throw new ValidationError('Invalid category');
       }
 
-      // User-created components cannot be system components
-      const isSystem = componentData.isSystem === true && userId === null;
+      // System components: if type is 'system' and user is admin, allow isSystem=true
+      // Otherwise, only allow isSystem=true if userId is null (system-level creation)
+      let isSystem = false;
+      if (componentData.type === 'system' && componentData.isSystem === true) {
+        if (userId === null) {
+          isSystem = true; // System-level creation
+        } else {
+          const isAdmin = await hasRole(userId, 'admin');
+          if (isAdmin) {
+            isSystem = true; // Admin can create system components
+          }
+        }
+      }
       const component = await ComponentModel.createComponent(
         {
           ...componentData,
@@ -97,14 +131,30 @@ class ComponentService {
         throw new NotFoundError(`Component with ID ${componentId} not found`);
       }
 
-      // Prevent updates to system components (unless admin/system)
+      // Prevent updates to system components unless user is admin
       if (component.is_system && userId) {
-        throw new ForbiddenError('Cannot update system components');
+        const isAdmin = await hasRole(userId, 'admin');
+        if (!isAdmin) {
+          throw new ForbiddenError('Cannot update system components. Admin access required.');
+        }
       }
 
-      // Prevent changing is_system flag
+      // Prevent changing is_system flag, but allow admins to set it to true for system components
       if (componentData.isSystem !== undefined && componentData.isSystem !== component.is_system) {
-        throw new ForbiddenError('Cannot change is_system flag');
+        // Allow admin to set isSystem=true when updating a system component (type='system')
+        // This handles cases where the component was created with isSystem=false but should be true
+        if (componentData.isSystem === true && componentData.type === 'system' && userId) {
+          const isAdmin = await hasRole(userId, 'admin');
+          if (isAdmin) {
+            // Admin can set isSystem=true for system components - this is allowed
+            // Continue with the update
+          } else {
+            throw new ForbiddenError('Cannot change is_system flag. Admin access required.');
+          }
+        } else {
+          // Any other change to is_system flag is not allowed
+          throw new ForbiddenError('Cannot change is_system flag');
+        }
       }
 
       // Validate type if provided
