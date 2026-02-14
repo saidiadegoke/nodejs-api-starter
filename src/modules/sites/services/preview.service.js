@@ -149,7 +149,8 @@ class PreviewService {
    */
   static async previewTemplate(templateId, userId = null) {
     try {
-      const template = await TemplateModel.getTemplateById(templateId);
+      const id = typeof templateId === 'number' ? templateId : parseInt(templateId, 10);
+      const template = await TemplateModel.getTemplateById(id);
       if (!template || !template.id) {
         throw new Error('Template not found or invalid');
       }

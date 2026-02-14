@@ -5,10 +5,26 @@ const { generateDefaultTemplateConfig, isMinimalConfig, mergeWithDefaults } = re
 
 class TemplateService {
   /**
-   * Get all templates
+   * Get all templates, with sites_used attached (sites using each template, owner-scoped).
    */
   static async getAllTemplates(filters = {}) {
-    return await TemplateModel.getAllTemplates(filters);
+    const templates = await TemplateModel.getAllTemplates(filters);
+    const userId = filters.userId;
+    if (!userId || templates.length === 0) {
+      return templates.map((t) => ({ ...t, sites_used: [] }));
+    }
+    const templateIds = templates.map((t) => t.id);
+    const rows = await TemplateModel.getSitesByTemplateIdsForOwner(templateIds, userId);
+    const byTemplate = {};
+    rows.forEach((row) => {
+      const tid = String(row.template_id);
+      if (!byTemplate[tid]) byTemplate[tid] = [];
+      byTemplate[tid].push({ id: row.id, name: row.name, slug: row.slug });
+    });
+    return templates.map((t) => ({
+      ...t,
+      sites_used: byTemplate[String(t.id)] || [],
+    }));
   }
 
   /**
@@ -16,6 +32,31 @@ class TemplateService {
    */
   static async getTemplateById(templateId) {
     return await TemplateModel.getTemplateById(templateId);
+  }
+
+  /**
+   * Get template by ID only if created_by matches userId (owner)
+   */
+  static async getTemplateByIdForOwner(templateId, userId) {
+    return await TemplateModel.getTemplateByIdForOwner(templateId, userId);
+  }
+
+  /**
+   * Get sites (id, name, slug) that use this template and are owned by userId
+   */
+  static async getSitesUsingTemplate(templateId, userId) {
+    return await TemplateModel.getSitesByTemplateIdForOwner(templateId, userId);
+  }
+
+  /**
+   * Delete template (owner only). Throws if not found or not owner.
+   */
+  static async deleteTemplate(templateId, userId) {
+    const template = await TemplateModel.getTemplateByIdForOwner(templateId, userId);
+    if (!template) {
+      throw new Error('Template not found');
+    }
+    return await TemplateModel.deleteTemplate(templateId);
   }
 
   /**
@@ -66,32 +107,34 @@ class TemplateService {
   }
 
   /**
-   * Add default pages to an existing template
+   * Add default pages to an existing template (only if owned by userId)
    * Only adds pages/blocks that don't already exist (by slug/ID)
    */
-  static async addDefaultPages(templateId) {
-    const template = await TemplateModel.getTemplateById(templateId);
+  static async addDefaultPages(templateId, userId) {
+    const template = await TemplateModel.getTemplateByIdForOwner(templateId, userId);
     if (!template) {
       throw new Error('Template not found');
     }
 
-    const config = typeof template.config === 'string' 
-      ? JSON.parse(template.config) 
+    const config = typeof template.config === 'string'
+      ? JSON.parse(template.config)
       : template.config || {};
 
-    // Merge with defaults (without duplicating)
     const updatedConfig = mergeWithDefaults(config);
 
-    // Update template with merged config
     return await TemplateModel.updateTemplate(templateId, {
       config: JSON.stringify(updatedConfig),
     });
   }
 
   /**
-   * Update template
+   * Update template (only if owned by userId). Returns null if not found or not owner.
    */
-  static async updateTemplate(templateId, templateData) {
+  static async updateTemplate(templateId, templateData, userId) {
+    const existing = await TemplateModel.getTemplateByIdForOwner(templateId, userId);
+    if (!existing) {
+      return null;
+    }
     return await TemplateModel.updateTemplate(templateId, templateData);
   }
 

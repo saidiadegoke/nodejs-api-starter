@@ -38,14 +38,31 @@ class TemplateModel {
   }
 
   /**
-   * Get template by ID
+   * Get template by ID (accepts string or number; DB column is integer)
    */
   static async getTemplateById(templateId) {
+    const id = typeof templateId === 'number' && Number.isInteger(templateId)
+      ? templateId
+      : parseInt(String(templateId), 10);
+    if (Number.isNaN(id) || id < 1) {
+      return null;
+    }
     const result = await pool.query(
       'SELECT * FROM templates WHERE id = $1',
-      [templateId]
+      [id]
     );
     return result.rows[0];
+  }
+
+  /**
+   * Get template by ID only if created_by matches userId (owner check)
+   */
+  static async getTemplateByIdForOwner(templateId, userId) {
+    const template = await this.getTemplateById(templateId);
+    if (!template || !userId) return null;
+    const ownerId = template.created_by;
+    if (String(ownerId) !== String(userId)) return null;
+    return template;
   }
 
   /**
@@ -161,6 +178,45 @@ class TemplateModel {
   }
 
   /**
+   * Get sites (id, name, slug) that use this template and are owned by userId.
+   */
+  static async getSitesByTemplateIdForOwner(templateId, userId) {
+    const id = typeof templateId === 'number' && Number.isInteger(templateId)
+      ? templateId
+      : parseInt(String(templateId), 10);
+    if (Number.isNaN(id) || id < 1 || !userId) return [];
+    const result = await pool.query(
+      `SELECT s.id, s.name, s.slug
+       FROM site_templates st
+       JOIN sites s ON s.id = st.site_id
+       WHERE st.template_id = $1 AND s.owner_id = $2
+       ORDER BY s.name`,
+      [id, userId]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Get sites (id, name, slug) for multiple template IDs in one query; owner-scoped.
+   * Returns array of { template_id, id, name, slug } for grouping by template_id.
+   */
+  static async getSitesByTemplateIdsForOwner(templateIds, userId) {
+    if (!templateIds || templateIds.length === 0 || !userId) return [];
+    const ids = templateIds.map((id) => (typeof id === 'number' ? id : parseInt(String(id), 10))).filter((n) => !Number.isNaN(n) && n >= 1);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
+    const result = await pool.query(
+      `SELECT st.template_id, s.id, s.name, s.slug
+       FROM site_templates st
+       JOIN sites s ON s.id = st.site_id
+       WHERE st.template_id IN (${placeholders}) AND s.owner_id = $1
+       ORDER BY st.template_id, s.name`,
+      [userId, ...ids]
+    );
+    return result.rows;
+  }
+
+  /**
    * Apply template to site
    */
   static async applyTemplateToSite(siteId, templateId, customizationSettings = null) {
@@ -173,6 +229,20 @@ class TemplateModel {
       [siteId, templateId, customizationSettings ? JSON.stringify(customizationSettings) : null]
     );
     return result.rows[0];
+  }
+
+  /**
+   * Delete template (caller must verify ownership first).
+   * Removes site_templates associations then the template.
+   */
+  static async deleteTemplate(templateId) {
+    const id = typeof templateId === 'number' && Number.isInteger(templateId)
+      ? templateId
+      : parseInt(String(templateId), 10);
+    if (Number.isNaN(id) || id < 1) return false;
+    await pool.query('DELETE FROM site_templates WHERE template_id = $1', [id]);
+    const result = await pool.query('DELETE FROM templates WHERE id = $1 RETURNING id', [id]);
+    return (result.rowCount ?? 0) > 0;
   }
 }
 

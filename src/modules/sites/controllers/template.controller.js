@@ -8,19 +8,11 @@ const { logger } = require('../../../shared/utils/logger');
 
 class TemplateController {
   /**
-   * Get all templates
-   * If user is authenticated, only return their templates
-   * Otherwise, return all active templates (for public browsing)
+   * Get all templates for the current user (owner only)
    */
   static async getAllTemplates(req, res) {
     try {
-      const filters = { ...req.query };
-      
-      // If user is authenticated, filter by their user ID
-      if (req.user && req.user.user_id) {
-        filters.userId = req.user.user_id;
-      }
-      
+      const filters = { ...req.query, userId: req.user.user_id };
       const templates = await TemplateService.getAllTemplates(filters);
       sendSuccess(res, templates, 'Templates retrieved successfully', OK);
     } catch (error) {
@@ -29,38 +21,52 @@ class TemplateController {
   }
 
   /**
-   * Get template by ID
+   * Get template by ID (only if owned by current user)
    */
   static async getTemplateById(req, res) {
     try {
       const { templateId } = req.params;
-      const template = await TemplateService.getTemplateById(templateId);
+      const template = await TemplateService.getTemplateByIdForOwner(templateId, req.user.user_id);
       if (!template) {
         return sendError(res, 'Template not found', NOT_FOUND);
       }
-      
+
       // Ensure config is parsed (PostgreSQL JSONB is usually auto-parsed, but ensure it's an object)
       if (template.config) {
         try {
-          template.config = typeof template.config === 'string' 
-            ? JSON.parse(template.config) 
+          template.config = typeof template.config === 'string'
+            ? JSON.parse(template.config)
             : template.config;
         } catch (parseError) {
           console.error(`Error parsing template config for template ${templateId}:`, parseError);
-          // If parsing fails, return empty config instead of failing
           template.config = {
             components: [],
             blocks: [],
             pages: [],
-            theme: {
-              colors: {},
-              fonts: {},
-            },
+            theme: { colors: {}, fonts: {} },
           };
         }
       }
-      
+
       sendSuccess(res, template, 'Template retrieved successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Get sites that use this template (only templates owned by current user; only sites owned by current user)
+   */
+  static async getSitesUsingTemplate(req, res) {
+    try {
+      const { templateId } = req.params;
+      const userId = req.user.user_id;
+      const template = await TemplateService.getTemplateByIdForOwner(templateId, userId);
+      if (!template) {
+        return sendError(res, 'Template not found', NOT_FOUND);
+      }
+      const sites = await TemplateService.getSitesUsingTemplate(templateId, userId);
+      sendSuccess(res, sites, 'Sites using this template', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
     }
@@ -76,6 +82,20 @@ class TemplateController {
       sendSuccess(res, template, 'Site template retrieved successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Delete template (owner only)
+   */
+  static async deleteTemplate(req, res) {
+    try {
+      const { templateId } = req.params;
+      await TemplateService.deleteTemplate(templateId, req.user.user_id);
+      sendSuccess(res, null, 'Template deleted successfully', OK);
+    } catch (error) {
+      const statusCode = error.message === 'Template not found' ? NOT_FOUND : BAD_REQUEST;
+      sendError(res, error.message, statusCode);
     }
   }
 
@@ -110,13 +130,13 @@ class TemplateController {
   }
 
   /**
-   * Update template
+   * Update template (only if owned by current user)
    */
   static async updateTemplate(req, res) {
     try {
       const { templateId } = req.params;
       const { name, description, category, previewImageUrl, thumbnailUrl, config, isPremium } = req.body;
-      
+
       const template = await TemplateService.updateTemplate(templateId, {
         name,
         description,
@@ -125,7 +145,7 @@ class TemplateController {
         thumbnailUrl,
         config,
         isPremium,
-      });
+      }, req.user.user_id);
 
       if (!template) {
         return sendError(res, 'Template not found', NOT_FOUND);
@@ -172,15 +192,19 @@ class TemplateController {
   }
 
   /**
-   * Add default pages to template
+   * Add default pages to template (only if owned by current user)
    */
   static async addDefaultPages(req, res) {
     try {
       const { templateId } = req.params;
-      const template = await TemplateService.addDefaultPages(templateId);
+      const template = await TemplateService.addDefaultPages(templateId, req.user.user_id);
+      if (!template) {
+        return sendError(res, 'Template not found', NOT_FOUND);
+      }
       sendSuccess(res, template, 'Default pages added successfully', OK);
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      const statusCode = error.message === 'Template not found' ? NOT_FOUND : BAD_REQUEST;
+      sendError(res, error.message, statusCode);
     }
   }
 

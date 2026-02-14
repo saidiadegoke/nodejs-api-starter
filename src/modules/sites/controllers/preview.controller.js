@@ -36,11 +36,16 @@ class PreviewController {
    */
   static async previewTemplate(req, res) {
     try {
-      const { templateId } = req.params;
+      const { templateId: rawId } = req.params;
       const userId = req.user?.id || null; // Optional: from auth token
 
-      if (!templateId) {
+      if (!rawId) {
         return sendError(res, 'Template ID is required', BAD_REQUEST);
+      }
+
+      const templateId = parseInt(rawId, 10);
+      if (Number.isNaN(templateId) || templateId < 1) {
+        return sendError(res, 'Invalid template ID', BAD_REQUEST);
       }
 
       console.log('[PreviewController] Preview template request:', { templateId, userId });
@@ -62,8 +67,8 @@ class PreviewController {
         stack: error.stack,
       });
       
-      if (error.message === 'Template not found') {
-        return sendError(res, error.message, NOT_FOUND);
+      if (error.message === 'Template not found' || error.message === 'Template not found or invalid') {
+        return sendError(res, 'Template not found', NOT_FOUND);
       }
       sendError(res, error.message || 'Failed to preview template', BAD_REQUEST);
     }

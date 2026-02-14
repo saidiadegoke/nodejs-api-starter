@@ -2,15 +2,17 @@ const pool = require('../../../db/pool');
 
 class SiteModel {
   /**
-   * Get all sites for a user
+   * Get all sites for a user (includes template_id and template_name)
    */
   static async getUserSites(userId) {
     const result = await pool.query(
       `SELECT 
         s.*,
-        st.template_id
+        st.template_id,
+        t.name AS template_name
       FROM sites s
       LEFT JOIN site_templates st ON s.id = st.site_id
+      LEFT JOIN templates t ON t.id = st.template_id
       WHERE s.owner_id = $1 
       ORDER BY s.created_at DESC`,
       [userId]
@@ -19,16 +21,17 @@ class SiteModel {
   }
 
   /**
-   * Get site by ID
-   * Includes template_id from site_templates join
+   * Get site by ID (includes template_id and template_name)
    */
   static async getSiteById(siteId) {
     const result = await pool.query(
       `SELECT 
         s.*,
-        st.template_id
+        st.template_id,
+        t.name AS template_name
       FROM sites s
       LEFT JOIN site_templates st ON s.id = st.site_id
+      LEFT JOIN templates t ON t.id = st.template_id
       WHERE s.id = $1`,
       [siteId]
     );
@@ -36,16 +39,17 @@ class SiteModel {
   }
 
   /**
-   * Get site by slug
-   * Includes template_id from site_templates join
+   * Get site by slug (includes template_id and template_name)
    */
   static async getSiteBySlug(slug) {
     const result = await pool.query(
       `SELECT 
         s.*,
-        st.template_id
+        st.template_id,
+        t.name AS template_name
       FROM sites s
       LEFT JOIN site_templates st ON s.id = st.site_id
+      LEFT JOIN templates t ON t.id = st.template_id
       WHERE s.slug = $1`,
       [slug]
     );
@@ -150,13 +154,15 @@ class SiteModel {
     // Normalize domain (remove www, lowercase)
     const normalizedDomain = domain.toLowerCase().replace(/^www\./, '');
     
-    // Check both primary_domain and custom_domains table
+    // Check both primary_domain and custom_domains table (includes template_id and template_name)
     const result = await pool.query(
       `SELECT 
         s.*,
-        st.template_id
+        st.template_id,
+        t.name AS template_name
       FROM sites s
       LEFT JOIN site_templates st ON s.id = st.site_id
+      LEFT JOIN templates t ON t.id = st.template_id
       WHERE (s.primary_domain IS NOT NULL 
         AND LOWER(REPLACE(s.primary_domain, 'www.', '')) = $1)
       OR EXISTS (
