@@ -223,6 +223,16 @@ class PaymentService {
                 user_id: userId
               });
             }
+
+            // Referral milestone: when referred user completes first paid plan, reward referrer
+            if (subscription && planType && planType !== 'free' && userId) {
+              try {
+                const ReferralService = require('../../referrals/services/referral.service');
+                await ReferralService.recordMilestone(userId, 'first_paid_plan');
+              } catch (refErr) {
+                console.warn('[Payment] Referral milestone failed (non-critical):', refErr.message);
+              }
+            }
           }
         } catch (subscriptionError) {
           // Don't fail payment verification if subscription activation fails

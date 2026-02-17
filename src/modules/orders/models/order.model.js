@@ -201,21 +201,13 @@ class OrderModel {
   }
 
   /**
-   * Find orders for user (customer or service provider)
+   * Find orders where user is involved (as customer, shopper, or dispatcher).
+   * Permission-based: anyone with orders.view sees their own orders.
    */
-  static async findByUser(userId, role, filters = {}, limit = 20, offset = 0) {
-    let whereClause = '';
+  static async findByUserInvolved(userId, filters = {}, limit = 20, offset = 0) {
+    let whereClause = 'WHERE (o.customer_id = $1 OR o.shopper_id = $1 OR o.dispatcher_id = $1)';
     const params = [userId];
-    
-    if (role === 'customer') {
-      whereClause = 'WHERE o.customer_id = $1';
-    } else if (role === 'shopper') {
-      whereClause = 'WHERE o.shopper_id = $1';
-    } else if (role === 'dispatcher') {
-      whereClause = 'WHERE o.dispatcher_id = $1';
-    }
 
-    // Add status filter if provided
     if (filters.status) {
       params.push(filters.status);
       whereClause += ` AND o.status = $${params.length}`;
@@ -244,31 +236,46 @@ class OrderModel {
   }
 
   /**
-   * Get available orders (for shoppers/dispatchers)
+   * Count orders where user is involved (for pagination).
    */
-  static async getAvailableOrders(role, latitude, longitude, radius = 5, limit = 20) {
-    let status = role === 'shopper' ? 'pending_shopper' : 'pending_dispatcher';
-    
+  static async countByUserInvolved(userId, filters = {}) {
+    let whereClause = 'WHERE (o.customer_id = $1 OR o.shopper_id = $1 OR o.dispatcher_id = $1)';
+    const params = [userId];
+    if (filters.status) {
+      params.push(filters.status);
+      whereClause += ` AND o.status = $${params.length}`;
+    }
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM orders o ${whereClause}`,
+      params
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Get available orders (pending_shopper and/or pending_dispatcher) within radius.
+   * Permission-based: anyone with orders.accept can see and accept either pool.
+   */
+  static async getAvailableOrders(statuses, latitude, longitude, radius = 5, limit = 20) {
     const result = await pool.query(
       `SELECT 
         o.id, o.title, o.description, o.category,
         o.store_name, o.store_address, o.store_latitude, o.store_longitude,
         o.delivery_address, o.delivery_latitude, o.delivery_longitude,
-        o.estimated_item_cost, o.is_urgent, o.created_at,
+        o.estimated_item_cost, o.is_urgent, o.created_at, o.status,
         o.shopper_fee, o.dispatcher_fee,
         o.special_instructions,
-        -- Calculate distance (simple approximation)
         (6371 * acos(cos(radians($1)) * cos(radians(o.store_latitude)) * 
          cos(radians(o.store_longitude) - radians($2)) + 
          sin(radians($1)) * sin(radians(o.store_latitude)))) as distance_km
       FROM orders o
-      WHERE o.status = $3
+      WHERE o.status = ANY($3::text[])
       AND (6371 * acos(cos(radians($1)) * cos(radians(o.store_latitude)) * 
            cos(radians(o.store_longitude) - radians($2)) + 
            sin(radians($1)) * sin(radians(o.store_latitude)))) <= $4
       ORDER BY o.created_at DESC
       LIMIT $5`,
-      [latitude, longitude, status, radius, limit]
+      [latitude, longitude, statuses, radius, limit]
     );
 
     return result.rows;

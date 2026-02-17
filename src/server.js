@@ -2,18 +2,22 @@ const app = require('./app');
 const { port } = require('./config/env.config');
 const { logger } = require('./shared/utils/logger');
 const pool = require('./db/pool');
+const { runSeeds } = require('./db/seed');
 const webSocketService = require('./shared/services/websocket.service');
 const http = require('http');
 
 const PORT = port || 4050;
 
-// Test database connection before starting server
+// Test database connection and run idempotent seeds before starting server
 const startServer = async () => {
   try {
     // Test database connection
     await pool.query('SELECT NOW()');
     logger.info('Database connection successful');
-    
+
+    // Run seeds (idempotent: ON CONFLICT DO NOTHING in seed SQL)
+    await runSeeds();
+
     // Create HTTP server
     const server = http.createServer(app);
     

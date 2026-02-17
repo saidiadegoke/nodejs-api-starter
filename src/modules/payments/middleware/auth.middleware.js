@@ -85,8 +85,8 @@ const requireAdmin = (req, res, next) => {
       message: 'Authentication required'
     });
   }
-console.log('user', req.user)
-  if (req.user.role !== 'admin') {
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+  if (!isAdmin) {
     return res.status(403).json({
       success: false,
       message: 'Admin access required'
@@ -187,7 +187,8 @@ const requireOwnership = (resourceModel, resourceIdField = 'id') => {
       }
 
       // Check if user owns the resource or is admin
-      if (resource.user_id !== req.user.id && req.user.role !== 'admin') {
+      const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+      if (resource.user_id !== req.user.id && !isAdmin) {
         return res.status(403).json({
           success: false,
           message: 'Access denied'
@@ -240,7 +241,8 @@ const requirePaymentOwnership = async (req, res, next) => {
     }
 
     // Check if user owns the payment or is admin
-    if (payment.donor_id !== req.user.id && req.user.role !== 'admin') {
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+    if (payment.donor_id !== req.user.id && !isAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -285,7 +287,8 @@ const requireCampaignAccess = async (req, res, next) => {
     }
 
     // Check if campaign is public or user has access
-    if (!campaign.is_public && (!req.user || req.user.role !== 'admin')) {
+    const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'super_admin');
+    if (!campaign.is_public && (!req.user || !isAdmin)) {
       return res.status(403).json({
         success: false,
         message: 'Campaign not accessible'

@@ -60,7 +60,8 @@ class CampaignController {
       }
 
       // Check if campaign is public
-      if (!campaign.is_public && (!req.user || req.user.role !== 'admin')) {
+      const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'super_admin');
+      if (!campaign.is_public && (!req.user || !isAdmin)) {
         return res.status(403).json({
           success: false,
           message: 'Campaign not accessible'

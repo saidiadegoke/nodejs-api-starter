@@ -47,9 +47,12 @@ class User {
    */
   static async create(userData) {
     const { email, username, password_hash, full_name, phone, role } = userData;
+    if (!role) {
+      throw new Error('Role is required');
+    }
     const result = await pool.query(
       'INSERT INTO users (email, username, password_hash, full_name, phone, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, username, full_name, phone, role, created_at',
-      [email, username, password_hash, full_name, phone, role || 'user']
+      [email, username, password_hash, full_name, phone, role]
     );
     return result.rows[0];
   }

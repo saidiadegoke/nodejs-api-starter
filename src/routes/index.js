@@ -16,6 +16,7 @@ const templatesRoutes = require('../modules/sites/routes/templates.routes');
 const componentsRoutes = require('../modules/sites/routes/components.routes');
 const assetsRoutes = require('../modules/assets/routes');
 const paymentsRoutes = require('../modules/payments/routes');
+const referralsRoutes = require('../modules/referrals/routes');
 const earlyAdoptersRoutes = require('../modules/earlyAdopters/routes');
 // const authoringRoutes = require('../modules/authoring/routes');
 // const adsRoutes = require('../modules/ads/routes');
@@ -84,6 +85,7 @@ router.use('/templates', templatesRoutes);
 router.use('/components', componentsRoutes);
 router.use('/assets', assetsRoutes);
 router.use('/payments', paymentsRoutes);
+router.use('/referrals', referralsRoutes);
 router.use('/early-adopters', earlyAdoptersRoutes);
 // Preview draft (store block config for iframe preview; avoids long URLs)
 const previewDraftRoutes = require('../modules/preview-draft/preview-draft.routes');
@@ -117,6 +119,10 @@ router.use('/preview', previewRouter);
 // Public API routes for smartstore-app (JSON endpoints, no auth required)
 const publicApiRoutes = require('../modules/sites/routes/public.api.routes');
 router.use('/public/sites', publicApiRoutes);
+
+// Public referral resolve (for signup page: "Referred by X")
+const publicReferralsRoutes = require('../modules/referrals/routes.public');
+router.use('/public/referrals', publicReferralsRoutes);
 
 // router.use('/authoring', authoringRoutes);
 // router.use('/ads', adsRoutes);

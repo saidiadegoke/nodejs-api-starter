@@ -80,7 +80,7 @@ class ComponentService {
 
       // System components can only be created by admins or system (no userId)
       if (componentData.type === 'system' && userId) {
-        const isAdmin = await hasRole(userId, 'admin');
+        const isAdmin = await hasRole(userId, 'admin') || await hasRole(userId, 'super_admin');
         if (!isAdmin) {
           throw new ForbiddenError('System components can only be created by administrators');
         }
@@ -98,7 +98,7 @@ class ComponentService {
         if (userId === null) {
           isSystem = true; // System-level creation
         } else {
-          const isAdmin = await hasRole(userId, 'admin');
+          const isAdmin = await hasRole(userId, 'admin') || await hasRole(userId, 'super_admin');
           if (isAdmin) {
             isSystem = true; // Admin can create system components
           }
@@ -133,7 +133,7 @@ class ComponentService {
 
       // Prevent updates to system components unless user is admin
       if (component.is_system && userId) {
-        const isAdmin = await hasRole(userId, 'admin');
+        const isAdmin = await hasRole(userId, 'admin') || await hasRole(userId, 'super_admin');
         if (!isAdmin) {
           throw new ForbiddenError('Cannot update system components. Admin access required.');
         }
@@ -144,7 +144,7 @@ class ComponentService {
         // Allow admin to set isSystem=true when updating a system component (type='system')
         // This handles cases where the component was created with isSystem=false but should be true
         if (componentData.isSystem === true && componentData.type === 'system' && userId) {
-          const isAdmin = await hasRole(userId, 'admin');
+          const isAdmin = await hasRole(userId, 'admin') || await hasRole(userId, 'super_admin');
           if (isAdmin) {
             // Admin can set isSystem=true for system components - this is allowed
             // Continue with the update

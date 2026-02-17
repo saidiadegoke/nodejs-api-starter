@@ -1,12 +1,17 @@
 -- SmartStore RBAC Seeder
--- Creates roles and permissions for the SmartStore e-commerce platform
+-- Creates roles and permissions for the SmartStore e-commerce platform.
+-- Ensures all roles have permissions needed to access their respective API routes and pages.
 
 -- ==================== ROLES ====================
 
 -- Insert default system roles
 INSERT INTO roles (name, display_name, description, is_system) VALUES
-('user', 'User', 'Regular user with basic site management', true),
-('admin', 'Administrator', 'Full system access and administration', true)
+('super_admin', 'Super Admin', 'Full system access and administration', true),
+('admin', 'Administrator', 'Administrator with full access', true),
+('school_admin', 'School Admin', 'School-level administration', true),
+('teacher', 'Teacher', 'Teacher with authoring and content access', true),
+('student', 'Student', 'Student with view access', true),
+('parent', 'Parent', 'Parent with view access to linked accounts', true)
 ON CONFLICT (name) DO NOTHING;
 
 -- ==================== PERMISSIONS ====================
@@ -70,41 +75,95 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 
 -- Analytics permissions
 ('analytics.view', 'analytics', 'view', 'View platform analytics'),
-('analytics.export', 'analytics', 'export', 'Export analytics data')
+('analytics.export', 'analytics', 'export', 'Export analytics data'),
+
+-- Authoring permissions (wizard, bulk create)
+('authoring.create', 'authoring', 'create', 'Create content via authoring wizard'),
+('authoring.bulk_create', 'authoring', 'bulk_create', 'Bulk create content (polls, stories, templates)'),
+
+-- Order workflow (used by orders module)
+('orders.accept', 'orders', 'accept', 'Accept orders')
 ON CONFLICT (resource, action) DO NOTHING;
 
 -- ==================== ROLE PERMISSIONS ====================
 
--- Grant permissions to user role (basic site management)
+-- Grant ALL permissions to super_admin
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'user'
-AND p.name IN (
-  'users.view', 'users.update',
-  'sites.view', 'sites.create', 'sites.update', 'sites.delete',
-  'templates.view', 'templates.create', 'templates.update', 'templates.delete',
-  'products.view', 'products.create', 'products.update', 'products.delete',
-  'orders.view', 'orders.create', 'orders.update', 'orders.delete',
-  'customers.view', 'customers.create', 'customers.update',
-  'deployments.view', 'deployments.create',
-  'analytics.view'
-)
+WHERE r.name = 'super_admin'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Grant ALL permissions to admin role (super user)
+-- Grant ALL permissions to admin
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'admin'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
+-- Grant dashboard permissions to school_admin (sites, templates, products, orders, referrals, settings)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'school_admin'
+AND p.name IN (
+  'users.view', 'users.update', 'users.create',
+  'sites.view', 'sites.create', 'sites.update', 'sites.delete',
+  'templates.view', 'templates.create', 'templates.update', 'templates.delete',
+  'products.view', 'products.create', 'products.update', 'products.delete',
+  'orders.view', 'orders.create', 'orders.update', 'orders.delete', 'orders.accept',
+  'customers.view', 'customers.create', 'customers.update',
+  'deployments.view', 'deployments.create',
+  'analytics.view',
+  'authoring.create', 'authoring.bulk_create'
+)
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Grant teacher: view + authoring (content creation)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'teacher'
+AND p.name IN (
+  'users.view', 'users.update',
+  'sites.view', 'sites.update',
+  'templates.view', 'templates.create', 'templates.update',
+  'products.view', 'products.create', 'products.update',
+  'orders.view', 'orders.create', 'orders.update', 'orders.accept',
+  'customers.view', 'customers.update',
+  'deployments.view',
+  'analytics.view',
+  'authoring.create', 'authoring.bulk_create'
+)
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Grant student: view + place/manage own orders (orders.create, orders.update for confirm/cancel)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'student'
+AND p.name IN (
+  'sites.view', 'templates.view', 'products.view', 'orders.view', 'orders.create', 'orders.update',
+  'customers.view',
+  'deployments.view', 'analytics.view'
+)
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Grant parent: view + place/manage own orders
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'parent'
+AND p.name IN (
+  'sites.view', 'products.view', 'orders.view', 'orders.create', 'orders.update', 'customers.view',
+  'deployments.view', 'analytics.view'
+)
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
 -- ==================== DEFAULT ADMIN ASSIGNMENT ====================
 
--- Note: Admin user assignment should be done manually via RBAC CLI
--- Example: node scripts/rbac.js add-role-to-user admin@smartstore.ng admin
+-- Assign super_admin and admin roles to the super admin user (admin@example.com from 001_seed_users.sql)
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r
+WHERE u.email = 'admin@example.com' AND r.name IN ('super_admin', 'admin')
+ON CONFLICT (user_id, role_id) DO NOTHING;
 
--- You can uncomment and modify this if you want to automatically assign admin role
--- INSERT INTO user_roles (user_id, role_id)
--- SELECT u.id, r.id FROM users u, roles r
--- WHERE r.name = 'admin'
--- AND u.email = 'admin@smartstore.ng'
--- ON CONFLICT (user_id, role_id) DO NOTHING;
+-- ==================== DEFAULT ADMIN ASSIGNMENT ====================
+
+-- Note: Role assignment should be done via RBAC CLI, e.g.:
+-- node scripts/rbac.js add-role-to-user admin@example.com super_admin
+-- node scripts/rbac.js add-role-to-user admin@example.com admin

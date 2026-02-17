@@ -3,17 +3,17 @@ const OrderController = require('./controllers/order.controller');
 const LocationController = require('./controllers/location.controller');
 const { body } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
-const { requireAuth, requireRole } = require('../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../shared/middleware/rbac.middleware');
 
 /**
  * @route   POST /api/orders
  * @desc    Create new order
- * @access  Customer only
+ * @access  Requires orders.create
  */
 router.post(
   '/',
   requireAuth,
-  requireRole('customer'),
+  requirePermission('orders.create'),
   [
     body('title').isLength({ min: 3, max: 100 }).withMessage('Title must be 3-100 characters'),
     body('description').isLength({ min: 10, max: 1000 }).withMessage('Description must be 10-1000 characters'),
@@ -33,51 +33,58 @@ router.post(
 
 /**
  * @route   GET /api/orders
- * @desc    List user's orders
- * @access  Private
+ * @desc    List orders user is involved in (customer, shopper, or dispatcher)
+ * @access  Requires orders.view
  */
-router.get('/', requireAuth, OrderController.listOrders);
+router.get('/', requireAuth, requirePermission('orders.view'), OrderController.listOrders);
+
+/**
+ * @route   GET /api/orders/available
+ * @desc    Get orders available to accept (pending_shopper, pending_dispatcher) within radius
+ * @access  Requires orders.accept
+ */
+router.get('/available', requireAuth, requirePermission('orders.accept'), OrderController.getAvailableOrders);
 
 /**
  * @route   GET /api/orders/:order_id
  * @desc    Get order details
- * @access  Private (customer, shopper, dispatcher of this order)
+ * @access  Requires orders.view (access limited to involved parties)
  */
-router.get('/:order_id', requireAuth, OrderController.getOrder);
+router.get('/:order_id', requireAuth, requirePermission('orders.view'), OrderController.getOrder);
 
 /**
  * @route   POST /api/orders/:order_id/accept
- * @desc    Accept order (shopper or dispatcher)
- * @access  Shopper or Dispatcher
+ * @desc    Accept order as shopper or dispatcher (based on order status)
+ * @access  Requires orders.accept
  */
 router.post(
   '/:order_id/accept',
   requireAuth,
-  requireRole('shopper', 'dispatcher'),
+  requirePermission('orders.accept'),
   OrderController.acceptOrder
 );
 
 /**
  * @route   POST /api/orders/:order_id/start-shopping
- * @desc    Start shopping
- * @access  Shopper only
+ * @desc    Start shopping (assigned shopper only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/start-shopping',
   requireAuth,
-  requireRole('shopper'),
+  requirePermission('orders.update'),
   OrderController.startShopping
 );
 
 /**
  * @route   POST /api/orders/:order_id/photos
- * @desc    Upload progress photo
- * @access  Shopper or Dispatcher
+ * @desc    Upload progress photo (assigned shopper or dispatcher; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/photos',
   requireAuth,
-  requireRole('shopper', 'dispatcher'),
+  requirePermission('orders.update'),
   [
     body('file_id').notEmpty().withMessage('file_id is required'),
     body('stage').isIn(['item_found', 'receipt', 'handoff', 'delivery']).withMessage('Invalid stage'),
@@ -88,13 +95,13 @@ router.post(
 
 /**
  * @route   POST /api/orders/:order_id/update-cost
- * @desc    Update actual item cost
- * @access  Shopper only
+ * @desc    Update actual item cost (assigned shopper only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/update-cost',
   requireAuth,
-  requireRole('shopper'),
+  requirePermission('orders.update'),
   [
     body('actual_cost').isInt({ min: 0 }).withMessage('Valid actual cost is required'),
     validate
@@ -104,61 +111,61 @@ router.post(
 
 /**
  * @route   POST /api/orders/:order_id/ready-for-pickup
- * @desc    Mark order ready for pickup
- * @access  Shopper only
+ * @desc    Mark order ready for pickup (assigned shopper only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/ready-for-pickup',
   requireAuth,
-  requireRole('shopper'),
+  requirePermission('orders.update'),
   OrderController.markReadyForPickup
 );
 
 /**
  * @route   POST /api/orders/:order_id/confirm-pickup
- * @desc    Confirm pickup
- * @access  Dispatcher only
+ * @desc    Confirm pickup (assigned dispatcher only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/confirm-pickup',
   requireAuth,
-  requireRole('dispatcher'),
+  requirePermission('orders.update'),
   OrderController.confirmPickup
 );
 
 /**
  * @route   POST /api/orders/:order_id/complete-delivery
- * @desc    Complete delivery
- * @access  Dispatcher only
+ * @desc    Complete delivery (assigned dispatcher only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/complete-delivery',
   requireAuth,
-  requireRole('dispatcher'),
+  requirePermission('orders.update'),
   OrderController.completeDelivery
 );
 
 /**
  * @route   POST /api/orders/:order_id/confirm-delivery
- * @desc    Confirm delivery received
- * @access  Customer only
+ * @desc    Confirm delivery received (customer only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/confirm-delivery',
   requireAuth,
-  requireRole('customer'),
+  requirePermission('orders.update'),
   OrderController.confirmDelivery
 );
 
 /**
  * @route   POST /api/orders/:order_id/cancel
- * @desc    Cancel order
- * @access  Customer only
+ * @desc    Cancel order (customer only; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/cancel',
   requireAuth,
-  requireRole('customer'),
+  requirePermission('orders.update'),
   [
     body('cancellation_reason').isLength({ min: 10, max: 500 }).withMessage('Cancellation reason must be 10-500 characters'),
     validate
@@ -168,13 +175,13 @@ router.post(
 
 /**
  * @route   POST /api/orders/:order_id/location
- * @desc    Update location for order
- * @access  Shopper or Dispatcher (assigned to order)
+ * @desc    Update location for order (assigned shopper or dispatcher; service enforces)
+ * @access  Requires orders.update
  */
 router.post(
   '/:order_id/location',
   requireAuth,
-  requireRole('shopper', 'dispatcher'),
+  requirePermission('orders.update'),
   OrderController.updateLocation
 );
 

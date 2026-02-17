@@ -25,32 +25,26 @@ class AuthModel {
       );
       
       const user = userResult.rows[0];
-      
+
       // Create profile
       await client.query(
-        `INSERT INTO profiles (user_id, first_name, last_name, display_name) 
+        `INSERT INTO profiles (user_id, first_name, last_name, display_name)
          VALUES ($1, $2, $3, $4)`,
         [user.id, first_name, last_name, `${first_name} ${last_name}`]
       );
-      
-      // Automatically assign "user" role to all new users
+
+      // Role is required; assigned by the creation flow (e.g. register step)
+      if (!role) {
+        await client.query('ROLLBACK');
+        throw new Error('Role is required');
+      }
       await client.query(
         `INSERT INTO user_roles (user_id, role_id)
-         SELECT $1, id FROM roles WHERE name = 'user'
+         SELECT $1, id FROM roles WHERE name = $2
          ON CONFLICT (user_id, role_id) DO NOTHING`,
-        [user.id]
+        [user.id, role]
       );
-      
-      // Assign additional role if provided (e.g., admin can be added later)
-      if (role && role !== 'user') {
-        await client.query(
-          `INSERT INTO user_roles (user_id, role_id)
-           SELECT $1, id FROM roles WHERE name = $2
-           ON CONFLICT (user_id, role_id) DO NOTHING`,
-          [user.id, role]
-        );
-      }
-      
+
       await client.query('COMMIT');
       return user;
     } catch (error) {

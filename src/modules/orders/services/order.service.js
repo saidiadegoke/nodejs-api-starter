@@ -114,12 +114,13 @@ class OrderService {
   }
 
   /**
-   * List orders for user
+   * List orders where user is involved (customer, shopper, or dispatcher).
+   * Permission-based: requires orders.view.
    */
-  static async listOrders(userId, role, filters = {}, page = 1, limit = 20) {
+  static async listOrders(userId, filters = {}, page = 1, limit = 20) {
     const offset = (page - 1) * limit;
-    const orders = await OrderModel.findByUser(userId, role, filters, limit, offset);
-    const total = await OrderModel.count({ ...filters, [`${role}_id`]: userId });
+    const orders = await OrderModel.findByUserInvolved(userId, filters, limit, offset);
+    const total = await OrderModel.countByUserInvolved(userId, filters);
 
     return {
       orders,
@@ -130,42 +131,38 @@ class OrderService {
   }
 
   /**
-   * Get available orders (for service providers)
+   * Get available orders (pending_shopper and pending_dispatcher) within radius.
+   * Permission-based: requires orders.accept; any user with permission can accept as shopper or dispatcher.
    */
-  static async getAvailableOrders(role, latitude, longitude, radius = 5, limit = 20) {
-    const orders = await OrderModel.getAvailableOrders(role, latitude, longitude, radius, limit);
-    return orders;
+  static async getAvailableOrders(latitude, longitude, radius = 5, limit = 20) {
+    const statuses = ['pending_shopper', 'pending_dispatcher'];
+    return OrderModel.getAvailableOrders(statuses, latitude, longitude, radius, limit);
   }
 
   /**
-   * Accept order
+   * Accept order as shopper or dispatcher based on order status.
+   * Permission-based: requires orders.accept; assignment follows order state (pending_shopper → shopper, pending_dispatcher → dispatcher).
    */
-  static async acceptOrder(orderId, userId, role) {
+  static async acceptOrder(orderId, userId) {
     const order = await OrderModel.findById(orderId);
-    
+
     if (!order) {
       throw new Error('Order not found');
     }
 
-    // Check if order is available
-    if (role === 'shopper' && order.status !== 'pending_shopper') {
-      throw new Error('Order is not available for shoppers');
-    }
-
-    if (role === 'dispatcher' && order.status !== 'pending_dispatcher') {
-      throw new Error('Order is not available for dispatchers');
-    }
-
-    // Assign service provider
-    if (role === 'shopper') {
+    if (order.status === 'pending_shopper') {
       await OrderModel.assignShopper(orderId, userId);
       await OrderModel.updateStatus(orderId, 'shopper_assigned', userId, 'Shopper accepted order');
-    } else if (role === 'dispatcher') {
-      await OrderModel.assignDispatcher(orderId, userId);
-      await OrderModel.updateStatus(orderId, 'dispatcher_assigned', userId, 'Dispatcher accepted order');
+      return { assignedAs: 'shopper' };
     }
 
-    return true;
+    if (order.status === 'pending_dispatcher') {
+      await OrderModel.assignDispatcher(orderId, userId);
+      await OrderModel.updateStatus(orderId, 'dispatcher_assigned', userId, 'Dispatcher accepted order');
+      return { assignedAs: 'dispatcher' };
+    }
+
+    throw new Error('Order is not available for acceptance');
   }
 
   /**

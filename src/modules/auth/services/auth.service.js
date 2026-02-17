@@ -38,7 +38,7 @@ class AuthService {
    */
   static async register(userData) {
     // Validate required fields
-    const { email, phone, password, first_name, last_name, role, country_id } = userData;
+    const { email, phone, password, first_name, last_name, role, country_id, referral_code } = userData;
 
     if (!email && !phone) {
       throw new Error('Either email or phone is required');
@@ -48,10 +48,10 @@ class AuthService {
       throw new Error('Password must be at least 8 characters');
     }
 
-    // Role is optional - all users get "user" role automatically
-    // Additional roles (like admin) can be assigned separately
-    if (role && !['user', 'admin'].includes(role)) {
-      throw new Error('Invalid role. Must be user or admin');
+    // Role is required; user creation flow must provide it
+    const validRoles = ['super_admin', 'admin', 'school_admin', 'teacher', 'student', 'parent'];
+    if (!role || !validRoles.includes(role)) {
+      throw new Error('Valid role is required (super_admin, admin, school_admin, teacher, student, parent)');
     }
 
     // Format phone number with country code
@@ -86,6 +86,21 @@ class AuthService {
       user_agent: 'web'
     });
 
+    // Attribution: create referral if referral_code provided (first referrer wins)
+    if (referral_code && referral_code.trim()) {
+      try {
+        const ReferralService = require('../../referrals/services/referral.service');
+        const ReferralCodeService = require('../../referrals/services/referralCode.service');
+        const referrerId = await ReferralCodeService.resolveCode(referral_code.trim());
+        if (referrerId && referrerId !== user.id) {
+          await ReferralService.createReferral(referrerId, user.id, referral_code.trim());
+        }
+      } catch (refErr) {
+        // Non-fatal: log and continue (don't fail registration)
+        console.warn('[Auth] Referral attribution failed:', refErr.message);
+      }
+    }
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -97,7 +112,7 @@ class AuthService {
         phone: user.phone,
         first_name,
         last_name,
-        role: roleNames[0] || role,
+        role: roleNames[0] || role || null,
         roles: roleNames,
         profile_photo: null,
         rating: null,
@@ -166,7 +181,7 @@ class AuthService {
         last_name: user.last_name,
         phone: user.phone,
         email: user.email,
-        role: roleNames[0] || 'customer',
+        role: roleNames[0] || null,
         roles: roleNames,
         profile_photo: user.profile_photo_url || null,
         rating: user.rating_average || null,

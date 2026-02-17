@@ -4,7 +4,38 @@ const DNSVerificationService = require('./dnsVerification.service');
 const SSLService = require('./ssl.service');
 const CertificateManagerService = require('./certificateManager.service');
 
+/** Base domain for subdomains (e.g. smartstore.ng). Used for CNAME target. */
+const BASE_DOMAIN = process.env.BASE_DOMAIN || 'smartstore.ng';
+
 class CustomDomainService {
+  /**
+   * Build CNAME target for a site (subdomain.smartstore.ng).
+   * Users point their custom domain here so traffic reaches the same app.
+   */
+  static getCnameTarget(siteSlug) {
+    return `${siteSlug}.${BASE_DOMAIN}`;
+  }
+
+  /**
+   * Get traffic instructions: CNAME from custom host to site subdomain.
+   */
+  static getTrafficInstructions(siteSlug) {
+    const target = this.getCnameTarget(siteSlug);
+    return {
+      type: 'CNAME',
+      target,
+      name: 'www',
+      instructions: [
+        'Point your domain to your SmartStore site using a CNAME record:',
+        `Name/Host: www (or your subdomain, e.g. shop)`,
+        `Value/Target: ${target}`,
+        'TTL: 3600 (or default)',
+        '',
+        'For the root domain (example.com), many providers require an A record or ALIAS/ANAME to your host\'s IP; use CNAME for www.example.com.'
+      ]
+    };
+  }
+
   /**
    * Create custom domain for a site
    */
@@ -39,17 +70,21 @@ class CustomDomainService {
       verificationToken
     );
 
-    // Get verification instructions
+    // Get verification instructions (TXT for ownership)
     const instructions = DNSVerificationService.getVerificationInstructions(domain, verificationToken);
+    // Traffic instructions: CNAME to this site's subdomain
+    const traffic_instructions = this.getTrafficInstructions(site.slug);
 
     return {
       ...customDomain,
-      instructions
+      instructions,
+      traffic_instructions
     };
   }
 
   /**
    * Get all custom domains for a site
+   * Each domain includes traffic_target (CNAME target: siteSlug.smartstore.ng) for DNS instructions.
    */
   static async getCustomDomainsBySite(siteId, userId) {
     // Verify site ownership
@@ -61,7 +96,9 @@ class CustomDomainService {
       throw new Error('Unauthorized');
     }
 
-    return await CustomDomainModel.getCustomDomainsBySite(siteId);
+    const domains = await CustomDomainModel.getCustomDomainsBySite(siteId);
+    const traffic_target = this.getCnameTarget(site.slug);
+    return domains.map((d) => ({ ...d, traffic_target }));
   }
 
   /**

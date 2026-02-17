@@ -66,7 +66,7 @@ class UserProfileController {
 
       sendSuccess(res, {
         ...user,
-        role: roles[0] || 'customer',
+        role: roles[0] || 'student',
         roles: roles,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted', // TODO: Implement KYC
@@ -292,7 +292,7 @@ class UserProfileController {
 
       const updatedUser = {
         ...user,
-        role: roles[0] || 'customer',
+        role: roles[0] || 'student',
         roles: roles,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted',
@@ -333,7 +333,7 @@ class UserProfileController {
         [userId]
       );
 
-      const role = roleResult.rows[0]?.name || 'customer';
+      const role = roleResult.rows[0]?.name || 'student';
 
       const stats = {
         role: role,
@@ -347,7 +347,7 @@ class UserProfileController {
         }
       };
 
-      if (role === 'shopper' || role === 'dispatcher') {
+      if (role === 'teacher' || role === 'school_admin') {
         stats.provider_stats = {
           total_orders: 0,
           completed_orders: 0,
@@ -416,7 +416,7 @@ class UserProfileController {
 
       const userData = {
         ...result.rows[0],
-        role: roleResult.rows[0]?.name || 'customer',
+        role: roleResult.rows[0]?.name || 'student',
         verified: true
       };
 

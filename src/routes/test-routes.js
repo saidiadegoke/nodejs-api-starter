@@ -76,7 +76,7 @@ router.post('/users/me/check-permission', requireAuth, async (req, res) => {
  */
 router.get('/available-orders', 
   requireAuth,  // First authenticate
-  requireRole('shopper', 'dispatcher'), // Then check role
+  requireRole('teacher', 'school_admin'), // Then check role
   (req, res) => {
     // Mock response for testing
     const { latitude, longitude } = req.query;
@@ -151,7 +151,7 @@ router.get('/users/:user_id/orders',
  */
 router.get('/admin/dashboard/stats',
   requireAuth,
-  requireRole('admin'),
+  requireRole('admin', 'super_admin'),
   (req, res) => {
     sendSuccess(res, {
       stats: {
@@ -166,7 +166,7 @@ router.get('/admin/dashboard/stats',
 
 router.get('/admin/users',
   requireAuth,
-  requireRole('admin'),
+  requireRole('admin', 'super_admin'),
   (req, res) => {
     sendSuccess(res, {
       users: [],
@@ -177,7 +177,7 @@ router.get('/admin/users',
 
 router.get('/admin/users/:user_id',
   requireAuth,
-  requireRole('admin'),
+  requireRole('admin', 'super_admin'),
   (req, res) => {
     const { user_id } = req.params;
     

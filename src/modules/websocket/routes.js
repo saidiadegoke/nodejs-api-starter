@@ -13,7 +13,8 @@ const { requireAuth } = require('../../shared/middleware/rbac.middleware');
 router.get('/stats', requireAuth, (req, res) => {
   try {
     // Only allow admins to view stats
-    if (req.user.role !== 'admin') {
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+    if (!isAdmin) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -34,7 +35,8 @@ router.get('/stats', requireAuth, (req, res) => {
 router.post('/test-broadcast', requireAuth, (req, res) => {
   try {
     // Only allow admins to test broadcasts
-    if (req.user.role !== 'admin') {
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+    if (!isAdmin) {
       return res.status(403).json({ message: 'Access denied' });
     }
 

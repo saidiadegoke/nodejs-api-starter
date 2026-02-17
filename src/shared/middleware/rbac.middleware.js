@@ -240,7 +240,7 @@ const requireOwnerOrAdmin = (paramName = 'user_id') => {
 
     const resourceUserId = req.params[paramName];
     const isOwner = req.user.user_id === resourceUserId;
-    const isAdmin = await hasRole(req.user.user_id, 'admin');
+    const isAdmin = await hasRole(req.user.user_id, 'admin') || await hasRole(req.user.user_id, 'super_admin');
 
     if (!isOwner && !isAdmin) {
       return sendError(

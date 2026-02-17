@@ -5,7 +5,7 @@ const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.mi
 
 // All routes require authentication and admin role
 router.use(requireAuth);
-router.use((req, res, next) => requireRole(['admin'])(req, res, next));
+router.use((req, res, next) => requireRole('admin', 'super_admin')(req, res, next));
 
 // Get all plan configurations
 router.get('/', PlanConfigController.getAll);

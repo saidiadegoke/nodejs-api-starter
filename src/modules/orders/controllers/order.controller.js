@@ -129,19 +129,18 @@ class OrderController {
   }
 
   /**
-   * List orders
+   * List orders (permission-based: orders.view; returns all orders user is involved in)
    */
   static async listOrders(req, res) {
     try {
       const userId = req.user.user_id;
-      const role = req.user.roles[0] || 'customer';
       const { status, page = 1, limit = 20 } = req.query;
-      
+
       const filters = {};
       if (status) filters.status = status;
 
-      const { orders, total } = await OrderService.listOrders(userId, role, filters, page, limit);
-      
+      const { orders, total } = await OrderService.listOrders(userId, filters, page, limit);
+
       sendPaginated(res, { orders }, page, limit, total);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
@@ -149,28 +148,26 @@ class OrderController {
   }
 
   /**
-   * Get available orders (service providers)
+   * Get available orders (permission-based: orders.accept; pending_shopper and pending_dispatcher)
    */
   static async getAvailableOrders(req, res) {
     try {
-      const role = req.user.roles[0];
       const { latitude, longitude, radius = 5, limit = 20 } = req.query;
-      
+
       if (!latitude || !longitude) {
         return sendError(res, 'Latitude and longitude are required', BAD_REQUEST);
       }
 
       const orders = await OrderService.getAvailableOrders(
-        role, 
-        parseFloat(latitude), 
-        parseFloat(longitude), 
+        parseFloat(latitude),
+        parseFloat(longitude),
         parseFloat(radius),
         parseInt(limit)
       );
-      
-      sendSuccess(res, { 
+
+      sendSuccess(res, {
         orders,
-        total_available: orders.length 
+        total_available: orders.length
       }, 'Available orders retrieved successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
@@ -178,22 +175,22 @@ class OrderController {
   }
 
   /**
-   * Accept order
+   * Accept order (permission-based: orders.accept; assigned as shopper or dispatcher by order status)
    */
   static async acceptOrder(req, res) {
     try {
       const userId = req.user.user_id;
-      const role = req.user.roles[0];
       const orderId = req.params.order_id;
-      
-      await OrderService.acceptOrder(orderId, userId, role);
-      
+
+      const { assignedAs } = await OrderService.acceptOrder(orderId, userId);
+
+      const status = assignedAs === 'shopper' ? 'shopper_assigned' : 'dispatcher_assigned';
       sendSuccess(res, {
         order_id: orderId,
-        status: role === 'shopper' ? 'shopper_assigned' : 'dispatcher_assigned',
-        your_role: role,
+        status,
+        assigned_as: assignedAs,
         assigned_at: new Date().toISOString()
-      }, `Order accepted. Please proceed.`, OK);
+      }, 'Order accepted. Please proceed.', OK);
     } catch (error) {
       if (error.message.includes('not available')) {
         return sendError(res, error.message, 409);

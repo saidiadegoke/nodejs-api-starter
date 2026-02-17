@@ -237,21 +237,21 @@ router.get('/:siteId/engine/history', requireAuth, EngineController.getVersionHi
  * Base Origin Certificate Routes (for smartstore.ng and *.smartstore.ng)
  * Must be defined BEFORE /admin/certificates/:certificateId
  */
-router.get('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.getBaseOriginCertificate);
-router.post('/admin/certificates/base-origin', requireAuth, requireRole('admin'), CertificateController.createBaseOriginCertificate);
-router.post('/admin/certificates/base-origin/upload', requireAuth, requireRole('admin'), CertificateController.uploadBaseOriginCertificate);
+router.get('/admin/certificates/base-origin', requireAuth, requireRole('admin', 'super_admin'), CertificateController.getBaseOriginCertificate);
+router.post('/admin/certificates/base-origin', requireAuth, requireRole('admin', 'super_admin'), CertificateController.createBaseOriginCertificate);
+router.post('/admin/certificates/base-origin/upload', requireAuth, requireRole('admin', 'super_admin'), CertificateController.uploadBaseOriginCertificate);
 
 /**
  * Multi-Domain Certificate Routes
  */
-router.get('/admin/certificates', requireAuth, requireRole('admin'), CertificateController.getAllCertificates);
-router.get('/admin/certificates/letsencrypt', requireAuth, requireRole('admin'), CertificateController.getLetsEncryptCertificates);
-router.post('/admin/certificates/upload', requireAuth, requireRole('admin'), CertificateController.uploadMultiDomainCertificate);
-router.get('/admin/certificates/:certificateId', requireAuth, requireRole('admin'), CertificateController.getCertificateById);
+router.get('/admin/certificates', requireAuth, requireRole('admin', 'super_admin'), CertificateController.getAllCertificates);
+router.get('/admin/certificates/letsencrypt', requireAuth, requireRole('admin', 'super_admin'), CertificateController.getLetsEncryptCertificates);
+router.post('/admin/certificates/upload', requireAuth, requireRole('admin', 'super_admin'), CertificateController.uploadMultiDomainCertificate);
+router.get('/admin/certificates/:certificateId', requireAuth, requireRole('admin', 'super_admin'), CertificateController.getCertificateById);
 router.post(
   '/admin/certificates',
   requireAuth,
-  requireRole('admin'),
+  requireRole('admin', 'super_admin'),
   [
     body('domains').optional().isArray().withMessage('Domains must be an array'),
     validate,
@@ -261,7 +261,7 @@ router.post(
 router.post(
   '/admin/certificates/:certificateId/domains',
   requireAuth,
-  requireRole('admin'),
+  requireRole('admin', 'super_admin'),
   [
     body('customDomainId').notEmpty().isInt().withMessage('customDomainId is required'),
     body('domain').notEmpty().isString().withMessage('domain is required'),
@@ -272,14 +272,14 @@ router.post(
 router.delete(
   '/admin/certificates/:certificateId/domains',
   requireAuth,
-  requireRole('admin'),
+  requireRole('admin', 'super_admin'),
   [
     body('customDomainId').optional().isInt().withMessage('customDomainId must be an integer'),
     validate,
   ],
   CertificateController.removeDomain
 );
-router.delete('/admin/certificates/:certificateId', requireAuth, requireRole('admin'), CertificateController.deleteCertificate);
+router.delete('/admin/certificates/:certificateId', requireAuth, requireRole('admin', 'super_admin'), CertificateController.deleteCertificate);
 
 module.exports = router;
 

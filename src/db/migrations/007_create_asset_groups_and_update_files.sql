@@ -441,3 +441,69 @@ ALTER TABLE site_customization
   ADD COLUMN IF NOT EXISTS email_settings JSONB NULL;
 
 COMMENT ON COLUMN site_customization.email_settings IS 'Per-site options: send_order_confirmation_to_customer (bool), send_receipt_to_customer (bool). Default true when unset.';
+
+-- ============================================================================
+-- REFERRAL MODULE (Phase 1: Foundation)
+-- referral_codes: one code per user for sharing
+-- referrals: one row per referred signup (referrer -> referred)
+-- ============================================================================
+
+-- Referral codes (one per user; used in share link ?ref=CODE)
+CREATE TABLE IF NOT EXISTS referral_codes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code VARCHAR(32) NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_codes_user_id ON referral_codes(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_codes_code ON referral_codes(code);
+
+-- Referrals (one row per referred user; first referrer wins)
+CREATE TABLE IF NOT EXISTS referrals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  referrer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referred_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referral_code_id UUID REFERENCES referral_codes(id) ON DELETE SET NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'signed_up',
+  milestone_reached_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_referrals_referred_id UNIQUE (referred_id),
+  CONSTRAINT chk_referrals_status CHECK (status IN ('signed_up', 'milestone_reached', 'rewarded')),
+  CONSTRAINT chk_referrals_no_self_referral CHECK (referrer_id != referred_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_referrals_referrer_id ON referrals(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_referrals_referred_id ON referrals(referred_id);
+CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
+
+COMMENT ON TABLE referral_codes IS 'One referral code per user for share links (?ref=CODE)';
+COMMENT ON TABLE referrals IS 'Attribution: referrer_id referred referred_id at signup; status tracks milestone';
+
+-- ============================================================================
+-- REFERRAL REWARDS (Phase 2: Milestone rewards)
+-- One row per reward granted when a referred user completes a milestone
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS referral_rewards (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  referral_id UUID NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+  referrer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  milestone_type VARCHAR(50) NOT NULL,
+  reward_type VARCHAR(50) NOT NULL DEFAULT 'credit',
+  reward_value DECIMAL(10, 2) NOT NULL,
+  currency VARCHAR(3) DEFAULT 'NGN',
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  paid_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT chk_referral_rewards_status CHECK (status IN ('pending', 'paid', 'cancelled')),
+  CONSTRAINT chk_referral_rewards_reward_type CHECK (reward_type IN ('credit', 'discount_percent', 'cash', 'free_months'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer_id ON referral_rewards(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_referral_id ON referral_rewards(referral_id);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_status ON referral_rewards(status);
+
+COMMENT ON TABLE referral_rewards IS 'Reward granted to referrer when referred user completes milestone (e.g. first_paid_plan)';

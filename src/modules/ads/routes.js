@@ -27,29 +27,29 @@ router.post('/track/click', AdsController.recordClick);
 // ========== Admin Routes (Requires authentication + admin role) ==========
 
 // Ad Placements Management
-router.get('/placements', authenticate, requireRole('admin'), AdsController.getAllPlacements);
-router.get('/placements/location/:locationType', authenticate, requireRole('admin'), AdsController.getEnabledPlacements);
-router.put('/placements/:placementKey', authenticate, requireRole('admin'), AdsController.updatePlacement);
-router.patch('/placements/:placementKey/toggle', authenticate, requireRole('admin'), AdsController.togglePlacement);
+router.get('/placements', authenticate, requireRole('admin', 'super_admin'), AdsController.getAllPlacements);
+router.get('/placements/location/:locationType', authenticate, requireRole('admin', 'super_admin'), AdsController.getEnabledPlacements);
+router.put('/placements/:placementKey', authenticate, requireRole('admin', 'super_admin'), AdsController.updatePlacement);
+router.patch('/placements/:placementKey/toggle', authenticate, requireRole('admin', 'super_admin'), AdsController.togglePlacement);
 
 // Custom Ads Management
-router.get('/custom', authenticate, requireRole('admin'), AdsController.getAllCustomAds);
-router.get('/custom/ad/:adId', authenticate, requireRole('admin'), AdsController.getCustomAdById);
-router.post('/custom', authenticate, requireRole('admin'), AdsController.createCustomAd);
-router.put('/custom/:adId', authenticate, requireRole('admin'), AdsController.updateCustomAd);
-router.patch('/custom/:adId/toggle', authenticate, requireRole('admin'), AdsController.toggleCustomAd);
-router.delete('/custom/:adId', authenticate, requireRole('admin'), AdsController.deleteCustomAd);
+router.get('/custom', authenticate, requireRole('admin', 'super_admin'), AdsController.getAllCustomAds);
+router.get('/custom/ad/:adId', authenticate, requireRole('admin', 'super_admin'), AdsController.getCustomAdById);
+router.post('/custom', authenticate, requireRole('admin', 'super_admin'), AdsController.createCustomAd);
+router.put('/custom/:adId', authenticate, requireRole('admin', 'super_admin'), AdsController.updateCustomAd);
+router.patch('/custom/:adId/toggle', authenticate, requireRole('admin', 'super_admin'), AdsController.toggleCustomAd);
+router.delete('/custom/:adId', authenticate, requireRole('admin', 'super_admin'), AdsController.deleteCustomAd);
 
 // Analytics
-router.get('/analytics/overall', authenticate, requireRole('admin'), AdsController.getOverallAnalytics);
-router.get('/analytics/comprehensive', authenticate, requireRole('admin'), AdsController.getComprehensiveAnalytics);
-router.get('/analytics/ad/:adId', authenticate, requireRole('admin'), AdsController.getAdAnalytics);
-router.get('/analytics/placement/:placementKey', authenticate, requireRole('admin'), AdsController.getPlacementAnalytics);
+router.get('/analytics/overall', authenticate, requireRole('admin', 'super_admin'), AdsController.getOverallAnalytics);
+router.get('/analytics/comprehensive', authenticate, requireRole('admin', 'super_admin'), AdsController.getComprehensiveAnalytics);
+router.get('/analytics/ad/:adId', authenticate, requireRole('admin', 'super_admin'), AdsController.getAdAnalytics);
+router.get('/analytics/placement/:placementKey', authenticate, requireRole('admin', 'super_admin'), AdsController.getPlacementAnalytics);
 
 // AdSense Configuration
-router.get('/adsense/:placementKey', authenticate, requireRole('admin'), AdsController.getAdSenseConfig);
-router.post('/adsense', authenticate, requireRole('admin'), AdsController.upsertAdSenseConfig);
-router.put('/adsense/:placementKey', authenticate, requireRole('admin'), AdsController.upsertAdSenseConfig);
-router.delete('/adsense/:placementKey', authenticate, requireRole('admin'), AdsController.deleteAdSenseConfig);
+router.get('/adsense/:placementKey', authenticate, requireRole('admin', 'super_admin'), AdsController.getAdSenseConfig);
+router.post('/adsense', authenticate, requireRole('admin', 'super_admin'), AdsController.upsertAdSenseConfig);
+router.put('/adsense/:placementKey', authenticate, requireRole('admin', 'super_admin'), AdsController.upsertAdSenseConfig);
+router.delete('/adsense/:placementKey', authenticate, requireRole('admin', 'super_admin'), AdsController.deleteAdSenseConfig);
 
 module.exports = router;
