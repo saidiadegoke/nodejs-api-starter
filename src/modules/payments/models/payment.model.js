@@ -272,10 +272,9 @@ class Payment {
     let query = `
       SELECT 
         p.*,
-        c.name as campaign_name,
-        c.description as campaign_description
+        NULL::text as campaign_name,
+        NULL::text as campaign_description
       FROM payments p
-      LEFT JOIN campaigns c ON p.campaign_id = c.id
       WHERE p.campaign_id = $1
     `;
     const values = [campaignId];
@@ -378,14 +377,13 @@ class Payment {
     const countResult = await pool.query(countQuery, values);
     const total = parseInt(countResult.rows[0].total);
 
-    // Get paginated results with campaign names
+    // Get paginated results (no campaigns table in SmartStore)
     const dataQuery = `
       SELECT 
         p.*,
-        c.name as campaign_name,
-        c.description as campaign_description
+        NULL::text as campaign_name,
+        NULL::text as campaign_description
       FROM payments p
-      LEFT JOIN campaigns c ON p.campaign_id = c.id
       ${whereClause}
       ORDER BY p.created_at DESC 
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -487,7 +485,7 @@ class Payment {
     }
   }
 
-  // Get recent payments for dashboard
+  // Get recent payments for dashboard (no campaigns table in SmartStore)
   async getRecentPayments(limit = 5) {
     const query = `
       SELECT 
@@ -502,11 +500,10 @@ class Payment {
         COALESCE(u.first_name, p.anonymous_donor_first_name) as donor_first_name,
         COALESCE(u.last_name, p.anonymous_donor_last_name) as donor_last_name,
         COALESCE(u.email, p.anonymous_donor_email) as donor_email,
-        c.name as campaign_name,
-        c.slug as campaign_slug
+        NULL::text as campaign_name,
+        NULL::text as campaign_slug
       FROM payments p
       LEFT JOIN users u ON p.donor_id = u.id
-      LEFT JOIN campaigns c ON p.campaign_id = c.id
       WHERE p.status = 'completed'
       ORDER BY p.created_at DESC
       LIMIT $1
@@ -570,16 +567,15 @@ class Payment {
     }
   }
 
-  // Find payment by reference (payment_id)
+  // Find payment by reference (payment_id) (no campaigns table in SmartStore)
   async findByReference(reference) {
     try {
       const query = `
         SELECT 
           p.*,
-          c.name as campaign_name,
-          c.description as campaign_description
+          NULL::text as campaign_name,
+          NULL::text as campaign_description
         FROM payments p
-        LEFT JOIN campaigns c ON p.campaign_id = c.id
         WHERE p.payment_id = $1
       `;
       

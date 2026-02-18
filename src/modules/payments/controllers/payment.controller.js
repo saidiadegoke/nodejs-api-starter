@@ -617,8 +617,6 @@ class PaymentController {
 
   async updatePayment(req, res) {
     try {
-      
-
       const { id } = req.params;
       const updateData = req.body;
 
@@ -630,7 +628,23 @@ class PaymentController {
         });
       }
 
-      const updatedPayment = await this.paymentService.paymentModel.updateStatus(id, updateData.status, updateData);
+      const additionalData = { ...updateData };
+      if (updateData.status === 'completed') {
+        additionalData.paid_at = additionalData.paid_at || new Date();
+      }
+
+      const updatedPayment = await this.paymentService.paymentModel.updateStatus(id, updateData.status, additionalData);
+
+      // When admin approves direct transfer (status -> completed), activate plan if linked to a subscription
+      if (updateData.status === 'completed' && payment.subscription_id) {
+        try {
+          const SubscriptionService = require('../services/subscription.service');
+          await SubscriptionService.renewSubscription(payment.subscription_id);
+        } catch (subErr) {
+          console.error('[Payment] Admin approve: subscription renewal failed:', subErr.message);
+          // Still return success for the payment update; subscription can be fixed separately
+        }
+      }
 
       res.json({
         success: true,
@@ -646,11 +660,91 @@ class PaymentController {
     }
   }
 
+  // Admin: get payment by id (full details, no ownership check)
+  async getPaymentAdmin(req, res) {
+    try {
+      const { id } = req.params;
+      const payment = await this.paymentService.getPaymentById(id);
+      if (!payment) {
+        return res.status(404).json({ success: false, message: 'Payment not found' });
+      }
+      res.json({ success: true, data: payment });
+    } catch (error) {
+      console.error('Get payment admin error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Error retrieving payment'
+      });
+    }
+  }
+
+  // Admin: requery payment with provider (Paystack/Flutterwave) to update status
+  async requeryPayment(req, res) {
+    try {
+      const { id } = req.params;
+      const payment = await this.paymentService.paymentModel.findById(id);
+      if (!payment) {
+        return res.status(404).json({ success: false, message: 'Payment not found' });
+      }
+      if (payment.payment_method === 'direct_transfer') {
+        return res.status(400).json({
+          success: false,
+          message: 'Use Approve for direct transfer payments instead of Requery'
+        });
+      }
+
+      const reference = payment.transaction_ref || payment.payment_id;
+      let transactionId = null;
+      if (payment.payment_method === 'flutterwave' && payment.processor_response) {
+        try {
+          const pr = typeof payment.processor_response === 'string'
+            ? JSON.parse(payment.processor_response) : payment.processor_response;
+          transactionId = pr.id || pr.transaction_id || payment.transaction_ref;
+        } catch (_) {
+          transactionId = payment.transaction_ref;
+        }
+      }
+
+      const verificationResult = await this.paymentProcessorService.verifyPayment(
+        reference,
+        payment.payment_method,
+        transactionId
+      );
+
+      const isSuccess = verificationResult.success &&
+        (verificationResult.status === 'successful' || verificationResult.status === 'success');
+
+      if (isSuccess) {
+        await this.paymentService.verifyPayment(
+          payment.payment_id,
+          reference,
+          transactionId,
+          payment.payment_method
+        );
+      }
+
+      const updatedPayment = await this.paymentService.paymentModel.findById(id);
+      res.json({
+        success: true,
+        message: isSuccess ? 'Payment verified and updated' : 'Requery completed; status unchanged',
+        data: updatedPayment,
+        verification: {
+          provider_status: verificationResult.status,
+          message: verificationResult.message || verificationResult.gateway_ref
+        }
+      });
+    } catch (error) {
+      console.error('Requery payment error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Error requerying payment'
+      });
+    }
+  }
+
   // Get payment statistics
   async getPaymentStats(req, res) {
     try {
-      
-
       const { start_date, end_date, status, type } = req.query;
       const filters = { start_date, end_date, status, type };
 
@@ -678,12 +772,9 @@ class PaymentController {
       // Get recent payments
       const recentPayments = await this.paymentService.getRecentPayments(5);
       
-      // Get campaign stats
-      const Campaign = require('../models/campaign.model');
-      const campaignsResult = await Campaign.findAll({});
-      const campaigns = campaignsResult.campaigns || [];
-      const activeCampaigns = campaigns.filter(c => c.status === 'active').length;
-      const totalCampaigns = campaigns.length;
+      // Campaign stats (SmartStore has no campaigns table; use zeros)
+      const totalCampaigns = 0;
+      const activeCampaigns = 0;
 
       // Calculate monthly goal and progress (example logic, adjust as needed)
       const monthlyGoal = 500000; // You can make this dynamic if needed

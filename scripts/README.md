@@ -1,4 +1,43 @@
-# RBAC Management Scripts
+# SmartStore Scripts
+
+## Data Migration Script (`migrate-data.js`)
+
+Idempotent script to copy selected SmartStore data from a **source** database to a **destination** database.
+
+**Data copied:** users, profiles, sites, custom_domains, templates, site_templates, early_adopters, ssl_certificates, ssl_certificate_domains.
+
+**DB config format** (same for both source and destination):
+
+```env
+DB_HOST=localhost
+DB_PORT=5437
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=smartstore_db
+```
+
+**Usage:**
+
+```bash
+# Source from default .env; set destination explicitly
+DEST_DB_HOST=host2 DEST_DB_PORT=5438 DEST_DB_USER=postgres DEST_DB_PASSWORD=postgres DEST_DB_NAME=smartstore_db \
+  node scripts/migrate-data.js
+
+# Explicit source and destination
+SOURCE_DB_HOST=... SOURCE_DB_PORT=... SOURCE_DB_USER=... SOURCE_DB_PASSWORD=... SOURCE_DB_NAME=... \
+DEST_DB_HOST=...   DEST_DB_PORT=...   DEST_DB_USER=...   DEST_DB_PASSWORD=...   DEST_DB_NAME=... \
+  node scripts/migrate-data.js
+
+# Using .env files
+node scripts/migrate-data.js --source-env .env.source --dest-env .env.dest
+node scripts/migrate-data.js --dest-env .env.dest   # source from default .env
+```
+
+Run `node scripts/migrate-data.js --help` for full options. Safe to run multiple times (idempotent).
+
+---
+
+## RBAC Management Scripts
 
 This directory contains CLI scripts for managing the Role-Based Access Control (RBAC) system in OpinionPulse.
 

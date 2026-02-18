@@ -28,14 +28,16 @@ router.get('/my-donations/summary', authenticate, (req, res) => paymentControlle
 router.get('/:id', authenticate, (req, res) => paymentController.getPayment(req, res));
 router.post('/:id/receipt', authenticate, (req, res) => paymentController.generateReceipt(req, res));
 
-// Admin routes
-router.get('/admin/all', authenticate, requireRole("admin"), (req, res) => paymentController.getAllPayments(req, res));
-router.get('/admin/stats', authenticate, requireRole("admin"), (req, res) => paymentController.getPaymentStats(req, res));
-router.post('/admin/:id/refund', authenticate, requireRole("admin"), validationMiddleware.validateRefundData, (req, res) => paymentController.refundPayment(req, res));
-router.put('/admin/:id', authenticate, requireRole("admin"), (req, res) => paymentController.updatePayment(req, res));
+// Admin routes (admin or super_admin)
+router.get('/admin/all', authenticate, requireRole('admin', 'super_admin'), (req, res) => paymentController.getAllPayments(req, res));
+router.get('/admin/stats', authenticate, requireRole('admin', 'super_admin'), (req, res) => paymentController.getPaymentStats(req, res));
+router.get('/admin/payment/:id', authenticate, requireRole('admin', 'super_admin'), (req, res) => paymentController.getPaymentAdmin(req, res));
+router.post('/admin/:id/requery', authenticate, requireRole('admin', 'super_admin'), (req, res) => paymentController.requeryPayment(req, res));
+router.post('/admin/:id/refund', authenticate, requireRole('admin', 'super_admin'), validationMiddleware.validateRefundData, (req, res) => paymentController.refundPayment(req, res));
+router.put('/admin/:id', authenticate, requireRole('admin', 'super_admin'), (req, res) => paymentController.updatePayment(req, res));
 
 // Admin payments summary endpoint
-router.get('/admin/summary', authenticate, requireRole("admin"), async (req, res) => {
+router.get('/admin/summary', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
   const Payment = require('../models/payment.model');
   try {
     const summary = await Payment.getSummaryStats();
