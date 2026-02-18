@@ -74,6 +74,7 @@ router.post(
 );
 router.get('/:siteId/custom-domains/:domainId/status', requireAuth, CustomDomainController.getCustomDomainStatus);
 router.post('/:siteId/custom-domains/:domainId/verify', requireAuth, CustomDomainController.verifyCustomDomain);
+router.post('/:siteId/custom-domains/:domainId/check-pointing', requireAuth, CustomDomainController.checkPointing);
 router.delete('/:siteId/custom-domains/:domainId', requireAuth, CustomDomainController.deleteCustomDomain);
 
 /**

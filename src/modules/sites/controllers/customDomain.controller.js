@@ -91,6 +91,35 @@ class CustomDomainController {
   }
 
   /**
+   * Check if domain is pointed (CNAME). Ownership must be verified first.
+   * POST /sites/:siteId/custom-domains/:domainId/check-pointing
+   */
+  static async checkPointing(req, res) {
+    try {
+      const { siteId, domainId } = req.params;
+      const result = await CustomDomainService.checkPointing(
+        domainId,
+        siteId,
+        req.user.user_id
+      );
+
+      sendSuccess(
+        res,
+        result,
+        result.traffic_verified ? 'Domain is pointing correctly' : result.message,
+        OK
+      );
+    } catch (error) {
+      const statusCode =
+        error.message === 'Site not found' || error.message === 'Custom domain not found' ? NOT_FOUND :
+        error.message === 'Unauthorized' || error.message === 'Custom domain does not belong to this site' ? UNAUTHORIZED :
+        BAD_REQUEST;
+
+      sendError(res, error.message, statusCode);
+    }
+  }
+
+  /**
    * Get custom domain status
    * GET /sites/:siteId/custom-domains/:domainId/status
    */

@@ -193,6 +193,68 @@ class CustomDomainService {
   }
 
   /**
+   * Check if domain is pointed (CNAME only). Use when ownership is already verified.
+   * Returns traffic_verified and instructions so the client can show a modal if not pointed.
+   */
+  static async checkPointing(domainId, siteId, userId) {
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) throw new Error('Site not found');
+    if (site.owner_id !== userId) throw new Error('Unauthorized');
+
+    const customDomain = await CustomDomainModel.getCustomDomainById(domainId);
+    if (!customDomain) throw new Error('Custom domain not found');
+    if (customDomain.site_id !== parseInt(siteId)) throw new Error('Custom domain does not belong to this site');
+    if (!customDomain.verified) {
+      return {
+        traffic_verified: false,
+        message: 'Verify domain ownership first (TXT record), then check pointing.',
+        expected_target: this.getCnameTarget(site.slug),
+        instructions: this.getTrafficInstructions(site.slug),
+      };
+    }
+
+    const cnameTarget = this.getCnameTarget(site.slug);
+    let trafficVerified = false;
+    try {
+      trafficVerified = await DNSVerificationService.verifyCnamePointsToTarget(customDomain.domain, cnameTarget);
+      if (trafficVerified) {
+        await CustomDomainModel.updateTrafficVerified(domainId, true);
+      }
+    } catch (cnameErr) {
+      logger.warn(`[CustomDomainService] CNAME check failed for ${customDomain.domain}:`, cnameErr.message);
+    }
+
+    if (trafficVerified) {
+      const TraefikConfigService = require('./traefikConfig.service');
+      try {
+        await CertificateManagerService.autoAssignDomain(domainId, customDomain.domain).catch(() => {});
+      } catch (_) {}
+      try {
+        const writeTest = await TraefikConfigService.testWritePermissions();
+        if (writeTest.success) {
+          const traefikResult = await TraefikConfigService.generateConfigForDomain(domainId);
+          if (traefikResult && traefikResult.usesCertResolver) {
+            await CustomDomainModel.updateSSLStatus(domainId, 'active', 'traefik');
+          }
+        }
+      } catch (traefikError) {
+        logger.error(`[CustomDomainService] Traefik config generation failed for ${customDomain.domain}:`, traefikError);
+      }
+      try {
+        await SSLService.autoProvisionSSL(domainId, customDomain.domain).catch(() => {});
+      } catch (_) {}
+      return { traffic_verified: true, message: 'Domain is pointing correctly. Setup complete.' };
+    }
+
+    return {
+      traffic_verified: false,
+      message: 'Domain is not pointing here yet. Add the CNAME record below and try again.',
+      expected_target: cnameTarget,
+      instructions: this.getTrafficInstructions(site.slug),
+    };
+  }
+
+  /**
    * Delete custom domain
    */
   static async deleteCustomDomain(domainId, siteId, userId) {
