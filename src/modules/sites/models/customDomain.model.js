@@ -89,6 +89,23 @@ class CustomDomainModel {
   }
 
   /**
+   * Update traffic (CNAME) verification status
+   */
+  static async updateTrafficVerified(domainId, trafficVerified) {
+    const result = await pool.query(
+      `UPDATE custom_domains 
+       SET traffic_verified = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING *`,
+      [!!trafficVerified, domainId]
+    );
+    if (result.rows.length === 0) {
+      throw new Error('Custom domain not found');
+    }
+    return result.rows[0];
+  }
+
+  /**
    * Update SSL status
    */
   static async updateSSLStatus(domainId, sslStatus, sslProvider = null) {

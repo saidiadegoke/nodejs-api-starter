@@ -18,7 +18,20 @@ class SSLService {
     try {
       logger.info(`[SSLService] Starting SSL provisioning for domain: ${domain} with provider preference: ${provider}`);
 
-      // Update status to provisioning
+      // With Traefik, SSL is handled automatically via Let's Encrypt (certResolver). Ensure dynamic config is written and mark active.
+      const TraefikConfigService = require('./traefikConfig.service');
+      try {
+        const traefikResult = await TraefikConfigService.generateConfigForDomain(domainId);
+        if (traefikResult && traefikResult.usesCertResolver) {
+          await CustomDomainModel.updateSSLStatus(domainId, 'active', 'traefik');
+          logger.info(`[SSLService] Traefik config written; SSL handled by Traefik/Let's Encrypt for ${domain}`);
+          return { success: true, provider: 'traefik', message: 'SSL is handled by Traefik (Let\'s Encrypt).' };
+        }
+      } catch (traefikErr) {
+        logger.warn(`[SSLService] Traefik config step failed for ${domain}:`, traefikErr.message);
+      }
+
+      // Update status to provisioning for app-level providers (Cloudflare/certbot)
       await CustomDomainModel.updateSSLStatus(domainId, 'provisioning', null);
 
       let result;

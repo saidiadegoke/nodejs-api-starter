@@ -79,7 +79,7 @@ class CustomDomainController {
         req.user.user_id
       );
 
-      sendSuccess(res, result, result.verified ? 'Domain verified successfully' : result.message, OK);
+      sendSuccess(res, result, result.message || (result.verified ? 'Domain verified successfully' : 'Verification failed'), OK);
     } catch (error) {
       const statusCode = 
         error.message === 'Site not found' || error.message === 'Custom domain not found' ? NOT_FOUND :

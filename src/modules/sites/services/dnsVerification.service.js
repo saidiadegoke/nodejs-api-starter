@@ -81,6 +81,31 @@ class DNSVerificationService {
   }
 
   /**
+   * Check if domain (or www.domain) CNAME points to the expected target (e.g. siteSlug.smartstore.ng).
+   */
+  static async verifyCnamePointsToTarget(domain, expectedTarget) {
+    const normalizedDomain = domain.toLowerCase().replace(/^www\./, '').trim();
+    const expectedLower = expectedTarget.toLowerCase().trim();
+    const hostsToCheck = [`www.${normalizedDomain}`, normalizedDomain];
+
+    for (const host of hostsToCheck) {
+      try {
+        const cnameRecords = await dns.resolveCname(host);
+        const raw = Array.isArray(cnameRecords) ? cnameRecords[0] : cnameRecords;
+        const cname = raw ? raw.toLowerCase().replace(/\.$/, '') : '';
+        if (cname && (cname === expectedLower || cname.endsWith('.' + expectedLower))) {
+          return true;
+        }
+      } catch (err) {
+        if (err.code !== 'ENOTFOUND' && err.code !== 'ENODATA') {
+          logger.warn('[DNSVerification] CNAME check failed for', host, err.message);
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Get DNS verification instructions
    */
   static getVerificationInstructions(domain, token) {

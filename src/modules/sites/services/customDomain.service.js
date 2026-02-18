@@ -125,58 +125,71 @@ class CustomDomainService {
       throw new Error('Custom domain does not belong to this site');
     }
 
-    // Verify DNS record
-    const verified = await DNSVerificationService.verifyDomainOwnership(
+    // Verify ownership (TXT)
+    const ownershipVerified = await DNSVerificationService.verifyDomainOwnership(
       customDomain.domain,
       customDomain.verification_token
     );
 
-    if (verified) {
-      // Update verification status
+    if (ownershipVerified) {
       await CustomDomainModel.updateVerificationStatus(domainId, true);
-      
-      // Automatically assign domain to certificate
+    }
+
+    // Check if domain is pointed (CNAME to our target)
+    const cnameTarget = this.getCnameTarget(site.slug);
+    let trafficVerified = false;
+    try {
+      trafficVerified = await DNSVerificationService.verifyCnamePointsToTarget(customDomain.domain, cnameTarget);
+      if (trafficVerified) {
+        await CustomDomainModel.updateTrafficVerified(domainId, true);
+      }
+    } catch (cnameErr) {
+      logger.warn(`[CustomDomainService] CNAME check failed for ${customDomain.domain}:`, cnameErr.message);
+    }
+
+    const fullyVerified = ownershipVerified && trafficVerified;
+
+    if (fullyVerified) {
+      // Both ownership and pointing verified: Traefik config first (Traefik handles SSL via Let's Encrypt automatically)
+      const TraefikConfigService = require('./traefikConfig.service');
       try {
         const certificate = await CertificateManagerService.autoAssignDomain(domainId, customDomain.domain);
         logger.info(`[CustomDomainService] Domain ${customDomain.domain} assigned to certificate ${certificate.id}`);
       } catch (certError) {
         logger.warn(`[CustomDomainService] Certificate assignment failed for ${customDomain.domain}:`, certError);
-        // Don't block verification if certificate assignment fails
       }
-      
-      // Auto-provision SSL certificate for verified domain
+      try {
+        const writeTest = await TraefikConfigService.testWritePermissions();
+        if (writeTest.success) {
+          const traefikResult = await TraefikConfigService.generateConfigForDomain(domainId);
+          if (traefikResult && traefikResult.usesCertResolver) {
+            await CustomDomainModel.updateSSLStatus(domainId, 'active', 'traefik');
+            logger.info(`[CustomDomainService] Traefik config written; SSL handled by Traefik/Let's Encrypt for ${customDomain.domain}`);
+          }
+          if (traefikResult) {
+            logger.info(`[CustomDomainService] Traefik config generated for ${customDomain.domain}`);
+          }
+        } else {
+          logger.error(`[CustomDomainService] Cannot write to Traefik config directory: ${writeTest.error}`);
+        }
+      } catch (traefikError) {
+        logger.error(`[CustomDomainService] Traefik config generation failed for ${customDomain.domain}:`, traefikError);
+      }
+      // Only run app-level SSL provisioning when not using Traefik cert resolver (e.g. Cloudflare file cert)
       try {
         await SSLService.autoProvisionSSL(domainId, customDomain.domain);
       } catch (sslError) {
-        // Log SSL provisioning error but don't fail verification
-        // Domain is verified, SSL can be retried later
         logger.warn(`[CustomDomainService] SSL provisioning failed for ${customDomain.domain}:`, sslError);
       }
-      
-      // Generate Traefik configuration for verified domain
-      try {
-        const TraefikConfigService = require('./traefikConfig.service');
-        
-        // Test write permissions first
-        const writeTest = await TraefikConfigService.testWritePermissions();
-        if (!writeTest.success) {
-          logger.error(`[CustomDomainService] Cannot write to Traefik config directory: ${writeTest.error}`);
-          logger.error(`[CustomDomainService] Fix permissions: sudo mkdir -p ${writeTest.directory} && sudo chown -R $(whoami):docker ${writeTest.directory} && sudo chmod -R 775 ${writeTest.directory}`);
-          // Don't throw - allow verification to succeed, but log the issue
-        } else {
-          await TraefikConfigService.generateConfigForDomain(domainId);
-          logger.info(`[CustomDomainService] Traefik config generated for ${customDomain.domain}`);
-        }
-      } catch (traefikError) {
-        // Log error but don't fail verification
-        // Config can be regenerated later
-        logger.error(`[CustomDomainService] Traefik config generation failed for ${customDomain.domain}:`, traefikError);
-      }
-      
-      return { verified: true, message: 'Domain verified successfully' };
-    } else {
-      return { verified: false, message: 'DNS verification failed. Please check your DNS settings.' };
     }
+
+    if (ownershipVerified && !trafficVerified) {
+      return { verified: true, traffic_verified: false, message: 'Ownership verified. Point your domain (CNAME) and verify again to complete setup.' };
+    }
+    if (ownershipVerified && trafficVerified) {
+      return { verified: true, traffic_verified: true, message: 'Domain verified successfully.' };
+    }
+    return { verified: false, traffic_verified: false, message: 'DNS verification failed. Please check your TXT record and try again.' };
   }
 
   /**
@@ -256,6 +269,7 @@ class CustomDomainService {
       id: customDomain.id,
       domain: customDomain.domain,
       verified: customDomain.verified,
+      traffic_verified: !!customDomain.traffic_verified,
       ssl_status: customDomain.ssl_status,
       ssl_provider: customDomain.ssl_provider,
       verified_at: customDomain.verified_at,

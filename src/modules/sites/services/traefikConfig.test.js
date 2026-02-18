@@ -71,7 +71,7 @@ class TraefikConfigTest {
     };
 
     try {
-      const config = await TraefikConfigService.generateDomainConfig(testDomain, testSite);
+      const { config, useFileCert } = await TraefikConfigService.generateDomainConfig(testDomain, testSite);
       
       // Validate config structure
       if (!config.http || !config.http.routers || !config.http.services) {
@@ -83,7 +83,8 @@ class TraefikConfigTest {
       return {
         success: true,
         message: 'Config generation works correctly',
-        config: config,
+        config,
+        useFileCert,
       };
     } catch (error) {
       logger.error(`✗ Config generation test failed: ${error.message}`);

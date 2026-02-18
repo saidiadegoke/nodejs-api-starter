@@ -206,15 +206,16 @@ class TraefikConfigService {
       },
     };
 
-    return config;
+    return { config, useFileCert };
   }
 
   /**
    * Write Traefik config file for a domain
+   * @returns {{ filePath: string, usesCertResolver: boolean }}
    */
   static async writeDomainConfig(customDomain, site) {
     try {
-      const config = await this.generateDomainConfig(customDomain, site);
+      const { config, useFileCert } = await this.generateDomainConfig(customDomain, site);
       const filename = this.getConfigFilename(customDomain.domain);
       const configDir = this.getTraefikConfigDir();
       const filePath = path.join(configDir, filename);
@@ -230,7 +231,7 @@ class TraefikConfigService {
 
       logger.info(`[TraefikConfigService] Generated config for domain: ${customDomain.domain} at ${filePath}`);
 
-      return filePath;
+      return { filePath, usesCertResolver: !useFileCert };
     } catch (error) {
       logger.error(`[TraefikConfigService] Error writing config for ${customDomain.domain}:`, error);
       throw error;
@@ -292,7 +293,10 @@ class TraefikConfigService {
   }
 
   /**
-   * Generate or update Traefik config for a verified custom domain
+   * Generate or update Traefik config for a verified custom domain.
+   * Writes to TRAEFIK_DYNAMIC_CONFIG_DIR (e.g. /etc/dokploy/traefik/dynamic/) in Traefik-compatible YAML.
+   * When using certResolver (e.g. letsencrypt), Traefik will obtain/renew the certificate; no separate SSL provisioning needed.
+   * @returns {{ filePath: string, usesCertResolver: boolean } | null}
    */
   static async generateConfigForDomain(domainId) {
     try {
@@ -307,18 +311,23 @@ class TraefikConfigService {
         return null;
       }
 
+      if (customDomain.traffic_verified === false) {
+        logger.warn(`[TraefikConfigService] Domain ${customDomain.domain} traffic not verified, skipping config generation`);
+        return null;
+      }
+
       // Get site info
       const site = await SiteModel.getSiteById(customDomain.site_id);
       if (!site) {
         throw new Error(`Site with ID ${customDomain.site_id} not found`);
       }
 
-      // Generate and write config
-      const filePath = await this.writeDomainConfig(customDomain, site);
+      // Generate and write config to the configured dynamic config directory
+      const result = await this.writeDomainConfig(customDomain, site);
 
       logger.info(`[TraefikConfigService] Successfully generated Traefik config for ${customDomain.domain}`);
 
-      return filePath;
+      return result;
     } catch (error) {
       logger.error(`[TraefikConfigService] Error generating config for domain ID ${domainId}:`, error);
       throw error;
@@ -376,8 +385,8 @@ class TraefikConfigService {
             slug: customDomain.site_slug,
             name: customDomain.site_name,
           };
-          const filePath = await this.writeDomainConfig(customDomain, site);
-          results.push({ domain: customDomain.domain, success: true, filePath });
+          const writeResult = await this.writeDomainConfig(customDomain, site);
+          results.push({ domain: customDomain.domain, success: true, filePath: writeResult.filePath });
         } catch (error) {
           logger.error(`[TraefikConfigService] Failed to generate config for ${customDomain.domain}:`, error);
           results.push({ domain: customDomain.domain, success: false, error: error.message });
