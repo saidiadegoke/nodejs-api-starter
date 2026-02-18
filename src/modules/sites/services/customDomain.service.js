@@ -205,11 +205,13 @@ class CustomDomainService {
     if (!customDomain) throw new Error('Custom domain not found');
     if (customDomain.site_id !== parseInt(siteId)) throw new Error('Custom domain does not belong to this site');
     if (!customDomain.verified) {
+      const cnameTarget = this.getCnameTarget(site.slug);
+      const instructions = this.getPointingInstructionsForDomain(customDomain.domain, cnameTarget);
       return {
         traffic_verified: false,
         message: 'Verify domain ownership first (TXT record), then check pointing.',
-        expected_target: this.getCnameTarget(site.slug),
-        instructions: this.getTrafficInstructions(site.slug),
+        expected_target: cnameTarget,
+        ...instructions,
       };
     }
 
@@ -246,11 +248,105 @@ class CustomDomainService {
       return { traffic_verified: true, message: 'Domain is pointing correctly. Setup complete.' };
     }
 
+    const instructions = this.getPointingInstructionsForDomain(customDomain.domain, cnameTarget);
     return {
       traffic_verified: false,
-      message: 'Domain is not pointing here yet. Add the CNAME record below and try again.',
+      message: 'Domain is not pointing here yet. Follow the steps below for your domain, then check again.',
       expected_target: cnameTarget,
-      instructions: this.getTrafficInstructions(site.slug),
+      ...instructions,
+    };
+  }
+
+  /**
+   * Suggest CNAME host (name) for the given domain.
+   * e.g. testapp.morgengreen.cloud → "testapp"; www.example.com → "www"; example.com (apex) → "www"
+   */
+  static getSuggestedCnameHost(domain) {
+    const normalized = domain.toLowerCase().replace(/^www\./, '').trim();
+    const parts = normalized.split('.');
+    if (parts.length > 2) {
+      return parts[0];
+    }
+    return 'www';
+  }
+
+  /**
+   * True if domain is apex/root (e.g. example.com). No subdomain.
+   */
+  static isApexDomain(domain) {
+    const normalized = domain.toLowerCase().replace(/^www\./, '').trim();
+    const parts = normalized.split('.');
+    return parts.length <= 2;
+  }
+
+  /**
+   * Get zone (parent domain) for DNS. e.g. testapp.morgengreen.cloud → morgengreen.cloud
+   */
+  static getZone(domain) {
+    const normalized = domain.toLowerCase().replace(/^www\./, '').trim();
+    const parts = normalized.split('.');
+    if (parts.length >= 2) {
+      return parts.slice(1).join('.');
+    }
+    return normalized;
+  }
+
+  /**
+   * Domain-specific pointing instructions: steps for this subdomain or options for root.
+   * Uses the actual domain name in every step.
+   */
+  static getPointingInstructionsForDomain(domain, cnameTarget) {
+    const isApex = this.isApexDomain(domain);
+    const zone = this.getZone(domain);
+    const host = this.getSuggestedCnameHost(domain);
+
+    if (isApex) {
+      return {
+        is_apex: true,
+        suggested_cname_host: 'www',
+        zone,
+        root_options: [
+          {
+            title: `Option A: CNAME for www.${domain} then redirect ${domain}`,
+            steps: [
+              `In your DNS provider, open the zone for ${domain}.`,
+              `Add a CNAME record: Name/host = "www", Value/target = ${cnameTarget}. Save.`,
+              `Set up a redirect so that visitors to ${domain} go to https://www.${domain}. (Many DNS or hosting panels have "Redirect" or "URL redirect" for the root.)`,
+              'Wait a few minutes for DNS to propagate, then click "Check again" here.',
+            ],
+          },
+          {
+            title: `Option B: ALIAS/ANAME at root (if your provider supports it)`,
+            steps: [
+              `In your DNS provider, open the zone for ${domain}.`,
+              `Add an ALIAS or ANAME record for the root (@ or ${domain}) with target ${cnameTarget}. (Supported by Cloudflare, DNSimple, and some others; not all providers offer this.)`,
+              'Save and wait for DNS to propagate, then click "Check again" here.',
+            ],
+          },
+        ],
+        what_to_look_out_for: [
+          'Use the exact target value above—no extra spaces or trailing dots.',
+          'DNS can take a few minutes to several hours to propagate.',
+        ],
+      };
+    }
+
+    return {
+      is_apex: false,
+      suggested_cname_host: host,
+      zone,
+      steps: [
+        `Log in to your DNS provider where ${zone} is managed.`,
+        'Add a new CNAME record.',
+        `Name/Host: ${host} (this makes ${domain} point to your site).`,
+        `Value/Target: ${cnameTarget}`,
+        'Save the record. TTL can be 3600 or your provider’s default.',
+        'Wait a few minutes for DNS to propagate, then click "Check again" here.',
+      ],
+      what_to_look_out_for: [
+        'Use the exact Name and Target above—no extra spaces or trailing dots in the target.',
+        'DNS can take a few minutes to several hours to propagate.',
+      ],
     };
   }
 
