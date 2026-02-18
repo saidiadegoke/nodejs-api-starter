@@ -68,7 +68,9 @@ services:
       # Use bind mount for SSL certificates so Nginx on host can access them
       - /opt/smartstore/ssl:/app/ssl
       # Traefik dynamic config: API writes custom-domain YAML here; Traefik reads from same path on host.
-      # On host ensure the dir exists and is writable by the container user: sudo mkdir -p /etc/dokploy/traefik/dynamic && sudo chown -R 1000:1000 /etc/dokploy/traefik/dynamic
+      # On host, grant the API container user (uid 1001) write access so it can create .yml files:
+      #   sudo chown -R 1001:1001 /etc/dokploy/traefik/dynamic
+      # (Traefik runs as root and can still write; the API runs as apiuser/1001.)
       - /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic
     restart: unless-stopped
     healthcheck:
