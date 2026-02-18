@@ -62,13 +62,12 @@ class TraefikConfigService {
   }
 
   /**
-   * Generate Traefik config filename for a domain
-   * Sanitizes domain name for use as filename
+   * Generate Traefik config filename for a domain.
+   * Filename is the custom domain + .yml (e.g. testapp.morgengreen.cloud.yml) so it's unique and easy to regenerate by name.
    */
   static getConfigFilename(domain) {
-    // Replace dots and special chars with hyphens, lowercase
-    const sanitized = domain.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    return `custom-domain-${sanitized}.yml`;
+    const safe = domain.toLowerCase().trim().replace(/[^a-z0-9.-]/g, '');
+    return `${safe || 'domain'}.yml`;
   }
 
   /**
@@ -293,40 +292,27 @@ class TraefikConfigService {
   }
 
   /**
-   * Generate or update Traefik config for a verified custom domain.
-   * Writes to TRAEFIK_DYNAMIC_CONFIG_DIR (e.g. /etc/dokploy/traefik/dynamic/) in Traefik-compatible YAML.
-   * When using certResolver (e.g. letsencrypt), Traefik will obtain/renew the certificate; no separate SSL provisioning needed.
+   * Generate or update Traefik config for a custom domain.
+   * Writes to TRAEFIK_DYNAMIC_CONFIG_DIR (e.g. /etc/dokploy/traefik/dynamic/) so Traefik routes
+   * Host(custom-domain) to the app. Call this when the domain is added (or anytime) so that once
+   * DNS points here, the server already has the route and does not return 404.
+   * When using certResolver (e.g. letsencrypt), Traefik will obtain/renew the certificate.
    * @returns {{ filePath: string, usesCertResolver: boolean } | null}
    */
   static async generateConfigForDomain(domainId) {
     try {
-      // Get custom domain with site info
       const customDomain = await CustomDomainModel.getCustomDomainById(domainId);
       if (!customDomain) {
         throw new Error(`Custom domain with ID ${domainId} not found`);
       }
 
-      if (!customDomain.verified) {
-        logger.warn(`[TraefikConfigService] Domain ${customDomain.domain} is not verified, skipping config generation`);
-        return null;
-      }
-
-      if (customDomain.traffic_verified === false) {
-        logger.warn(`[TraefikConfigService] Domain ${customDomain.domain} traffic not verified, skipping config generation`);
-        return null;
-      }
-
-      // Get site info
       const site = await SiteModel.getSiteById(customDomain.site_id);
       if (!site) {
         throw new Error(`Site with ID ${customDomain.site_id} not found`);
       }
 
-      // Generate and write config to the configured dynamic config directory
       const result = await this.writeDomainConfig(customDomain, site);
-
       logger.info(`[TraefikConfigService] Successfully generated Traefik config for ${customDomain.domain}`);
-
       return result;
     } catch (error) {
       logger.error(`[TraefikConfigService] Error generating config for domain ID ${domainId}:`, error);

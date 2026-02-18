@@ -71,6 +71,22 @@ class CustomDomainService {
       verificationToken
     );
 
+    // Write Traefik dynamic config so the Host route exists as soon as the domain is added.
+    // Then when the user points DNS (CNAME) to our edge, requests with Host: custom-domain will
+    // be routed to the app instead of 404. Subdomains (*.smartstore.ng) are already configured.
+    try {
+      const TraefikConfigService = require('./traefikConfig.service');
+      const writeTest = await TraefikConfigService.testWritePermissions();
+      if (writeTest.success) {
+        await TraefikConfigService.writeDomainConfig(customDomain, site);
+        logger.info(`[CustomDomainService] Traefik config written for ${customDomain.domain} (route will work once DNS points here)`);
+      } else {
+        logger.warn(`[CustomDomainService] Traefik config dir not writable: ${writeTest.error}`);
+      }
+    } catch (traefikErr) {
+      logger.warn(`[CustomDomainService] Traefik config write failed for ${domain}:`, traefikErr.message);
+    }
+
     // Get verification instructions (TXT for ownership)
     const instructions = DNSVerificationService.getVerificationInstructions(domain, verificationToken);
     // Traffic instructions: CNAME to this site's subdomain
