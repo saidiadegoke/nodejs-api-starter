@@ -90,6 +90,82 @@ class PaymentService {
     }
   }
 
+  /**
+   * Activate subscription for a completed payment (create/link/activate when subscription_id is null).
+   * Treats as subscription when payment.type === 'subscription' OR payment.payment_type === 'subscription'.
+   * Uses payment.user_id || payment.donor_id as the user.
+   * @param {Object} payment - Payment record (before or after status update)
+   * @param {string} paymentId - Payment DB id (for linking subscription_id)
+   */
+  async activateSubscriptionForCompletedPayment(payment, paymentId) {
+    const isSubscriptionPayment = payment.type === 'subscription' || payment.payment_type === 'subscription';
+    if (!isSubscriptionPayment) return;
+
+    try {
+      const SubscriptionService = require('./subscription.service');
+      const SubscriptionModel = require('../models/subscription.model');
+      const pool = require('../../../db/pool');
+
+      const metadata = payment.metadata || {};
+      const planType = metadata.plan_type;
+      const billingCycle = metadata.billing_cycle || 'monthly';
+      const currency = payment.currency || 'NGN';
+      const userId = payment.user_id || payment.donor_id;
+
+      if (!userId) {
+        console.warn('[Payment] Cannot activate subscription: No user_id/donor_id in payment', { payment_id: payment.payment_id });
+        return;
+      }
+      if (!planType) {
+        console.warn('[Payment] Cannot activate subscription: No plan_type in payment metadata', { payment_id: payment.payment_id, metadata });
+        return;
+      }
+
+      let subscription;
+
+      if (payment.subscription_id) {
+        subscription = await SubscriptionModel.findById(payment.subscription_id);
+        if (!subscription) {
+          subscription = await SubscriptionService.createSubscription(userId, planType, billingCycle, currency);
+          await pool.query(
+            'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+            [subscription.id, paymentId]
+          );
+        }
+      } else {
+        const existingSubscription = await SubscriptionModel.getActiveSubscription(userId);
+        if (existingSubscription) {
+          subscription = await SubscriptionService.upgradeSubscription(existingSubscription.id, planType, userId);
+        } else {
+          subscription = await SubscriptionService.createSubscription(userId, planType, billingCycle, currency);
+        }
+        await pool.query(
+          'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+          [subscription.id, paymentId]
+        );
+      }
+
+      if (subscription && subscription.status !== 'active') {
+        await SubscriptionModel.updateStatus(subscription.id, 'active');
+        console.log('[Payment] Subscription activated:', { subscription_id: subscription.id, plan_type: planType, user_id: userId });
+      }
+
+      if (subscription && planType && planType !== 'free' && userId) {
+        try {
+          const ReferralService = require('../../referrals/services/referral.service');
+          await ReferralService.recordMilestone(userId, 'first_paid_plan');
+        } catch (refErr) {
+          console.warn('[Payment] Referral milestone failed (non-critical):', refErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('[Payment] activateSubscriptionForCompletedPayment failed (non-critical):', {
+        error: err.message,
+        payment_id: payment.payment_id
+      });
+    }
+  }
+
   // Verify payment completion
   async verifyPayment(paymentId, transactionRef, transactionId, processor) {
     try {
@@ -110,140 +186,17 @@ class PaymentService {
       }
 
       // Update donor totals only for donation/campaign payments (not for subscription payments)
-      // Subscription payments should not update donor records
       const isDonationPayment = payment.type === 'donation' || payment.type === 'campaign' || payment.type === 'dues';
       if (payment.donor_id && isDonationPayment) {
         try {
           await this.donorModel.updateDonationTotals(payment.donor_id, payment.amount, true);
           await this.donorModel.setFirstDonationDate(payment.donor_id);
         } catch (donorError) {
-          // Don't fail payment verification if donor update fails (donors table might not exist)
-          // Log the error but continue with payment verification
           console.warn('[Payment] Failed to update donor totals (non-critical):', donorError.message);
         }
       }
 
-      // For subscription payments, handle subscription activation
-      if (payment.type === 'subscription' || payment.payment_type === 'subscription') {
-        try {
-          const SubscriptionService = require('./subscription.service');
-          const SubscriptionModel = require('../models/subscription.model');
-          
-          // Get plan details from payment metadata
-          const metadata = payment.metadata || {};
-          const planType = metadata.plan_type;
-          const billingCycle = metadata.billing_cycle || 'monthly';
-          const currency = payment.currency || 'NGN';
-          const userId = payment.user_id || payment.donor_id;
-          
-          if (!userId) {
-            console.warn('[Payment] Cannot activate subscription: No user_id found in payment', {
-              payment_id: payment.payment_id
-            });
-          } else if (!planType) {
-            console.warn('[Payment] Cannot activate subscription: No plan_type in payment metadata', {
-              payment_id: payment.payment_id,
-              metadata: metadata
-            });
-          } else {
-            let subscription;
-            
-            // If payment already has a subscription_id, use it
-            if (payment.subscription_id) {
-              subscription = await SubscriptionModel.findById(payment.subscription_id);
-              
-              if (!subscription) {
-                console.warn('[Payment] Subscription ID in payment not found, creating new subscription', {
-                  subscription_id: payment.subscription_id,
-                  payment_id: payment.payment_id
-                });
-                // Subscription doesn't exist, create new one
-                subscription = await SubscriptionService.createSubscription(
-                  userId,
-                  planType,
-                  billingCycle,
-                  currency
-                );
-                
-                // Link payment to subscription
-                const pool = require('../../../db/pool');
-                await pool.query(
-                  'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-                  [subscription.id, updatedPayment.id]
-                );
-              }
-            } else {
-              // Check if user has an existing subscription
-              const existingSubscription = await SubscriptionModel.getActiveSubscription(userId);
-              
-              if (existingSubscription) {
-                // Upgrade existing subscription
-                subscription = await SubscriptionService.upgradeSubscription(
-                  existingSubscription.id,
-                  planType,
-                  userId
-                );
-                
-                // Link payment to subscription
-                const pool = require('../../../db/pool');
-                await pool.query(
-                  'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-                  [subscription.id, updatedPayment.id]
-                );
-              } else {
-                // Create new subscription
-                subscription = await SubscriptionService.createSubscription(
-                  userId,
-                  planType,
-                  billingCycle,
-                  currency
-                );
-                
-                // Link payment to subscription
-                const pool = require('../../../db/pool');
-                await pool.query(
-                  'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-                  [subscription.id, updatedPayment.id]
-                );
-              }
-            }
-            
-            // Activate subscription (if not already active)
-            if (subscription && subscription.status !== 'active') {
-              await SubscriptionModel.updateStatus(subscription.id, 'active');
-              console.log('[Payment] Subscription activated:', {
-                subscription_id: subscription.id,
-                plan_type: planType,
-                user_id: userId
-              });
-            } else if (subscription && subscription.status === 'active') {
-              console.log('[Payment] Subscription already active:', {
-                subscription_id: subscription.id,
-                plan_type: planType,
-                user_id: userId
-              });
-            }
-
-            // Referral milestone: when referred user completes first paid plan, reward referrer
-            if (subscription && planType && planType !== 'free' && userId) {
-              try {
-                const ReferralService = require('../../referrals/services/referral.service');
-                await ReferralService.recordMilestone(userId, 'first_paid_plan');
-              } catch (refErr) {
-                console.warn('[Payment] Referral milestone failed (non-critical):', refErr.message);
-              }
-            }
-          }
-        } catch (subscriptionError) {
-          // Don't fail payment verification if subscription activation fails
-          // Log the error but continue
-          console.error('[Payment] Failed to activate subscription (non-critical):', {
-            error: subscriptionError.message,
-            stack: subscriptionError.stack,
-            payment_id: payment.payment_id
-          });
-        }
-      }
+      await this.activateSubscriptionForCompletedPayment(payment, updatedPayment.id);
 
       // Merchandise: send order confirmation & receipt email to customer (non-blocking)
       if (payment.type === 'merchandise' || payment.payment_type === 'merchandise') {

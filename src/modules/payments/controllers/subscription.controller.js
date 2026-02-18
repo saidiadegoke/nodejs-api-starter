@@ -12,12 +12,19 @@ class SubscriptionController {
   /**
    * Get current subscription for user
    * GET /subscriptions/current
+   * Disable caching so clients always get the latest subscription (avoid 304 / stale data).
    */
   static async getCurrentSubscription(req, res) {
     try {
-      const userId = req.user.user_id;
+      const userId = req.user.user_id || req.user.id;
+      if (!userId) {
+        return sendError(res, 'User not identified', BAD_REQUEST);
+      }
       const subscription = await SubscriptionService.getCurrentSubscription(userId);
-      
+
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       sendSuccess(res, subscription, 'Subscription retrieved successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);

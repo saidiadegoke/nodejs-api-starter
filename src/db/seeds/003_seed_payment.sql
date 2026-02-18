@@ -1,5 +1,5 @@
 -- ============================================================================
--- Payment seed: gateways/providers (Paystack, Direct Transfer) + bank account
+-- Payment + subscription seed: payment methods, bank account, plan_configs
 -- Idempotent: ON CONFLICT upserts so safe to run repeatedly.
 -- ============================================================================
 
@@ -93,3 +93,102 @@ ON CONFLICT (account_number) DO UPDATE SET
   account_name = EXCLUDED.account_name,
   is_active = EXCLUDED.is_active,
   updated_at = EXCLUDED.updated_at;
+
+-- ==================== PLAN CONFIGS (subscription plans) ====================
+-- free, small_scale, medium_scale, large_scale. Requires plan_configs table (migration 006).
+
+INSERT INTO plan_configs (plan_type, plan_name, description, prices, default_currency, limits, features, display_order)
+VALUES
+  (
+    'free',
+    'Free',
+    'Perfect for small businesses, portfolios, or users testing the platform',
+    '{
+      "NGN": { "monthly": 0, "yearly": 0 },
+      "USD": { "monthly": 0, "yearly": 0 },
+      "EUR": { "monthly": 0, "yearly": 0 },
+      "GBP": { "monthly": 0, "yearly": 0 }
+    }'::jsonb,
+    'NGN',
+    '{
+      "pages": 5,
+      "custom_domains": 0,
+      "sites": 1,
+      "storage": 100,
+      "bandwidth": 1000
+    }'::jsonb,
+    '["basic_support", "default_templates"]'::jsonb,
+    1
+  ),
+  (
+    'small_scale',
+    'Small Scale',
+    'Small to medium businesses needing more pages and custom branding',
+    '{
+      "NGN": { "monthly": 5000, "yearly": 40200 },
+      "USD": { "monthly": 4.50, "yearly": 36.14 },
+      "EUR": { "monthly": 4.00, "yearly": 32.12 },
+      "GBP": { "monthly": 3.50, "yearly": 28.10 }
+    }'::jsonb,
+    'NGN',
+    '{
+      "pages": 20,
+      "custom_domains": 1,
+      "sites": 3,
+      "storage": 500,
+      "bandwidth": 10000
+    }'::jsonb,
+    '["basic_support", "default_templates", "custom_domains", "priority_support"]'::jsonb,
+    2
+  ),
+  (
+    'medium_scale',
+    'Medium Scale',
+    'Growing businesses with expanding content needs',
+    '{
+      "NGN": { "monthly": 12500, "yearly": 100500 },
+      "USD": { "monthly": 12.50, "yearly": 100.38 },
+      "EUR": { "monthly": 11.50, "yearly": 92.48 },
+      "GBP": { "monthly": 10.00, "yearly": 80.34 }
+    }'::jsonb,
+    'NGN',
+    '{
+      "pages": 100,
+      "custom_domains": 5,
+      "sites": 10,
+      "storage": 5000,
+      "bandwidth": 100000
+    }'::jsonb,
+    '["basic_support", "default_templates", "custom_domains", "priority_support", "advanced_analytics"]'::jsonb,
+    3
+  ),
+  (
+    'large_scale',
+    'Large Scale',
+    'Large businesses, agencies, or enterprises with extensive content needs',
+    '{
+      "NGN": { "monthly": 40000, "yearly": 321600 },
+      "USD": { "monthly": 40.00, "yearly": 321.60 },
+      "EUR": { "monthly": 37.50, "yearly": 301.48 },
+      "GBP": { "monthly": 32.50, "yearly": 261.28 }
+    }'::jsonb,
+    'NGN',
+    '{
+      "pages": -1,
+      "custom_domains": -1,
+      "sites": -1,
+      "storage": 50000,
+      "bandwidth": 1000000
+    }'::jsonb,
+    '["basic_support", "default_templates", "custom_domains", "priority_support", "advanced_analytics", "dedicated_support", "api_access"]'::jsonb,
+    4
+  )
+ON CONFLICT (plan_type) DO UPDATE SET
+  plan_name = EXCLUDED.plan_name,
+  description = EXCLUDED.description,
+  prices = EXCLUDED.prices,
+  default_currency = EXCLUDED.default_currency,
+  limits = EXCLUDED.limits,
+  features = EXCLUDED.features,
+  display_order = EXCLUDED.display_order,
+  updated_at = CURRENT_TIMESTAMP;

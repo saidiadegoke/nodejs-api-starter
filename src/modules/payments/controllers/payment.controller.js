@@ -635,14 +635,17 @@ class PaymentController {
 
       const updatedPayment = await this.paymentService.paymentModel.updateStatus(id, updateData.status, additionalData);
 
-      // When admin approves direct transfer (status -> completed), activate plan if linked to a subscription
-      if (updateData.status === 'completed' && payment.subscription_id) {
+      // When admin approves (status -> completed): create/link/activate subscription when subscription_id is null (e.g. donor_id-only subscription payments)
+      if (updateData.status === 'completed') {
         try {
-          const SubscriptionService = require('../services/subscription.service');
-          await SubscriptionService.renewSubscription(payment.subscription_id);
+          await this.paymentService.activateSubscriptionForCompletedPayment(payment, id);
+          // If payment already had a subscription_id, activateSubscriptionForCompletedPayment handles activation; otherwise it creates and links
+          if (payment.subscription_id) {
+            const SubscriptionService = require('../services/subscription.service');
+            await SubscriptionService.renewSubscription(payment.subscription_id);
+          }
         } catch (subErr) {
-          console.error('[Payment] Admin approve: subscription renewal failed:', subErr.message);
-          // Still return success for the payment update; subscription can be fixed separately
+          console.error('[Payment] Admin approve: subscription activation/renewal failed:', subErr.message);
         }
       }
 

@@ -43,11 +43,11 @@ class SubscriptionService {
   }
 
   /**
-   * Get user's current subscription
+   * Get user's current subscription (active only; pending is not "current").
    */
   static async getCurrentSubscription(userId) {
     const subscription = await SubscriptionModel.getActiveSubscription(userId);
-    
+
     if (!subscription) {
       // Return free plan as default
       const freePlanConfig = await this.getPlanConfig('free');
@@ -235,13 +235,21 @@ class SubscriptionService {
   }
 
   /**
-   * Process subscription renewal
+   * Process subscription renewal, or activate a pending subscription (e.g. after payment approval).
+   * - If status is 'pending': activate it (set status 'active').
+   * - If status is 'active' and period has ended: extend the period.
    */
   static async renewSubscription(subscriptionId) {
     const subscription = await SubscriptionModel.findById(subscriptionId);
     
     if (!subscription) {
       throw new Error('Subscription not found');
+    }
+
+    // Pending subscription (e.g. created on subscribe, awaiting first payment): activate it
+    if (subscription.status === 'pending') {
+      const updatedSubscription = await SubscriptionModel.updateStatus(subscriptionId, 'active');
+      return updatedSubscription || subscription;
     }
 
     if (subscription.status !== 'active') {
@@ -256,7 +264,6 @@ class SubscriptionService {
 
     // TODO: Process payment via payment gateway
     // For now, just extend the period
-    
     const newPeriodEnd = new Date(subscription.current_period_end);
     if (subscription.billing_cycle === 'monthly') {
       newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 1);
