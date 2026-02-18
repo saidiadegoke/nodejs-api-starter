@@ -17,6 +17,7 @@ class Payment {
       payment_method,
       transaction_ref,
       processor_response,
+      user_id,
       donor_id,
       anonymous_donor_first_name,
       anonymous_donor_last_name,
@@ -37,18 +38,18 @@ class Payment {
     const query = `
       INSERT INTO payments (
         payment_id, amount, currency, type, status, payment_method,
-        transaction_ref, processor_response, donor_id,
+        transaction_ref, processor_response, user_id, donor_id,
         anonymous_donor_first_name, anonymous_donor_last_name,
         anonymous_donor_email, anonymous_donor_phone,
         campaign_id, purpose, metadata, user_agent, ip_address,
         source, is_recurring, recurring_interval, notes, internal_notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       RETURNING *
     `;
 
     const values = [
       payment_id, amount, currency, type, status, payment_method,
-      transaction_ref, processor_response, donor_id,
+      transaction_ref, processor_response, user_id || null, donor_id,
       anonymous_donor_first_name, anonymous_donor_last_name,
       anonymous_donor_email, anonymous_donor_phone,
       campaign_id, purpose, JSON.stringify(metadata), user_agent, ip_address,

@@ -106,13 +106,23 @@ class PaymentService {
       const SubscriptionModel = require('../models/subscription.model');
       const pool = require('../../../db/pool');
 
-      const metadata = payment.metadata || {};
+      // Normalize metadata (DB may return JSONB as object or string)
+      let metadata = payment.metadata;
+      if (typeof metadata === 'string') {
+        try {
+          metadata = JSON.parse(metadata);
+        } catch (_) {
+          metadata = {};
+        }
+      }
+      metadata = metadata || {};
       const planType = metadata.plan_type;
       const billingCycle = metadata.billing_cycle || 'monthly';
       const currency = payment.currency || 'NGN';
       const userId = payment.user_id || payment.donor_id;
+      const userIdStr = userId != null ? String(userId) : null;
 
-      if (!userId) {
+      if (!userIdStr) {
         console.warn('[Payment] Cannot activate subscription: No user_id/donor_id in payment', { payment_id: payment.payment_id });
         return;
       }
@@ -126,18 +136,18 @@ class PaymentService {
       if (payment.subscription_id) {
         subscription = await SubscriptionModel.findById(payment.subscription_id);
         if (!subscription) {
-          subscription = await SubscriptionService.createSubscription(userId, planType, billingCycle, currency);
+          subscription = await SubscriptionService.createSubscription(userIdStr, planType, billingCycle, currency);
           await pool.query(
             'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
             [subscription.id, paymentId]
           );
         }
       } else {
-        const existingSubscription = await SubscriptionModel.getActiveSubscription(userId);
+        const existingSubscription = await SubscriptionModel.getActiveSubscription(userIdStr);
         if (existingSubscription) {
-          subscription = await SubscriptionService.upgradeSubscription(existingSubscription.id, planType, userId);
+          subscription = await SubscriptionService.upgradeSubscription(existingSubscription.id, planType, userIdStr);
         } else {
-          subscription = await SubscriptionService.createSubscription(userId, planType, billingCycle, currency);
+          subscription = await SubscriptionService.createSubscription(userIdStr, planType, billingCycle, currency);
         }
         await pool.query(
           'UPDATE payments SET subscription_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
@@ -147,13 +157,13 @@ class PaymentService {
 
       if (subscription && subscription.status !== 'active') {
         await SubscriptionModel.updateStatus(subscription.id, 'active');
-        console.log('[Payment] Subscription activated:', { subscription_id: subscription.id, plan_type: planType, user_id: userId });
+        console.log('[Payment] Subscription activated:', { subscription_id: subscription.id, plan_type: planType, user_id: userIdStr });
       }
 
-      if (subscription && planType && planType !== 'free' && userId) {
+      if (subscription && planType && planType !== 'free' && userIdStr) {
         try {
           const ReferralService = require('../../referrals/services/referral.service');
-          await ReferralService.recordMilestone(userId, 'first_paid_plan');
+          await ReferralService.recordMilestone(userIdStr, 'first_paid_plan');
         } catch (refErr) {
           console.warn('[Payment] Referral milestone failed (non-critical):', refErr.message);
         }
@@ -161,6 +171,7 @@ class PaymentService {
     } catch (err) {
       console.error('[Payment] activateSubscriptionForCompletedPayment failed (non-critical):', {
         error: err.message,
+        stack: err.stack,
         payment_id: payment.payment_id
       });
     }
