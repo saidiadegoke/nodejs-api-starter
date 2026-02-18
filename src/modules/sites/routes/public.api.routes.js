@@ -72,9 +72,9 @@ router.get('/by-slug/:slug', async (req, res) => {
 
 /**
  * @route   GET /public/sites/by-domain/:domain
- * @desc    Get site by custom domain (public, no auth required)
+ * @desc    Get site by custom domain (public, no auth required). Resolves via custom_domains table.
  * @access  Public
- * @param   {string} domain - Custom domain
+ * @param   {string} domain - Custom domain (e.g. testapp.morgengreen.cloud)
  * @returns {object} Site data (only for active sites)
  */
 router.get('/by-domain/:domain', async (req, res) => {
@@ -85,20 +85,34 @@ router.get('/by-domain/:domain', async (req, res) => {
       return sendError(res, 'Domain is required', BAD_REQUEST);
     }
 
-    // Get site by custom domain
-    // Note: This assumes primary_domain field in sites table
-    const result = await pool.query(
-      'SELECT * FROM sites WHERE primary_domain = $1 AND status = $2',
-      [domain, 'active']
+    const normalizedDomain = domain.trim().toLowerCase().replace(/^www\./, '');
+
+    // Resolve site via custom_domains (any custom domain linked to a site)
+    const domainResult = await pool.query(
+      `SELECT cd.site_id FROM custom_domains cd
+       INNER JOIN sites s ON s.id = cd.site_id
+       WHERE LOWER(TRIM(cd.domain)) = $1 AND s.status = $2`,
+      [normalizedDomain, 'active']
     );
 
-    const site = result.rows[0];
+    let site = null;
+    if (domainResult.rows.length > 0) {
+      site = await SiteModel.getSiteById(domainResult.rows[0].site_id);
+    }
+
+    // Fallback: primary_domain on sites (legacy)
+    if (!site) {
+      const primaryResult = await pool.query(
+        'SELECT * FROM sites WHERE LOWER(TRIM(primary_domain)) = $1 AND status = $2',
+        [normalizedDomain, 'active']
+      );
+      site = primaryResult.rows[0];
+    }
 
     if (!site) {
       return sendError(res, `Site with domain "${domain}" not found`, NOT_FOUND);
     }
 
-    // Return minimal site data
     const publicSiteData = {
       id: site.id,
       name: site.name,
