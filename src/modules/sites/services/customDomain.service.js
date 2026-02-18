@@ -3,6 +3,7 @@ const SiteModel = require('../models/site.model');
 const DNSVerificationService = require('./dnsVerification.service');
 const SSLService = require('./ssl.service');
 const CertificateManagerService = require('./certificateManager.service');
+const { logger } = require('../../../shared/utils/logger');
 
 /** Base domain for subdomains (e.g. smartstore.ng). Used for CNAME target. */
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'smartstore.ng';
