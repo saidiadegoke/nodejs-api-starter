@@ -139,7 +139,7 @@ class TraefikConfigService {
       service: `${domain}-service`,
       entryPoints: ['web'],
       middlewares: ['redirect-to-https'],
-      priority: 10,
+      priority: 5,
     };
 
     // HTTPS router
@@ -147,8 +147,8 @@ class TraefikConfigService {
       rule: `Host(\`${domain}\`) || Host(\`${wwwDomain}\`)`,
       service: `${domain}-service`,
       entryPoints: ['websecure'],
-      middlewares: ['add-forwarded-header'],
-      priority: 10,
+      middlewares: [], //['add-forwarded-header'],
+      priority: 5,
     };
 
     // TLS configuration
@@ -181,11 +181,11 @@ class TraefikConfigService {
           },
         ],
         passHostHeader: true,
-        healthCheck: {
-          path: '/health',
-          interval: '30s',
-          timeout: '5s',
-        },
+        // healthCheck: {
+        //   path: '/health',
+        //   interval: '30s',
+        //   timeout: '5s',
+        // },
       },
     };
 
@@ -197,13 +197,13 @@ class TraefikConfigService {
       },
     };
 
-    config.http.middlewares['add-forwarded-header'] = {
-      plugin: {
-        AddForwardedHeader: {
-          by: 'Traefik',
-        },
-      },
-    };
+    // config.http.middlewares['add-forwarded-header'] = {
+    //   plugin: {
+    //     AddForwardedHeader: {
+    //       by: 'Traefik',
+    //     },
+    //   },
+    // };
 
     return { config, useFileCert };
   }

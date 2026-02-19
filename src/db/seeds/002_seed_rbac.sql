@@ -7,11 +7,9 @@
 -- Insert default system roles
 INSERT INTO roles (name, display_name, description, is_system) VALUES
 ('super_admin', 'Super Admin', 'Full system access and administration', true),
-('admin', 'Administrator', 'Administrator with full access', true),
-('school_admin', 'School Admin', 'School-level administration', true),
-('teacher', 'Teacher', 'Teacher with authoring and content access', true),
-('student', 'Student', 'Student with view access', true),
-('parent', 'Parent', 'Parent with view access to linked accounts', true)
+('admin', 'Administrator', 'Administrator with full access to manage stores', true),
+('agent', 'Agent', 'Support agent with limited management access', true),
+('user', 'User', 'Regular user with basic access', true)
 ON CONFLICT (name) DO NOTHING;
 
 -- ==================== PERMISSIONS ====================
@@ -99,58 +97,35 @@ SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'admin'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Grant dashboard permissions to school_admin (sites, templates, products, orders, referrals, settings)
+-- Grant agent: support-focused permissions (view, limited update, no delete)
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'school_admin'
-AND p.name IN (
-  'users.view', 'users.update', 'users.create',
-  'sites.view', 'sites.create', 'sites.update', 'sites.delete',
-  'templates.view', 'templates.create', 'templates.update', 'templates.delete',
-  'products.view', 'products.create', 'products.update', 'products.delete',
-  'orders.view', 'orders.create', 'orders.update', 'orders.delete', 'orders.accept',
-  'customers.view', 'customers.create', 'customers.update',
-  'deployments.view', 'deployments.create',
-  'analytics.view',
-  'authoring.create', 'authoring.bulk_create'
-)
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Grant teacher: view + authoring (content creation)
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'teacher'
+WHERE r.name = 'agent'
 AND p.name IN (
   'users.view', 'users.update',
   'sites.view', 'sites.update',
-  'templates.view', 'templates.create', 'templates.update',
-  'products.view', 'products.create', 'products.update',
-  'orders.view', 'orders.create', 'orders.update', 'orders.accept',
+  'templates.view',
+  'products.view', 'products.update',
+  'orders.view', 'orders.update', 'orders.accept',
   'customers.view', 'customers.update',
+  'certificates.view',
   'deployments.view',
-  'analytics.view',
-  'authoring.create', 'authoring.bulk_create'
+  'analytics.view'
 )
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Grant student: view + place/manage own orders (orders.create, orders.update for confirm/cancel)
+-- Grant user: basic view permissions and ability to manage own orders
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'student'
+WHERE r.name = 'user'
 AND p.name IN (
-  'sites.view', 'templates.view', 'products.view', 'orders.view', 'orders.create', 'orders.update',
+  'sites.view',
+  'templates.view',
+  'products.view',
+  'orders.view', 'orders.create', 'orders.update',
   'customers.view',
-  'deployments.view', 'analytics.view'
-)
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Grant parent: view + place/manage own orders
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'parent'
-AND p.name IN (
-  'sites.view', 'products.view', 'orders.view', 'orders.create', 'orders.update', 'customers.view',
-  'deployments.view', 'analytics.view'
+  'deployments.view',
+  'analytics.view'
 )
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
