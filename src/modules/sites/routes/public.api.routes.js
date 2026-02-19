@@ -94,12 +94,12 @@ router.get('/by-domain/:domain', async (req, res) => {
        WHERE LOWER(TRIM(cd.domain)) = $1 AND s.status = $2`,
       [normalizedDomain, 'active']
     );
-
+console.log('DR:', domainResult)
     let site = null;
     if (domainResult.rows.length > 0) {
       site = await SiteModel.getSiteById(domainResult.rows[0].site_id);
     }
-
+console.log('DR:', site)
     // Fallback: primary_domain on sites (legacy)
     if (!site) {
       const primaryResult = await pool.query(
@@ -125,6 +125,7 @@ router.get('/by-domain/:domain', async (req, res) => {
       created_at: site.created_at,
       updated_at: site.updated_at,
     };
+    console.log('Pub site:', publicSiteData)
 
     return sendSuccess(res, publicSiteData, 'Site retrieved successfully', OK);
   } catch (error) {
