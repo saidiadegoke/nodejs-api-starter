@@ -76,7 +76,7 @@ router.post('/users/me/check-permission', requireAuth, async (req, res) => {
  */
 router.get('/available-orders', 
   requireAuth,  // First authenticate
-  requireRole('teacher', 'school_admin'), // Then check role
+  requireRole('admin', 'super_admin'), // Then check role
   (req, res) => {
     // Mock response for testing
     const { latitude, longitude } = req.query;

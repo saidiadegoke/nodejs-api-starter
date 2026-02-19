@@ -30,7 +30,7 @@ describe('Subscription approval flow (integration)', () => {
       password,
       first_name: 'Sub',
       last_name: 'Tester',
-      role: 'student'
+      role: 'user'
     });
     const customerLogin = await axios.post(`${BASE_URL}/auth/login`, {
       identifier: customerEmail,

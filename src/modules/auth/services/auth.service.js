@@ -49,9 +49,9 @@ class AuthService {
     }
 
     // Role is required; user creation flow must provide it
-    const validRoles = ['super_admin', 'admin', 'school_admin', 'teacher', 'student', 'parent'];
+    const validRoles = ['super_admin', 'admin', 'agent', 'user'];
     if (!role || !validRoles.includes(role)) {
-      throw new Error('Valid role is required (super_admin, admin, school_admin, teacher, student, parent)');
+      throw new Error('Valid role is required (super_admin, admin, agent, user)');
     }
 
     // Format phone number with country code
