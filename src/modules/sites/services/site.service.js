@@ -98,6 +98,14 @@ class SiteService {
       status: siteData.status || 'draft', // Default to draft
     });
 
+    // Create default 'General' category so new products have a home by default
+    try {
+      const CategoryModel = require('./catalog/category.service');
+      await CategoryModel.create(site.id, { name: 'General', slug: 'general', description: 'Default category' });
+    } catch (e) {
+      console.warn('[SiteService] Could not create default category:', e?.message);
+    }
+
     // If template is provided during creation, apply it (does NOT activate the site)
     if (siteData.templateId) {
       try {

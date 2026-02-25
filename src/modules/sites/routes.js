@@ -35,6 +35,10 @@ router.post('/quick-setup', requireAuth, BioController.quickSetup);
 router.put('/:siteId/bio-profile', requireAuth, BioController.updateBioProfile);
 router.get('/:siteId/commerce-settings', requireAuth, BioController.getCommerceSettings);
 router.put('/:siteId/commerce-settings', requireAuth, BioController.updateCommerceSettings);
+router.get('/:siteId/payment-settings', requireAuth, BioController.getPaymentSettings);
+router.put('/:siteId/payment-settings', requireAuth, BioController.updatePaymentSettings);
+router.get('/:siteId/payouts', requireAuth, BioController.getPayouts);
+router.post('/:siteId/payouts', requireAuth, BioController.requestPayout);
 router.post(
   '/',
   requireAuth,
@@ -286,6 +290,79 @@ router.delete(
   CertificateController.removeDomain
 );
 router.delete('/admin/certificates/:certificateId', requireAuth, requireRole('admin', 'super_admin'), CertificateController.deleteCertificate);
+
+// ── Site Orders (merchandise payments scoped to a site) ──────────────────────
+// GET  /:siteId/orders              – list orders for a site (owner only)
+// PUT  /:siteId/orders/:paymentId/status      – accept (completed) or reject (cancelled)
+// PUT  /:siteId/orders/:paymentId/fulfillment – update fulfillment (SHIPPED / DELIVERED)
+
+const Payment = require('../payments/models/payment.model');
+const { sendSuccess, sendError } = require('../../shared/utils/response');
+
+router.get('/:siteId/orders', requireAuth, async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { status, page = 1, limit = 50 } = req.query;
+    // Verify site ownership
+    const SiteModel = require('./models/site.model');
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', 404);
+    if (String(site.owner_id) !== String(req.user.user_id)) return sendError(res, 'Unauthorized', 403);
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const [orders, total] = await Promise.all([
+      Payment.findBySiteId(siteId, { limit: parseInt(limit), offset, status }),
+      Payment.countBySiteId(siteId, status),
+    ]);
+    return sendSuccess(res, { orders, total, page: parseInt(page), limit: parseInt(limit) });
+  } catch (err) {
+    return sendError(res, err.message, 500);
+  }
+});
+
+router.put('/:siteId/orders/:paymentId/status', requireAuth, async (req, res) => {
+  try {
+    const { siteId, paymentId } = req.params;
+    const { status } = req.body; // 'completed' or 'cancelled'
+    if (!['completed', 'cancelled'].includes(status)) return sendError(res, 'Status must be completed or cancelled', 400);
+
+    const SiteModel = require('./models/site.model');
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', 404);
+    if (String(site.owner_id) !== String(req.user.user_id)) return sendError(res, 'Unauthorized', 403);
+
+    const additionalData = status === 'completed' ? { paid_at: new Date() } : {};
+    const updated = await Payment.updateStatus(paymentId, status, additionalData);
+    if (!updated) return sendError(res, 'Order not found', 404);
+    // When accepting, also set initial fulfillment status
+    if (status === 'completed') {
+      await Payment.updateFulfillmentStatus(paymentId, 'CONFIRMED');
+      updated.metadata = { ...(updated.metadata || {}), fulfillment_status: 'CONFIRMED' };
+    }
+    return sendSuccess(res, updated);
+  } catch (err) {
+    return sendError(res, err.message, 500);
+  }
+});
+
+router.put('/:siteId/orders/:paymentId/fulfillment', requireAuth, async (req, res) => {
+  try {
+    const { siteId, paymentId } = req.params;
+    const { fulfillment_status } = req.body; // 'SHIPPED' or 'DELIVERED'
+    if (!['SHIPPED', 'DELIVERED'].includes(fulfillment_status)) return sendError(res, 'fulfillment_status must be SHIPPED or DELIVERED', 400);
+
+    const SiteModel = require('./models/site.model');
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', 404);
+    if (String(site.owner_id) !== String(req.user.user_id)) return sendError(res, 'Unauthorized', 403);
+
+    const updated = await Payment.updateFulfillmentStatus(paymentId, fulfillment_status);
+    if (!updated) return sendError(res, 'Order not found', 404);
+    return sendSuccess(res, updated);
+  } catch (err) {
+    return sendError(res, err.message, 500);
+  }
+});
 
 module.exports = router;
 

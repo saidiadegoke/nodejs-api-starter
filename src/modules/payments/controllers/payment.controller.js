@@ -460,6 +460,28 @@ class PaymentController {
         reference = payload.tx_ref;
       }
 
+      // Handle Paystack transfer (payout) events
+      if (processor === 'paystack' && payload.event?.startsWith('transfer.')) {
+        const transferCode = payload.data?.transfer_code;
+        if (transferCode) {
+          const statusMap = {
+            'transfer.success': 'success',
+            'transfer.failed': 'failed',
+            'transfer.reversed': 'reversed',
+          };
+          const newStatus = statusMap[payload.event];
+          if (newStatus) {
+            try {
+              const SitePayoutModel = require('../../sites/models/site-payout.model');
+              await SitePayoutModel.updateStatusByReference(transferCode, newStatus);
+            } catch (e) {
+              console.error('[Webhook] Failed to update payout status:', e?.message);
+            }
+          }
+        }
+        return res.json({ success: true, message: 'Transfer webhook processed' });
+      }
+
       if (paymentId && reference) {
         // Update payment status
         await this.paymentService.verifyPayment(paymentId, reference);

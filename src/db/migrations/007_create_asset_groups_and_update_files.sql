@@ -595,3 +595,58 @@ COMMENT ON COLUMN orders.source IS 'Order source: platform, whatsapp, manual, bi
 
 ALTER TABLE orders
 ADD COLUMN IF NOT EXISTS source_site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL;
+
+-- ============================================================================
+-- SITE PAYMENT SETTINGS
+-- Per-site payment provider keys and direct-transfer bank account.
+-- SmartStore global keys (payment_methods table) are the fallback.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS site_payment_settings (
+  id                      SERIAL PRIMARY KEY,
+  site_id                 INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+
+  -- Merchant's own Paystack account (optional — falls back to platform keys)
+  paystack_public_key     TEXT,
+  paystack_secret_key     TEXT,           -- server-side only; never exposed to frontend
+  paystack_webhook_secret TEXT,           -- optional per-site webhook verification
+
+  -- Direct Transfer bank account (optional — falls back to global bank_accounts)
+  dt_bank_name            VARCHAR(100),
+  dt_account_number       VARCHAR(30),
+  dt_account_name         VARCHAR(150),
+
+  created_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT uq_site_payment_settings UNIQUE (site_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_site_payment_settings_site_id ON site_payment_settings(site_id);
+
+-- ============================================================================
+-- SITE PAYOUTS
+-- Tracks outbound transfer requests made by merchants.
+-- Supports multiple providers (Paystack, Flutterwave, etc.).
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS site_payouts (
+  id                 SERIAL PRIMARY KEY,
+  site_id            INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  provider           VARCHAR(50) NOT NULL DEFAULT 'paystack',
+    -- 'paystack' | 'flutterwave' | etc.
+  amount             DECIMAL(15,2) NOT NULL,
+  currency           VARCHAR(3)   NOT NULL DEFAULT 'NGN',
+  transfer_reference VARCHAR(255),          -- e.g. Paystack transfer_code TRF_xxx
+  recipient_code     VARCHAR(255),          -- provider recipient code (cached per request)
+  status             VARCHAR(30)  NOT NULL DEFAULT 'pending',
+    -- pending | processing | success | failed | reversed
+  reason             TEXT,
+  metadata           JSONB        NOT NULL DEFAULT '{}',
+  created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_site_payouts_site_id ON site_payouts(site_id);
+CREATE INDEX IF NOT EXISTS idx_site_payouts_status  ON site_payouts(status);
+CREATE INDEX IF NOT EXISTS idx_site_payouts_provider ON site_payouts(provider);

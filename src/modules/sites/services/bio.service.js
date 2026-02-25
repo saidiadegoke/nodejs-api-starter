@@ -498,6 +498,111 @@ class BioService {
       }
   }
 
+  // ── Payment Settings ────────────────────────────────────────────────────────
+
+  static async getPaymentSettings(siteId, userId) {
+    await SiteService.getSiteById(siteId, userId); // ownership check
+    const SitePaymentSettings = require('../models/site-payment-settings.model');
+    return await SitePaymentSettings.getMaskedBySiteId(siteId);
+  }
+
+  static async updatePaymentSettings(siteId, data, userId) {
+    await SiteService.getSiteById(siteId, userId); // ownership check
+    const SitePaymentSettings = require('../models/site-payment-settings.model');
+    await SitePaymentSettings.upsert(siteId, data);
+    return await SitePaymentSettings.getMaskedBySiteId(siteId);
+  }
+
+  // ── Payouts ─────────────────────────────────────────────────────────────────
+
+  static async getPayouts(siteId, userId) {
+    await SiteService.getSiteById(siteId, userId);
+    const SitePayoutModel = require('../models/site-payout.model');
+    return await SitePayoutModel.listBySiteId(siteId);
+  }
+
+  static async requestPayout(siteId, { amount, reason }, userId) {
+    await SiteService.getSiteById(siteId, userId);
+
+    const SitePaymentSettings = require('../models/site-payment-settings.model');
+    const settings = await SitePaymentSettings.getBySiteId(siteId);
+
+    if (!settings?.dt_account_number || !settings?.dt_account_name || !settings?.dt_bank_name) {
+      throw new Error('Bank account details not configured for this site');
+    }
+
+    // Payouts always use SmartStore's platform Paystack keys, not the merchant's
+    const PaymentMethod = require('../../payments/models/paymentMethod.model');
+    const paystackMethod = await PaymentMethod.findByCode('paystack');
+    if (!paystackMethod?.api_secret_key) {
+      throw new Error('Paystack is not configured on this platform');
+    }
+
+    const axios = require('axios');
+    const secretKey = paystackMethod.api_secret_key;
+    const headers = { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' };
+
+    // Resolve Paystack bank code from bank name
+    let bankCode = null;
+    try {
+      const banksRes = await axios.get('https://api.paystack.co/bank', { headers });
+      const match = (banksRes.data?.data || []).find(
+        b => b.name.toLowerCase().includes(settings.dt_bank_name.toLowerCase()) ||
+             settings.dt_bank_name.toLowerCase().includes(b.name.toLowerCase())
+      );
+      if (match) bankCode = match.code;
+    } catch (e) {
+      logger.warn('BioService.requestPayout: could not fetch bank list', e?.message);
+    }
+    if (!bankCode) throw new Error(`Could not resolve Paystack bank code for "${settings.dt_bank_name}"`);
+
+    // Create transfer recipient
+    const recipientRes = await axios.post(
+      'https://api.paystack.co/transferrecipient',
+      {
+        type: 'nuban',
+        name: settings.dt_account_name,
+        account_number: settings.dt_account_number,
+        bank_code: bankCode,
+        currency: 'NGN',
+      },
+      { headers }
+    );
+    if (!recipientRes.data?.status) {
+      throw new Error(recipientRes.data?.message || 'Failed to create transfer recipient');
+    }
+    const recipientCode = recipientRes.data.data.recipient_code;
+
+    // Initiate transfer
+    const transferRes = await axios.post(
+      'https://api.paystack.co/transfer',
+      {
+        source: 'balance',
+        amount: Math.round(amount * 100), // kobo
+        recipient: recipientCode,
+        reason: reason || 'SmartStore payout',
+      },
+      { headers }
+    );
+    if (!transferRes.data?.status) {
+      throw new Error(transferRes.data?.message || 'Failed to initiate transfer');
+    }
+    const transfer = transferRes.data.data;
+
+    // Record payout
+    const SitePayoutModel = require('../models/site-payout.model');
+    return await SitePayoutModel.create({
+      siteId,
+      provider: 'paystack',
+      amount,
+      currency: 'NGN',
+      transferReference: transfer.transfer_code,
+      recipientCode,
+      reason,
+      metadata: { paystack_transfer_id: transfer.id, paystack_status: transfer.status },
+    });
+  }
+
   static async configureBioStore(siteId, bioConfig) {
     // This method could be used to configure bio settings after site is created
     // For now it delegates to _updateBioContent

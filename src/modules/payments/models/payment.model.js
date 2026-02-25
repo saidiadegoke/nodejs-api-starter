@@ -298,6 +298,62 @@ class Payment {
     }
   }
 
+  // Get merchandise orders for a specific site (by metadata.site_id)
+  async findBySiteId(siteId, options = {}) {
+    const { limit = 50, offset = 0, status } = options;
+    let query = `
+      SELECT * FROM payments
+      WHERE metadata->>'site_id' = $1
+      AND type = 'merchandise'
+    `;
+    const values = [String(siteId)];
+    let paramIndex = 2;
+    if (status) {
+      query += ` AND status = $${paramIndex}`;
+      values.push(status);
+      paramIndex++;
+    }
+    query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    values.push(limit, offset);
+    try {
+      const result = await pool.query(query, values);
+      return result.rows;
+    } catch (error) {
+      throw new Error(`Error finding site orders: ${error.message}`);
+    }
+  }
+
+  async countBySiteId(siteId, status) {
+    let query = `SELECT COUNT(*) as total FROM payments WHERE metadata->>'site_id' = $1 AND type = 'merchandise'`;
+    const values = [String(siteId)];
+    if (status) {
+      query += ` AND status = $2`;
+      values.push(status);
+    }
+    try {
+      const result = await pool.query(query, values);
+      return parseInt(result.rows[0].total, 10);
+    } catch (error) {
+      throw new Error(`Error counting site orders: ${error.message}`);
+    }
+  }
+
+  // Update fulfillment status stored in metadata (CONFIRMED → SHIPPED → DELIVERED)
+  async updateFulfillmentStatus(id, fulfillmentStatus) {
+    const query = `
+      UPDATE payments
+      SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{fulfillment_status}', $1::jsonb),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2 RETURNING *
+    `;
+    try {
+      const result = await pool.query(query, [JSON.stringify(fulfillmentStatus), id]);
+      return result.rows[0];
+    } catch (error) {
+      throw new Error(`Error updating fulfillment status: ${error.message}`);
+    }
+  }
+
   // Get all payments with filters
   async findAll(options = {}) {
     const {

@@ -92,6 +92,63 @@ class BioController {
   }
 
   /**
+   * GET /api/sites/:siteId/payment-settings
+   */
+  static async getPaymentSettings(req, res) {
+    try {
+      const { siteId } = req.params;
+      const result = await BioService.getPaymentSettings(siteId, req.user.user_id);
+      sendSuccess(res, result || {}, 'Payment settings retrieved', OK);
+    } catch (error) {
+      sendError(res, error.message, error.message === 'Unauthorized' ? 403 : BAD_REQUEST);
+    }
+  }
+
+  /**
+   * PUT /api/sites/:siteId/payment-settings
+   */
+  static async updatePaymentSettings(req, res) {
+    try {
+      const { siteId } = req.params;
+      const result = await BioService.updatePaymentSettings(siteId, req.body, req.user.user_id);
+      sendSuccess(res, result, 'Payment settings updated', OK);
+    } catch (error) {
+      sendError(res, error.message, error.message === 'Unauthorized' ? 403 : BAD_REQUEST);
+    }
+  }
+
+  /**
+   * GET /api/sites/:siteId/payouts
+   */
+  static async getPayouts(req, res) {
+    try {
+      const { siteId } = req.params;
+      const payouts = await BioService.getPayouts(siteId, req.user.user_id);
+      sendSuccess(res, payouts, 'Payouts retrieved', OK);
+    } catch (error) {
+      sendError(res, error.message, error.message === 'Unauthorized' ? 403 : BAD_REQUEST);
+    }
+  }
+
+  /**
+   * POST /api/sites/:siteId/payouts
+   */
+  static async requestPayout(req, res) {
+    try {
+      const { siteId } = req.params;
+      const { amount, reason } = req.body;
+      if (!amount || isNaN(amount) || Number(amount) <= 0) {
+        return sendError(res, 'amount must be a positive number', BAD_REQUEST);
+      }
+      const payout = await BioService.requestPayout(siteId, { amount: Number(amount), reason }, req.user.user_id);
+      sendSuccess(res, payout, 'Payout initiated', CREATED);
+    } catch (error) {
+      const code = error.message === 'Unauthorized' ? 403 : BAD_REQUEST;
+      sendError(res, error.message, code);
+    }
+  }
+
+  /**
    * Update bio profile
    * PUT /api/sites/:siteId/bio-profile
    */

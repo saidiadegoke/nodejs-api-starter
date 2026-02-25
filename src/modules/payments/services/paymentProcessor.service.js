@@ -24,15 +24,39 @@ class PaymentProcessorService {
         status: processor === 'direct_transfer' ? 'pending_transfer' : 'pending'
       });
 
+      // Resolve per-site payment settings (fallback to platform keys)
+      let sitePaystackSecretKey = null;
+      let siteBankAccount = null;
+      const siteId = paymentData.metadata?.site_id;
+      if (siteId) {
+        try {
+          const SitePaymentSettings = require('../../sites/models/site-payment-settings.model');
+          const siteSettings = await SitePaymentSettings.getBySiteId(siteId);
+          if (siteSettings?.paystack_secret_key) sitePaystackSecretKey = siteSettings.paystack_secret_key;
+          if (siteSettings?.dt_account_number) {
+            siteBankAccount = {
+              bank_name: siteSettings.dt_bank_name,
+              account_number: siteSettings.dt_account_number,
+              account_name: siteSettings.dt_account_name,
+            };
+          }
+        } catch (e) {
+          console.warn('[PaymentProcessor] Could not load site payment settings:', e?.message);
+        }
+      }
+
       switch (processor) {
         case 'paystack':
-          return await this.paystackInitialize(paymentData, payment);
+          return await this.paystackInitialize(paymentData, payment, sitePaystackSecretKey);
         case 'flutterwave':
           return await this.flutterwaveInitialize(paymentData, payment);
         case 'direct_transfer': {
-          // Fetch active bank account
+          // Use site bank account if configured, otherwise fall back to platform active account
+          let bankAccount = siteBankAccount;
+          if (!bankAccount) {
           const BankAccount = require('../models/bankAccount.model');
-          const bankAccount = await BankAccount.getActive();
+          bankAccount = await BankAccount.getActive();
+          }
           if (!bankAccount) {
             throw new Error('No active bank account configured');
           }
@@ -149,10 +173,11 @@ class PaymentProcessorService {
   }
 
   // Paystack Integration
-  async paystackInitialize(paymentData, payment) {
+  async paystackInitialize(paymentData, payment, overrideSecretKey) {
     try {
       const paymentMethod = await this.paymentMethodModel.findByCode('paystack');
-      if (!paymentMethod.api_secret_key) {
+      const secretKey = overrideSecretKey || paymentMethod.api_secret_key;
+      if (!secretKey) {
         throw new Error('Paystack API key not configured');
       }
 
@@ -203,7 +228,7 @@ class PaymentProcessorService {
         payload,
         {
           headers: {
-            'Authorization': `Bearer ${paymentMethod.api_secret_key}`,
+            'Authorization': `Bearer ${secretKey}`,
             'Content-Type': 'application/json'
           }
         }
@@ -225,10 +250,11 @@ class PaymentProcessorService {
     }
   }
 
-  async paystackVerify(reference) {
+  async paystackVerify(reference, overrideSecretKey) {
     try {
       const paymentMethod = await this.paymentMethodModel.findByCode('paystack');
-      if (!paymentMethod.api_secret_key) {
+      const secretKey = overrideSecretKey || paymentMethod.api_secret_key;
+      if (!secretKey) {
         throw new Error('Paystack API key not configured');
       }
 
@@ -236,7 +262,7 @@ class PaymentProcessorService {
         `https://api.paystack.co/transaction/verify/${reference}`,
         {
           headers: {
-            'Authorization': `Bearer ${paymentMethod.api_secret_key}`
+            'Authorization': `Bearer ${secretKey}`
           }
         }
       );
