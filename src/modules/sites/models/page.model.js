@@ -42,12 +42,15 @@ class PageModel {
     const result = await pool.query(
       `INSERT INTO pages (site_id, slug, title, content, published, status, meta_description, meta_keywords, layout_id, is_default)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (site_id, slug) DO UPDATE SET
+         title = EXCLUDED.title,
+         updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
-        siteId, 
-        slug, 
-        title, 
-        JSON.stringify(content || {}), 
+        siteId,
+        slug,
+        title,
+        JSON.stringify(content || {}),
         published || false,
         status || (published ? 'published' : 'draft'),
         metaDescription || null,

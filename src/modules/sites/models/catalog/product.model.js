@@ -65,6 +65,7 @@ async function listBySiteId(siteId, options = {}) {
     `SELECT p.id, p.site_id, p.category_id, p.type, p.name, p.slug, p.description,
             p.price, p.price_currency, p.prices, p.compare_at_price, p.cost, p.sku, p.barcode, p.images, p.tags,
             p.status, p.sort_order, p.created_at, p.updated_at,
+            p.variants, p.track_inventory, p.stock_quantity, p.variant_stock,
             c.name AS category_name, c.slug AS category_slug
      FROM catalog_products p
      ${joinCategory}
@@ -218,6 +219,10 @@ async function create(siteId, data) {
     tags = [],
     status = 'draft',
     sort_order = 0,
+    variants = [],
+    track_inventory = false,
+    stock_quantity = 0,
+    variant_stock = {},
   } = data;
   const baseSlug = (slug && String(slug).trim()) ? String(slug).trim() : slugify(name);
   const slugVal = await ensureUniqueSlug(siteId, baseSlug || 'product', null);
@@ -226,8 +231,8 @@ async function create(siteId, data) {
   const result = await pool.query(
     `INSERT INTO catalog_products (
       site_id, category_id, type, name, slug, description, price, price_currency, prices, compare_at_price, cost,
-      sku, barcode, images, tags, status, sort_order
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      sku, barcode, images, tags, status, sort_order, variants, track_inventory, stock_quantity, variant_stock
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
     RETURNING *`,
     [
       siteId,
@@ -247,6 +252,10 @@ async function create(siteId, data) {
       JSON.stringify(Array.isArray(tags) ? tags : []),
       status,
       sort_order,
+      JSON.stringify(Array.isArray(variants) ? variants : []),
+      !!track_inventory,
+      parseInt(stock_quantity, 10) || 0,
+      JSON.stringify(typeof variant_stock === 'object' && variant_stock !== null ? variant_stock : {}),
     ]
   );
   return result.rows[0];
@@ -259,6 +268,7 @@ async function update(id, siteId, data) {
   const allowed = [
     'category_id', 'type', 'name', 'slug', 'description', 'price', 'price_currency', 'prices', 'compare_at_price', 'cost',
     'sku', 'barcode', 'images', 'tags', 'status', 'sort_order',
+    'variants', 'track_inventory', 'stock_quantity', 'variant_stock',
   ];
   const updates = { ...data };
   if ((updates.slug === '' || (updates.slug === undefined && updates.name !== undefined)) && updates.name) {
@@ -270,9 +280,12 @@ async function update(id, siteId, data) {
   let i = 1;
   for (const key of allowed) {
     if (updates[key] === undefined) continue;
-    if (key === 'images' || key === 'tags') {
+    if (key === 'images' || key === 'tags' || key === 'variants') {
       fields.push(`${key} = $${i++}::jsonb`);
       values.push(JSON.stringify(Array.isArray(updates[key]) ? updates[key] : []));
+    } else if (key === 'variant_stock') {
+      fields.push(`${key} = $${i++}::jsonb`);
+      values.push(JSON.stringify(typeof updates[key] === 'object' && updates[key] !== null ? updates[key] : {}));
     } else if (key === 'prices') {
       fields.push(`${key} = $${i++}::jsonb`);
       values.push(normalizePricesJson(updates[key]));

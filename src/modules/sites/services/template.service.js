@@ -92,9 +92,14 @@ class TemplateService {
       ? JSON.parse(templateData.config) 
       : templateData.config || {};
 
-    // Always merge with defaults (without duplicating existing pages/blocks)
-    console.log('[TemplateService] Merging with default pages and blocks');
-    config = mergeWithDefaults(config);
+    // Only merge with defaults if NOT a bio template
+    // Bio templates have their own specific structure (single page)
+    if (templateData.category !== 'bio') {
+      console.log('[TemplateService] Merging with default pages and blocks');
+      config = mergeWithDefaults(config);
+    } else {
+      console.log('[TemplateService] Bio template detected, skipping default page merge');
+    }
 
     // Update templateData with merged config and user ID
     const finalTemplateData = {
@@ -109,11 +114,15 @@ class TemplateService {
   /**
    * Add default pages to an existing template (only if owned by userId)
    * Only adds pages/blocks that don't already exist (by slug/ID)
+   * Bio templates are excluded — they have their own page structure.
    */
   static async addDefaultPages(templateId, userId) {
     const template = await TemplateModel.getTemplateByIdForOwner(templateId, userId);
     if (!template) {
       throw new Error('Template not found');
+    }
+    if (template.category === 'bio') {
+      throw new Error('Default pages cannot be added to bio templates');
     }
 
     const config = typeof template.config === 'string'

@@ -179,13 +179,62 @@ class PreviewService {
         blocksCount: templateConfig?.blocks?.length || 0,
       });
 
-      // Create preview site config from template
-      const previewSiteId = `preview-template-${templateId}`;
+      // For all templates: find the first associated site so that e-commerce components
+      // (product grid, product detail, etc.) can fetch real data in the preview.
+      // For bio templates also load the site's theme settings (whatsapp, bio text, etc.).
+      let bioTheme = null;
+      let realSiteId = null;
+      let realSiteSlug = null;
+      let realSiteName = null;
+      try {
+        const associatedSites = await TemplateModel.getSiteIdsByTemplateId(id);
+        if (associatedSites && associatedSites.length > 0) {
+          const associatedSiteId = associatedSites[0];
+          const realSite = await SiteModel.getSiteById(associatedSiteId);
+          if (realSite) {
+            realSiteId = realSite.id;
+            realSiteSlug = realSite.slug;
+            realSiteName = realSite.name;
+          }
+          // Bio-specific: pull whatsapp number, social links, bio text, etc.
+          if (template.category === 'bio') {
+            const siteCustomization = await CustomizationModel.getCustomization(associatedSiteId);
+            if (siteCustomization && siteCustomization.theme) {
+              bioTheme = typeof siteCustomization.theme === 'string'
+                ? JSON.parse(siteCustomization.theme)
+                : siteCustomization.theme;
+            }
+          }
+        }
+      } catch (siteErr) {
+        console.warn('[PreviewService] Could not fetch associated site for template preview:', siteErr.message);
+      }
+
+      const previewSiteId = realSiteId || `preview-template-${templateId}`;
+      const previewSiteSlugResolved = realSiteSlug || previewSiteId;
+      const previewSiteNameResolved = realSiteName || template.name;
+
+      // Resolve pages: bio templates store pages in the DB (not in templateConfig).
+      // When we have a real associated site, fetch its pages from DB — same as previewSite does.
+      let templatePages = templateConfig?.pages || [];
+      if (template.category === 'bio' && realSiteId) {
+        try {
+          const dbPages = await PageModel.getSitePages(realSiteId);
+          if (dbPages && dbPages.length > 0) {
+            templatePages = dbPages.map(p => ({
+              ...p,
+              content: typeof p.content === 'string' ? JSON.parse(p.content) : (p.content || {}),
+            }));
+          }
+        } catch (pagesErr) {
+          console.warn('[PreviewService] Could not fetch DB pages for bio template preview:', pagesErr.message);
+        }
+      }
       const config = {
         site: {
           id: previewSiteId,
-          name: template.name, // Use template name directly, no "Preview" suffix
-          slug: previewSiteId,
+          name: previewSiteNameResolved,
+          slug: previewSiteSlugResolved,
           status: 'draft',
           owner_id: userId || 'preview-user',
           template_id: templateId,
@@ -210,8 +259,10 @@ class PreviewService {
           },
           logo_url: template.thumbnail_url || null,
           spacing: templateConfig?.theme?.spacing || null,
+          // Include bio settings in theme for bio templates
+          ...(bioTheme && { theme: bioTheme }),
         },
-        pages: templateConfig?.pages || [],
+        pages: templatePages,
         blocks: templateConfig?.blocks || [], // Include blocks for resolution
         template: {
           id: template.id, // Required - already validated above
@@ -358,12 +409,23 @@ class PreviewService {
       }
 
       // Parse template config to get pages
-      const templateConfig = typeof template.config === 'string' 
-        ? JSON.parse(template.config) 
+      const templateConfig = typeof template.config === 'string'
+        ? JSON.parse(template.config)
         : template.config;
 
-      // Pages come from template.config.pages
-      const templatePages = templateConfig?.pages || [];
+      // For bio templates, pages are stored in the DB (not in template config)
+      // For standard templates, pages come from template.config.pages
+      let templatePages = templateConfig?.pages || [];
+      if (template.category === 'bio') {
+        const PageModel = require('../models/page.model');
+        const dbPages = await PageModel.getSitePages(siteId);
+        if (dbPages && dbPages.length > 0) {
+          templatePages = dbPages.map(p => ({
+            ...p,
+            content: typeof p.content === 'string' ? JSON.parse(p.content) : (p.content || {}),
+          }));
+        }
+      }
       
       // Get customization settings (site-specific)
       let customization = await CustomizationModel.getCustomization(siteId);
@@ -376,6 +438,10 @@ class PreviewService {
         }
         if (customization.spacing && typeof customization.spacing === 'string') {
           customization.spacing = JSON.parse(customization.spacing);
+        }
+        // Parse theme from JSON string (contains bio settings: whatsappNumber, bioText, socialLinks, links)
+        if (customization.theme && typeof customization.theme === 'string') {
+          customization.theme = JSON.parse(customization.theme);
         }
       } else {
         // Fallback to template theme if no site customization
@@ -625,10 +691,20 @@ class PreviewService {
                   console.error(`[PreviewService] Block "${blockId}" not found in template blocks for region "${resolvedRegion.id}"`);
                   return null;
                 }
+                // IMPORTANT: For bio blocks, data may be stored in block.config instead of block.data
+                // Normalize by merging config into data to ensure components receive the data correctly
+                const blockConfig = block.config || {};
+                const blockData = block.data || {};
+                const mergedData = Object.keys(blockConfig).length > 0 && Object.keys(blockData).length === 0
+                  ? blockConfig
+                  : { ...blockConfig, ...blockData };
                 // Ensure block has type set from componentId if needed
                 return {
                   ...block,
                   type: block.type || block.componentId || 'text',
+                  // Set templateId at block root level if present in config (for BlockRenderer templateId extraction)
+                  ...(blockConfig.templateId && !block.templateId ? { templateId: blockConfig.templateId } : {}),
+                  data: mergedData,
                 };
               })
               .filter(Boolean); // Remove null entries
@@ -641,10 +717,23 @@ class PreviewService {
             resolvedRegion.blocks = resolvedBlocks;
           } else if (region.blocks && Array.isArray(region.blocks)) {
             // Blocks already embedded, just normalize them
-            resolvedRegion.blocks = region.blocks.map(block => ({
-              ...block,
-              type: block.type || block.componentId || 'text',
-            }));
+            // IMPORTANT: For bio blocks, data may be stored in block.config instead of block.data
+            // Normalize by merging config into data to ensure components receive the data correctly
+            resolvedRegion.blocks = region.blocks.map(block => {
+              const blockConfig = block.config || {};
+              const blockData = block.data || {};
+              // Merge config into data (config is legacy storage; data takes priority)
+              const mergedData = Object.keys(blockConfig).length > 0 && Object.keys(blockData).length === 0
+                ? blockConfig
+                : { ...blockConfig, ...blockData };
+              return {
+                ...block,
+                type: block.type || block.componentId || 'text',
+                // Set templateId at block root level if present in config (for BlockRenderer templateId extraction)
+                ...(blockConfig.templateId && !block.templateId ? { templateId: blockConfig.templateId } : {}),
+                data: mergedData,
+              };
+            });
           } else {
             // Region has no blocks - this is allowed, will show "No content" message
             resolvedRegion.blocks = [];

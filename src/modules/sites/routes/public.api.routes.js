@@ -14,9 +14,14 @@ const TemplateModel = require('../models/template.model');
 const SiteFeatureModel = require('../models/site-feature.model');
 const ProductService = require('../services/catalog/product.service');
 const CategoryService = require('../services/catalog/category.service');
+const BioController = require('../controllers/bio.controller');
+const WhatsAppOrderService = require('../services/whatsappOrder.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, NOT_FOUND, BAD_REQUEST } = require('../../../shared/constants/statusCodes');
 const { logger } = require('../../../shared/utils/logger');
+
+router.get('/by-slug/:slug/bio', BioController.getBioPage);
+router.get('/:id/bio', BioController.getBioPageById);
 
 /**
  * @route   GET /public/sites/by-slug/:slug
@@ -185,6 +190,7 @@ router.get('/:id/config', async (req, res) => {
           colors: typeof customization.colors === 'string' ? JSON.parse(customization.colors) : customization.colors,
           fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
           spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
+          theme: typeof customization.theme === 'string' ? JSON.parse(customization.theme) : (customization.theme || null),
         } : null,
         pages: [],
         template: null,
@@ -247,6 +253,21 @@ router.get('/:id/config', async (req, res) => {
       templateKeys: Object.keys(templateObj),
     });
     
+    // For bio sites, pages are stored in the DB (not in template config)
+    // For standard sites, pages come from template config
+    let sitePages = templateConfig?.pages || [];
+    if (template.category === 'bio') {
+      const PageModel = require('../models/page.model');
+      const dbPages = await PageModel.getSitePages(id);
+      if (dbPages && dbPages.length > 0) {
+        // Parse page content from JSON string if needed
+        sitePages = dbPages.map(p => ({
+          ...p,
+          content: typeof p.content === 'string' ? JSON.parse(p.content) : (p.content || {}),
+        }));
+      }
+    }
+
     const previewConfig = {
       site: {
         id: site.id,
@@ -266,8 +287,9 @@ router.get('/:id/config', async (req, res) => {
         colors: typeof customization.colors === 'string' ? JSON.parse(customization.colors) : customization.colors,
         fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
+        theme: typeof customization.theme === 'string' ? JSON.parse(customization.theme) : (customization.theme || null),
       } : null,
-      pages: templateConfig?.pages || [],
+      pages: sitePages,
       template: templateObj, // Use the validated template object
     };
 
@@ -386,6 +408,7 @@ router.get('/:id/config/draft', async (req, res) => {
           colors: typeof customization.colors === 'string' ? JSON.parse(customization.colors) : customization.colors,
           fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
           spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
+          theme: typeof customization.theme === 'string' ? JSON.parse(customization.theme) : (customization.theme || null),
         } : null,
         pages: [],
         template: null,
@@ -425,6 +448,19 @@ router.get('/:id/config/draft', async (req, res) => {
     // Ensure template.id is a valid number/string (already validated above)
     const templateId = template.id;
     
+    // For bio sites, pages are stored in the DB (not in template config)
+    let draftSitePages = templateConfig?.pages || [];
+    if (template.category === 'bio') {
+      const PageModel = require('../models/page.model');
+      const dbPages = await PageModel.getSitePages(id);
+      if (dbPages && dbPages.length > 0) {
+        draftSitePages = dbPages.map(p => ({
+          ...p,
+          content: typeof p.content === 'string' ? JSON.parse(p.content) : (p.content || {}),
+        }));
+      }
+    }
+
     const previewConfig = {
       site: {
         id: site.id,
@@ -444,8 +480,9 @@ router.get('/:id/config/draft', async (req, res) => {
         colors: typeof customization.colors === 'string' ? JSON.parse(customization.colors) : customization.colors,
         fonts: typeof customization.fonts === 'string' ? JSON.parse(customization.fonts) : customization.fonts,
         spacing: typeof customization.spacing === 'string' ? JSON.parse(customization.spacing) : customization.spacing,
+        theme: typeof customization.theme === 'string' ? JSON.parse(customization.theme) : (customization.theme || null),
       } : null,
-      pages: templateConfig?.pages || [],
+      pages: draftSitePages,
       template: {
         id: templateId, // Use validated templateId
         name: template.name || undefined,
@@ -549,6 +586,52 @@ router.get('/:id/categories', async (req, res) => {
   } catch (error) {
     logger.error('Error listing categories (public):', error);
     return sendError(res, error.message || 'Failed to retrieve categories', 500);
+  }
+});
+
+/**
+ * @route   POST /public/sites/:id/whatsapp-order
+ * @desc    Generate a WhatsApp order message + URL from cart/product data (public, no auth).
+ * @access  Public
+ * @body    { items: [{name, variants, quantity, unitPrice}], deliveryZone: {name, fee}, currency? }
+ */
+router.post('/:id/whatsapp-order', async (req, res) => {
+  try {
+    const { id: siteId } = req.params;
+    const site = await SiteModel.getSiteById(siteId);
+    if (!site) return sendError(res, 'Site not found', NOT_FOUND);
+    if (site.status === 'suspended') return sendError(res, 'Site not available', NOT_FOUND);
+
+    const { items, deliveryZone, currency } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return sendError(res, 'items must be a non-empty array', BAD_REQUEST);
+    }
+
+    // Get WhatsApp number from site customization theme (established in Strategy 1)
+    const customization = await CustomizationModel.getCustomization(siteId);
+    const theme = typeof customization?.theme === 'string'
+      ? JSON.parse(customization.theme)
+      : (customization?.theme || {});
+
+    const whatsappNumber = theme.whatsappNumber;
+    if (!whatsappNumber) {
+      return sendError(res, 'WhatsApp number not configured for this store', BAD_REQUEST);
+    }
+
+    // Get custom order template if configured
+    const orderTemplate = theme.orderTemplate || undefined;
+
+    const message = WhatsAppOrderService.generateOrderMessage(
+      { items, deliveryZone: deliveryZone || null, currency: currency || '₦' },
+      orderTemplate
+    );
+    const whatsappUrl = WhatsAppOrderService.generateWhatsAppURL(whatsappNumber, message);
+
+    return sendSuccess(res, { whatsappUrl, message }, 'WhatsApp order URL generated', OK);
+  } catch (error) {
+    logger.error('Error generating WhatsApp order URL (public):', error);
+    return sendError(res, error.message || 'Failed to generate WhatsApp order', 500);
   }
 });
 

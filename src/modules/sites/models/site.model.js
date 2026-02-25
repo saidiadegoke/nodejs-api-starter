@@ -60,7 +60,7 @@ class SiteModel {
    * Create a new site
    */
   static async createSite(siteData) {
-    const { slug, name, primaryDomain, engineVersion, status, ownerId, defaultLayoutId } = siteData;
+    const { slug, name, primaryDomain, engineVersion, status, ownerId, defaultLayoutId, siteType } = siteData;
     
     // Check if default_layout_id column exists
     const columnCheck = await pool.query(`
@@ -74,19 +74,19 @@ class SiteModel {
     if (hasDefaultLayoutColumn) {
       // Column exists, include it in INSERT
       const result = await pool.query(
-        `INSERT INTO sites (slug, name, primary_domain, engine_version, status, owner_id, default_layout_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO sites (slug, name, primary_domain, engine_version, status, owner_id, default_layout_id, site_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
-        [slug, name, primaryDomain || null, engineVersion || 'v1.0.0', status || 'active', ownerId, defaultLayoutId || 'header-main-footer']
+        [slug, name, primaryDomain || null, engineVersion || 'v1.0.0', status || 'active', ownerId, defaultLayoutId || 'header-main-footer', siteType || 'full']
       );
       return result.rows[0];
     } else {
       // Column doesn't exist, exclude it from INSERT
       const result = await pool.query(
-        `INSERT INTO sites (slug, name, primary_domain, engine_version, status, owner_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO sites (slug, name, primary_domain, engine_version, status, owner_id, site_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [slug, name, primaryDomain || null, engineVersion || 'v1.0.0', status || 'active', ownerId]
+        [slug, name, primaryDomain || null, engineVersion || 'v1.0.0', status || 'active', ownerId, siteType || 'full']
       );
       return result.rows[0];
     }

@@ -5,6 +5,7 @@ const { validate } = require('../../shared/validations/validator');
 const { uploadSingle } = require('../../shared/middleware/upload.middleware');
 
 const SiteController = require('./controllers/site.controller');
+const BioController = require('./controllers/bio.controller');
 const TemplateController = require('./controllers/template.controller');
 const PageController = require('./controllers/page.controller');
 const CustomizationController = require('./controllers/customization.controller');
@@ -30,6 +31,10 @@ router.get('/', requireAuth, SiteController.getMySites);
 router.get('/currency-rates', CurrencyRatesController.getRates);
 router.get('/:siteId', requireAuth, SiteController.getSiteById);
 router.get('/slug/:slug', requireAuth, SiteController.getSiteBySlug);
+router.post('/quick-setup', requireAuth, BioController.quickSetup);
+router.put('/:siteId/bio-profile', requireAuth, BioController.updateBioProfile);
+router.get('/:siteId/commerce-settings', requireAuth, BioController.getCommerceSettings);
+router.put('/:siteId/commerce-settings', requireAuth, BioController.updateCommerceSettings);
 router.post(
   '/',
   requireAuth,

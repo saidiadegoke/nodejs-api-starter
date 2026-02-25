@@ -109,6 +109,7 @@ class SiteService {
         } else {
           // Ensure template has default pages (like when creating a template)
           // This ensures templates created before default pages feature still work
+          // EXCEPT for bio templates which have their own single-page structure
           const { mergeWithDefaults } = require('../../../utils/defaultTemplateConfig');
           
           // Parse template config
@@ -116,14 +117,22 @@ class SiteService {
             ? JSON.parse(template.config) 
             : template.config || {};
           
-          // Merge with defaults to ensure default pages exist
-          const mergedConfig = mergeWithDefaults(templateConfig);
+          // Check if this is a bio template - skip merging defaults for bio
+          const isBioTemplate = template.category === 'bio';
+          
+          // Merge with defaults only for NON-bio templates
+          let mergedConfig = templateConfig;
+          if (!isBioTemplate) {
+            mergedConfig = mergeWithDefaults(templateConfig);
+          } else {
+            console.log(`[SiteService] Bio template detected, skipping default page merge for template ${template.id}`);
+          }
           
           // If template config was updated (has more pages/blocks), update template
           const originalPagesCount = (templateConfig.pages || []).length;
           const mergedPagesCount = (mergedConfig.pages || []).length;
           
-          if (mergedPagesCount > originalPagesCount) {
+          if (mergedPagesCount > originalPagesCount && !isBioTemplate) {
             console.log(`[SiteService] Template ${siteData.templateId} missing default pages, updating template with defaults`);
             // Update template with merged config
             await TemplateModel.updateTemplate(siteData.templateId, {
@@ -200,6 +209,13 @@ class SiteService {
         throw new Error('Invalid template configuration');
       }
     }
+
+    // Handle bio templates specially - create pages from template config
+    if (template.category === 'bio' && templateConfig && templateConfig.pages) {
+      await this._createPagesFromBioTemplate(siteId, templateConfig.pages, templateConfig);
+      console.log(`[SiteService] Created ${templateConfig.pages.length} pages from bio template ${templateId}`);
+    }
+    // Handle standard templates - pages come from template at runtime (no need to create in DB)
 
     // Apply customization from template theme (if exists)
     if (templateConfig && templateConfig.theme) {
@@ -342,7 +358,53 @@ class SiteService {
     await this.getSiteById(siteId, userId);
     return await SiteModel.deleteSite(siteId);
   }
-}
 
+  /**
+   * Create pages from bio template config
+   * Bio templates have their own page structure - we create pages in the DB from template config
+   * @param {number} siteId - Site ID
+   * @param {Array} pages - Array of page configs from template
+   */
+  static async _createPagesFromBioTemplate(siteId, pages, templateConfig) {
+    const PageModel = require('../models/page.model');
+    
+    // Create block map from template config
+    const blockMap = new Map();
+    (templateConfig.blocks || []).forEach(block => {
+      blockMap.set(block.id, block);
+    });
+    
+    for (const pageConfig of pages) {
+      // Check if page already exists
+      const existing = await PageModel.getPageBySlug(siteId, pageConfig.slug);
+      if (existing) {
+        console.log(`[SiteService] Page ${pageConfig.slug} already exists, skipping`);
+        continue;
+      }
+      
+      // Resolve regions with blocks from template
+      const resolvedContent = {};
+      if (pageConfig.regions && Array.isArray(pageConfig.regions)) {
+        resolvedContent.regions = pageConfig.regions.map(region => ({
+          ...region,
+          blocks: (region.blockIds || []).map(blockId => blockMap.get(blockId)).filter(Boolean)
+        }));
+      }
+      
+      // Create page from template config
+      await PageModel.createPage({
+        siteId,
+        slug: pageConfig.slug,
+        title: pageConfig.title || pageConfig.slug,
+        content: resolvedContent,
+        published: true,
+        isDefault: pageConfig.slug === 'home'
+      });
+      
+      console.log(`[SiteService] Created page: ${pageConfig.slug}`);
+    }
+  }
+
+}
 module.exports = SiteService;
 

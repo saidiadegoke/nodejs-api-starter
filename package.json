@@ -16,6 +16,7 @@
     "test:templates": "NODE_ENV=test jest src/tests/templates.test.js --runInBand",
     "test:assets": "NODE_ENV=test jest src/tests/assets.test.js --runInBand",
     "test:theme": "NODE_ENV=test jest src/tests/customization-theme.test.js --runInBand",
+    "test:bio": "NODE_ENV=test jest src/tests/bio.test.js --runInBand",
     "test:watch": "NODE_ENV=test jest --watch",
     "test:verbose": "NODE_ENV=test jest --verbose --runInBand",
     "test:cleanup": "node src/tests/test-db-cleanup.js",

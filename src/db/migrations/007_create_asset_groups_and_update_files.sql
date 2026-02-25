@@ -507,3 +507,91 @@ CREATE INDEX IF NOT EXISTS idx_referral_rewards_referral_id ON referral_rewards(
 CREATE INDEX IF NOT EXISTS idx_referral_rewards_status ON referral_rewards(status);
 
 COMMENT ON TABLE referral_rewards IS 'Reward granted to referrer when referred user completes milestone (e.g. first_paid_plan)';
+
+-- Allow 'pending' status on user_subscriptions so subscriptions can be created before payment
+-- and activated after admin approval or payment verification.
+
+ALTER TABLE user_subscriptions DROP CONSTRAINT IF EXISTS valid_status;
+
+ALTER TABLE user_subscriptions ADD CONSTRAINT valid_status
+  CHECK (status IN ('active', 'cancelled', 'expired', 'past_due', 'trialing', 'pending'));
+
+
+-- Add verified_at to custom_domains for domain verification timestamp.
+-- Used when verification succeeds and by the API response.
+
+ALTER TABLE custom_domains
+  ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+
+COMMENT ON COLUMN custom_domains.verified_at IS 'When the domain was successfully verified (DNS TXT check).';
+
+-- Separate "ownership verified" (TXT) from "traffic verified" (CNAME pointing).
+-- verified = TXT ownership; traffic_verified = CNAME points to our target.
+-- Both must be true for domain to be considered fully verified (SSL, etc.).
+
+ALTER TABLE custom_domains
+  ADD COLUMN IF NOT EXISTS traffic_verified BOOLEAN DEFAULT false;
+
+COMMENT ON COLUMN custom_domains.traffic_verified IS 'True when CNAME (or A/ALIAS) points to the site target (e.g. siteSlug.smartstore.ng).';
+
+-- Existing domains that were already verified are assumed pointed (keep current behavior).
+UPDATE custom_domains SET traffic_verified = true WHERE verified = true AND (traffic_verified IS NULL OR traffic_verified = false);
+
+-- ============================================================================
+-- BIO COMMERCE (Link-in-Bio) – Strategy 1
+-- ============================================================================
+-- Adds bio commerce support by extending existing tables.
+-- No new tables – all data fits into sites, site_customization, pages.
+-- ============================================================================
+
+-- 1. Add site_type to sites table ('full' = traditional, 'bio' = link-in-bio)
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS site_type VARCHAR(20) DEFAULT 'full';
+
+COMMENT ON COLUMN sites.site_type IS 'Type of site: full (traditional site builder), bio (link-in-bio page), micro (micro-store)';
+
+-- 2. Add commerce_settings to site_customization (WhatsApp, delivery zones, order template)
+ALTER TABLE site_customization
+ADD COLUMN IF NOT EXISTS commerce_settings JSONB DEFAULT '{}';
+
+COMMENT ON COLUMN site_customization.commerce_settings IS 'Commerce settings: whatsappNumber, deliveryZones, orderTemplate, defaultCurrency';
+
+-- 3. Add bio_profile to site_customization (bio text, social links, external links)
+ALTER TABLE site_customization
+ADD COLUMN IF NOT EXISTS bio_profile JSONB DEFAULT '{}';
+
+COMMENT ON COLUMN site_customization.bio_profile IS 'Bio profile: bioText, socialLinks, links (external links list)';
+
+-- 4. Add onboarding_step to sites table
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS onboarding_step INTEGER DEFAULT 0;
+
+COMMENT ON COLUMN sites.onboarding_step IS 'Onboarding progress: 0=new, 1=named, 2=has_product, 3=complete';
+
+-- Migration 008: Product variants + order source tracking
+-- Strategy 2: WhatsApp-First Order Engine
+
+-- Add structured variants to catalog_products
+ALTER TABLE catalog_products
+ADD COLUMN IF NOT EXISTS variants JSONB DEFAULT '[]';
+
+COMMENT ON COLUMN catalog_products.variants IS 'Structured product variants. Format: [{"group":"Size","options":[{"value":"40","available":true},...]},...]';
+
+-- Add inventory tracking columns
+ALTER TABLE catalog_products
+ADD COLUMN IF NOT EXISTS track_inventory BOOLEAN DEFAULT false;
+
+ALTER TABLE catalog_products
+ADD COLUMN IF NOT EXISTS stock_quantity INTEGER DEFAULT 0;
+
+ALTER TABLE catalog_products
+ADD COLUMN IF NOT EXISTS variant_stock JSONB DEFAULT '{}';
+
+COMMENT ON COLUMN catalog_products.variant_stock IS 'Stock per variant combination. Key format: "Group:Value|Group:Value". 0 = out of stock.';
+
+-- Add order source tracking
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'platform';
+
+COMMENT ON COLUMN orders.source IS 'Order source: platform, whatsapp, manual, bio_page';
+
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS source_site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL;
