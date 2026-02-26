@@ -423,6 +423,8 @@ class PreviewService {
           templatePages = dbPages.map(p => ({
             ...p,
             content: typeof p.content === 'string' ? JSON.parse(p.content) : (p.content || {}),
+            // Bio pages always use linear layout (no topnav); map DB layout_id → layoutTemplate
+            layoutTemplate: p.layout_id || 'linear',
           }));
         }
       }
@@ -480,7 +482,7 @@ class PreviewService {
           status: site.status,
           owner_id: site.owner_id,
           template_id: site.template_id,
-          default_layout_id: site.default_layout_id || 'header-main-footer',
+          default_layout_id: site.default_layout_id || (template.category === 'bio' ? 'linear' : 'header-main-footer'),
           primary_domain: site.primary_domain,
           engine_version: site.engine_version,
           created_at: site.created_at,

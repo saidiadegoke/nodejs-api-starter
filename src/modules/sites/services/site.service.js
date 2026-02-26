@@ -406,7 +406,8 @@ class SiteService {
         title: pageConfig.title || pageConfig.slug,
         content: resolvedContent,
         published: true,
-        isDefault: pageConfig.slug === 'home'
+        isDefault: pageConfig.slug === 'home',
+        layoutId: pageConfig.layoutTemplate || pageConfig.layout || null,
       });
       
       console.log(`[SiteService] Created page: ${pageConfig.slug}`);
