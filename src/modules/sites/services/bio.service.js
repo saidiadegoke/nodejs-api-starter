@@ -39,7 +39,7 @@ class BioService {
 
     // 2. Always create a new bio template for this user (don't reuse existing)
     // Look up component IDs so blocks get the correct componentId reference
-    const componentIds = await BioService._getComponentIds(['bio-header', 'bio-links', 'product-grid']);
+    const componentIds = await BioService._getComponentIds(['bio-header', 'bio-links', 'product-grid', 'footer']);
 
     const templateData = {
         name: 'Bio Commerce',
@@ -50,11 +50,11 @@ class BioService {
         config: {
           layout: "linear",
           blocks: [
-            { id: "block-bio-header", type: "bio-header", componentName: "BioHeader", componentId: componentIds['bio-header'] || null, config: { templateId: "bio-header-default", showAvatar: true, showBio: true } },
-            { id: "block-bio-products", type: "product-grid", componentName: "ProductGrid", componentId: componentIds['product-grid'] || null, config: { templateId: "productgrid-section-4", layout: "compact", columns: 2, ctaType: "whatsapp" } },
-            { id: "block-bio-links", type: "bio-links", componentName: "BioLinks", componentId: componentIds['bio-links'] || null, config: { templateId: "bio-links-default", links: [] } },
-            { id: "block-bio-footer", type: "footer", componentName: "Footer", config: { templateId: "footer-section-3" } },
-            { id: "block-bio-store-products", type: "product-grid", componentName: "ProductGrid", componentId: componentIds['product-grid'] || null, config: { templateId: "productgrid-section-1", columns: 3, ctaType: "whatsapp" } }
+            { id: "block-bio-header", type: "bio-header", componentName: "BioHeader", componentId: componentIds['bio-header'] || null, templateId: "bio-header-default", config: { showAvatar: true, showBio: true } },
+            { id: "block-bio-products", type: "product-grid", componentName: "ProductGrid", componentId: componentIds['product-grid'] || null, templateId: "productgrid-section-4", config: { layout: "compact", columns: 2, ctaType: "whatsapp" } },
+            { id: "block-bio-links", type: "bio-links", componentName: "BioLinks", componentId: componentIds['bio-links'] || null, templateId: "bio-links-default", config: { links: [] } },
+            { id: "block-bio-footer", type: "footer", componentName: "Footer", componentId: componentIds['footer'] || null, templateId: "footer-section-3", config: {} },
+            { id: "block-bio-store-products", type: "product-grid", componentName: "ProductGrid", componentId: componentIds['product-grid'] || null, templateId: "productgrid-section-1", config: { columns: 3, ctaType: "whatsapp" } }
           ],
           pages: [
             { 
