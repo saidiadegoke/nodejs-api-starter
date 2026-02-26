@@ -2,6 +2,7 @@ const SiteModel = require('../models/site.model');
 const CustomizationModel = require('../models/customization.model');
 const SiteService = require('./site.service');
 const TemplateService = require('./template.service');
+const { syncEcommerceForSitesUsingTemplate } = require('./ecommerce-sync.service');
 const pool = require('../../../db/pool');
 const { logger } = require('../../../shared/utils/logger');
 
@@ -92,6 +93,12 @@ class BioService {
     };
 
     const site = await SiteService.createSite(siteData, userId);
+
+    // Mark site as having e-commerce (product-grid blocks in template).
+    // Normally triggered on PUT /templates/:id, so must be done explicitly here.
+    syncEcommerceForSitesUsingTemplate(bioTemplate.id, templateData.config).catch(
+      (syncErr) => logger.warn('BioService.quickSetup: e-commerce sync failed (non-fatal):', syncErr?.message)
+    );
 
     // 4. BioService only configures bio-specific settings (no DB writes for site/template)
     // Update customization (Logo + bio settings stored in theme for settings page)
@@ -310,8 +317,8 @@ class BioService {
 
   static async updateBioProfile(siteId, data, userId) {
     // Verify ownership
-    const site = await SiteService.getSiteById(siteId, userId);
-    
+    await SiteService.getSiteById(siteId, userId);
+
     // Update customization if needed
     if (data.logoUrl || data.theme) {
        await CustomizationModel.upsertCustomization(siteId, {
