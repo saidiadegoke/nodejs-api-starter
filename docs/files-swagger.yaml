@@ -1,0 +1,175 @@
+openapi: '3.0.0'
+info:
+  title: Files
+  version: '1.0.0'
+  description: Generic file upload and retrieval (S3/local storage). For richer grouping, tags, and alt-text, see the Assets module.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /files/upload:
+    post:
+      summary: Upload a single file
+      tags: [Files]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                context:
+                  type: string
+                  description: 'File context (e.g. profile_photo, user_assets, general)'
+      responses:
+        '201':
+          description: File uploaded
+        '400':
+          description: Invalid file
+
+  /files/upload-base64:
+    post:
+      summary: Upload a file from base64 payload
+      tags: [Files]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, filename]
+              properties:
+                data:
+                  type: string
+                  description: base64-encoded file content
+                filename:
+                  type: string
+                mime_type:
+                  type: string
+                context:
+                  type: string
+      responses:
+        '201':
+          description: File uploaded
+
+  /files/upload-batch:
+    post:
+      summary: Upload multiple files in one request
+      tags: [Files]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                context:
+                  type: string
+      responses:
+        '201':
+          description: Files uploaded
+
+  /files/batch:
+    post:
+      summary: Create file records from pre-uploaded metadata
+      tags: [Files]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '201':
+          description: Records created
+
+  /files/upload-profile-photo:
+    post:
+      summary: Upload profile photo (convenience)
+      tags: [Files]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Profile photo uploaded
+
+  /files/user-files:
+    get:
+      summary: List files uploaded by the current user
+      tags: [Files]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50 }
+        - in: query
+          name: context
+          schema: { type: string }
+        - in: query
+          name: file_type
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated file list
+
+  /files/{file_id}:
+    get:
+      summary: Get file details
+      tags: [Files]
+      parameters:
+        - in: path
+          name: file_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: File details
+        '404':
+          description: Not found
+    delete:
+      summary: Delete a file
+      tags: [Files]
+      parameters:
+        - in: path
+          name: file_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: File deleted

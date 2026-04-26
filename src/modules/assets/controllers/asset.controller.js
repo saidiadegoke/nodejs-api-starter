@@ -38,8 +38,7 @@ class AssetController {
   static async getUsage(req, res) {
     try {
       const userId = req.user.user_id;
-      const currency = (req.query.currency || 'NGN').toUpperCase();
-      const usage = await AssetUsageService.getUsage(userId, currency);
+      const usage = await AssetUsageService.getUsage(userId);
       sendSuccess(res, usage, 'Usage retrieved successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
@@ -136,7 +135,7 @@ class AssetController {
       }
 
       const fileSize = req.file.size || 0;
-      const { allowed, usage, reason } = await AssetUsageService.checkCanUpload(userId, fileSize, true);
+      const { allowed, usage, reason } = await AssetUsageService.checkCanUpload(userId, fileSize);
       if (!allowed) {
         return sendError(res, reason || 'Storage limit exceeded', PAYMENT_REQUIRED, {
           storageUsedBytes: usage?.storageUsedBytes,

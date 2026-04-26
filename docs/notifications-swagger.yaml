@@ -1,0 +1,86 @@
+openapi: '3.0.0'
+info:
+  title: Notifications
+  version: '1.0.0'
+  description: In-app notifications for the authenticated user — list, read, delete.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /notifications:
+    get:
+      summary: List notifications for the current user
+      tags: [Notifications]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: unread_only
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Paginated list of notifications plus unread count
+    delete:
+      summary: Delete all notifications for the current user
+      tags: [Notifications]
+      responses:
+        '200':
+          description: All notifications deleted
+
+  /notifications/unread-count:
+    get:
+      summary: Get unread notification count
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Unread count
+
+  /notifications/read-all:
+    put:
+      summary: Mark all notifications as read
+      tags: [Notifications]
+      responses:
+        '200':
+          description: All marked as read
+
+  /notifications/{notification_id}/read:
+    put:
+      summary: Mark a single notification as read
+      tags: [Notifications]
+      parameters:
+        - in: path
+          name: notification_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Notification marked as read
+
+  /notifications/{notification_id}:
+    delete:
+      summary: Delete a notification
+      tags: [Notifications]
+      parameters:
+        - in: path
+          name: notification_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Notification deleted

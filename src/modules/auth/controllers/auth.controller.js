@@ -20,11 +20,12 @@ class AuthController {
       // Send welcome email asynchronously if user has email
       if (user.email && req.body.first_name) {
         const sendEmail = require('../../../shared/utils/sendEmail');
-        const welcomeUrl = `${process.env.FRONTEND_URL || 'https://opinionpulse.org'}/`;
-        
+        const appName = process.env.APP_NAME || 'our app';
+        const welcomeUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/`;
+
         sendEmail({
           to: user.email,
-          subject: 'Welcome to OpinionPulse!',
+          subject: `Welcome to ${appName}!`,
           templateFile: 'welcome.html',
           placeholders: [
             req.body.first_name || 'User',
@@ -213,18 +214,13 @@ class AuthController {
       
       // Send email if user has email
       if (user.email) {
-        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://app.smartstore.ng';
+        const appName = process.env.APP_NAME || 'our app';
+        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
-        
-        // Log reset URL for testing
-        // console.log('[Password Reset] Reset URL generated:', resetUrl);
-        // console.log('[Password Reset] Token (for testing):', resetToken);
-        // console.log('[Password Reset] Sending email to:', user.email);
-        
-        // Send email asynchronously - don't wait for it
+
         sendEmail({
           to: user.email,
-          subject: 'Reset Your SmartStore Password',
+          subject: `Reset Your ${appName} Password`,
           templateFile: 'forgot-password.html',
           placeholders: [
             user.first_name || user.display_name || 'User',
@@ -370,21 +366,20 @@ class AuthController {
       
       // Send password reset success email asynchronously
       if (resetRecord.email) {
-        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://app.smartstore.ng';
+        const appName = process.env.APP_NAME || 'our app';
+        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const loginUrl = `${frontendUrl}/auth/login`;
-        const resetDate = new Date().toLocaleDateString('en-US', { 
-          year: 'numeric', 
-          month: 'long', 
+        const resetDate = new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit'
         });
-        
-        console.log('[Password Reset Success] Sending confirmation email to:', resetRecord.email);
-        
+
         sendEmail({
           to: resetRecord.email,
-          subject: 'Password Reset Successful - SmartStore',
+          subject: `Password Reset Successful - ${appName}`,
           templateFile: 'password-reset-success.html',
           placeholders: [
             resetRecord.first_name || 'User',

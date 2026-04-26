@@ -46,11 +46,11 @@ Commands:
 
   create-permission <resource> <action> [description]
     Create a new permission
-    Example: node scripts/rbac.js create-permission polls create "Create polls"
+    Example: node scripts/rbac.js create-permission users moderate "Moderate users"
 
   add-permission-to-role <role_name> <permission_name>
     Add a permission to a role
-    Example: node scripts/rbac.js add-permission-to-role admin polls.create
+    Example: node scripts/rbac.js add-permission-to-role admin users.view
 
   add-role-to-user <user_email> <role_name> [expires_in_days]
     Add a role to a user
@@ -85,11 +85,11 @@ Examples:
   node scripts/rbac.js setup-common
   
   # Create a custom role
-  node scripts/rbac.js create-role content_creator "Content Creator" "Can create content"
-  
+  node scripts/rbac.js create-role editor "Editor" "Can edit content"
+
   # Add permissions to role
-  node scripts/rbac.js add-permission-to-role content_creator polls.create
-  node scripts/rbac.js add-permission-to-role content_creator authoring.create
+  node scripts/rbac.js add-permission-to-role editor users.view
+  node scripts/rbac.js add-permission-to-role editor users.update
   
   # Assign role to user
   node scripts/rbac.js add-role-to-user user@example.com content_creator
@@ -179,111 +179,50 @@ Examples:
 }
 
 async function setupCommon() {
-  console.log('🚀 Setting up common RBAC structure...\n');
-  
+  console.log('Setting up common RBAC structure...\n');
+
   try {
-    // Create common permissions
-    console.log('📝 Creating common permissions...');
+    console.log('Creating common permissions...');
     await runScript('create-permission.js', ['--create-common']);
-    
-    console.log('\n📋 Creating common roles...');
-    
-    // Create admin role
-    await runScript('create-role.js', ['admin', 'Administrator', 'Full system access and administration']);
-    
-    // Create moderator role
-    await runScript('create-role.js', ['moderator', 'Moderator', 'Can moderate content and users']);
-    
-    // Create content creator role
-    await runScript('create-role.js', ['content_creator', 'Content Creator', 'Can create and manage content']);
-    
-    // Create premium user role
-    await runScript('create-role.js', ['premium_user', 'Premium User', 'Premium features access']);
-    
-    // Create analyst role
-    await runScript('create-role.js', ['analyst', 'Analyst', 'Can view analytics and generate reports']);
-    
-    console.log('\n🔗 Assigning permissions to roles...');
-    
-    // Admin gets everything
+
+    console.log('\nCreating common roles...');
+    await runScript('create-role.js', ['super_admin', 'Super Admin', 'Full system access and administration']);
+    await runScript('create-role.js', ['admin', 'Administrator', 'Administrator with full management access']);
+    await runScript('create-role.js', ['agent', 'Agent', 'Support agent with limited management access']);
+    await runScript('create-role.js', ['user', 'User', 'Regular user with basic access']);
+
+    console.log('\nAssigning permissions to roles...');
+
     const adminPermissions = [
       'system.admin', 'system.config', 'system.logs',
-      'users.view', 'users.create', 'users.update', 'users.delete', 'users.moderate',
-      'polls.view', 'polls.create', 'polls.update', 'polls.delete', 'polls.moderate', 'polls.respond',
-      'comments.view', 'comments.create', 'comments.update', 'comments.delete', 'comments.moderate',
-      'context_sources.view', 'context_sources.create', 'context_sources.update', 'context_sources.delete', 'context_sources.moderate',
-      'analytics.view', 'analytics.export',
-      'authoring.create', 'authoring.bulk_create'
+      'users.view', 'users.create', 'users.update', 'users.delete'
     ];
-    
+
     for (const permission of adminPermissions) {
+      await runScript('add-permission-to-role.js', ['super_admin', permission]);
       await runScript('add-permission-to-role.js', ['admin', permission]);
     }
-    
-    // Moderator permissions
-    const moderatorPermissions = [
-      'users.view', 'users.moderate',
-      'polls.view', 'polls.moderate', 'polls.respond',
-      'comments.view', 'comments.moderate',
-      'context_sources.view', 'context_sources.moderate',
-      'analytics.view'
-    ];
-    
-    for (const permission of moderatorPermissions) {
-      await runScript('add-permission-to-role.js', ['moderator', permission]);
+
+    const agentPermissions = ['users.view', 'users.update'];
+    for (const permission of agentPermissions) {
+      await runScript('add-permission-to-role.js', ['agent', permission]);
     }
-    
-    // Content creator permissions
-    const creatorPermissions = [
-      'polls.view', 'polls.create', 'polls.update', 'polls.delete', 'polls.respond',
-      'comments.view', 'comments.create', 'comments.update', 'comments.delete',
-      'context_sources.view', 'context_sources.create', 'context_sources.update', 'context_sources.delete',
-      'authoring.create', 'authoring.bulk_create'
-    ];
-    
-    for (const permission of creatorPermissions) {
-      await runScript('add-permission-to-role.js', ['content_creator', permission]);
-    }
-    
-    // Premium user permissions
-    const premiumPermissions = [
-      'polls.view', 'polls.create', 'polls.update', 'polls.delete', 'polls.respond',
-      'comments.view', 'comments.create', 'comments.update', 'comments.delete',
-      'context_sources.view', 'context_sources.create', 'context_sources.update', 'context_sources.delete',
-      'authoring.create'
-    ];
-    
-    for (const permission of premiumPermissions) {
-      await runScript('add-permission-to-role.js', ['premium_user', permission]);
-    }
-    
-    // Analyst permissions
-    const analystPermissions = [
-      'polls.view', 'polls.respond',
-      'comments.view',
-      'context_sources.view',
-      'analytics.view', 'analytics.export'
-    ];
-    
-    for (const permission of analystPermissions) {
-      await runScript('add-permission-to-role.js', ['analyst', permission]);
-    }
-    
-    console.log('\n✅ Common RBAC structure setup complete!');
-    console.log('\n📋 Created roles:');
-    console.log('  • admin - Full system access');
-    console.log('  • moderator - Content and user moderation');
-    console.log('  • content_creator - Content creation and management');
-    console.log('  • premium_user - Premium features');
-    console.log('  • analyst - Analytics and reporting');
-    
-    console.log('\n🔗 Next steps:');
-    console.log('  1. Assign roles to users: node scripts/rbac.js add-role-to-user user@example.com admin');
-    console.log('  2. List all roles: node scripts/rbac.js list-roles');
-    console.log('  3. List all permissions: node scripts/rbac.js list-permissions');
-    
+
+    console.log('\nRBAC structure setup complete.');
+    console.log('\nCreated roles:');
+    console.log('  super_admin - Full system access');
+    console.log('  admin       - Administrator with full management access');
+    console.log('  agent       - Support agent (view/update users)');
+    console.log('  user        - Default role (no extra permissions)');
+
+    console.log('\nNext steps:');
+    console.log('  1. Assign roles: node scripts/rbac.js add-role-to-user user@example.com admin');
+    console.log('  2. List roles:   node scripts/rbac.js list-roles');
+    console.log('  3. List perms:   node scripts/rbac.js list-permissions');
+    console.log('\nExtend this function in scripts/rbac.js to add your app-specific roles/permissions.');
+
   } catch (error) {
-    console.error('❌ Setup failed:', error.message);
+    console.error('Setup failed:', error.message);
     process.exit(1);
   }
 }

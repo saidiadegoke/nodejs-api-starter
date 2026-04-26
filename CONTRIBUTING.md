@@ -1,6 +1,6 @@
-# Contributing to OpinionPolls Backend
+# Contributing
 
-Thank you for contributing to OpinionPolls! This guide will help you add new features and modules following our architecture standards.
+Thank you for contributing! This guide will help you add new features and modules following this template's architecture standards.
 
 ## Table of Contents
 
@@ -1325,7 +1325,7 @@ const country = await CountryModel.getByIsoCode('NG');
 
 ## 📧 Contact
 
-For questions or support, contact: info@opinionpulse.org
+For questions or support, open an issue on the project's repository.
 
 ---
 

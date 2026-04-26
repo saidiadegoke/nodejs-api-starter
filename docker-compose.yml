@@ -1,16 +1,15 @@
 version: '3.8'
 
 services:
-  # SmartStore API Backend
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: smartstore-api
     environment:
       NODE_ENV: ${NODE_ENV:-production}
-      PORT: ${API_PORT:-4050}
-      # Database (External PostgreSQL)
+      PORT: ${PORT:-5000}
+      APP_NAME: ${APP_NAME}
+      # Database
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_USER: ${DB_USER}
@@ -21,60 +20,35 @@ services:
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
-      # CORS
+      # CORS & URLs
       CORS_ORIGIN: ${CORS_ORIGIN}
-      # API URLs
       API_BASE_URL: ${API_BASE_URL}
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      # Base Domain
-      NEXT_PUBLIC_BASE_DOMAIN: ${NEXT_PUBLIC_BASE_DOMAIN}
+      FRONTEND_URL: ${FRONTEND_URL}
       # AWS S3 (optional)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
       AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
       AWS_S3_BUCKET_BASE_URL: ${AWS_S3_BUCKET_BASE_URL}
-      # Email (SMTP)
+      # SMTP
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       FROM_EMAIL: ${FROM_EMAIL}
-      # SSL Providers
-      SSL_PROVIDER: ${SSL_PROVIDER}
-      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
-      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
-      CLOUDFLARE_ORIGIN_CERT_PATH: ${CLOUDFLARE_ORIGIN_CERT_PATH:-/app/ssl/certs/cloudflare-origin.crt}
-      CLOUDFLARE_ORIGIN_KEY_PATH: ${CLOUDFLARE_ORIGIN_KEY_PATH:-/app/ssl/keys/cloudflare-origin.key}
-      LETS_ENCRYPT_EMAIL: ${LETS_ENCRYPT_EMAIL}
-      # Nginx (optional, for production)
-      ENABLE_NGINX_MANAGEMENT: ${ENABLE_NGINX_MANAGEMENT}
-      NGINX_CONFIG_DIR: ${NGINX_CONFIG_DIR}
-      # Traefik dynamic config (custom domains) — must match mounted path
-      TRAEFIK_DYNAMIC_CONFIG_DIR: ${TRAEFIK_DYNAMIC_CONFIG_DIR:-/etc/dokploy/traefik/dynamic}
-      # Rate Limiting
+      # Rate limiting
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS}
       RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS}
       # Logging
       LOG_LEVEL: ${LOG_LEVEL}
-    # Ports are optional - only needed for direct access (bypassing Nginx)
-    # Nginx accesses service via domain (api.smartstore.ng:4050)
-    # Uncomment if you need direct access for debugging/admin:
-    # ports:
-    #   - "${API_PORT:-4050}:${API_PORT:-4050}"
+    ports:
+      - "${PORT:-5000}:${PORT:-5000}"
     volumes:
       - api_uploads:/app/uploads
-      # Use bind mount for SSL certificates so Nginx on host can access them
-      - /opt/smartstore/ssl:/app/ssl
-      # Traefik dynamic config: API writes custom-domain YAML here; Traefik reads from same path on host.
-      # On host, grant the API container user (uid 1001) write access so it can create .yml files:
-      #   sudo chown -R 1001:1001 /etc/dokploy/traefik/dynamic
-      # (Traefik runs as root and can still write; the API runs as apiuser/1001.)
-      - /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:4050/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${PORT:-5000}/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

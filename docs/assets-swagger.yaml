@@ -1,0 +1,265 @@
+openapi: '3.0.0'
+info:
+  title: Assets
+  version: '1.0.0'
+  description: User asset library — files organized into groups with tags, alt-text, and usage tracking.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /assets/groups:
+    get:
+      summary: List all asset groups
+      tags: [Asset Groups]
+      responses:
+        '200':
+          description: Group list
+    post:
+      summary: Create an asset group
+      tags: [Asset Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                parent_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                color: { type: string, example: '#3B82F6' }
+                icon: { type: string }
+      responses:
+        '201':
+          description: Group created
+
+  /assets/groups/{groupId}:
+    get:
+      summary: Get asset group by ID
+      tags: [Asset Groups]
+      parameters:
+        - in: path
+          name: groupId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Group details
+    put:
+      summary: Update asset group
+      tags: [Asset Groups]
+      parameters:
+        - in: path
+          name: groupId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Group updated
+    delete:
+      summary: Delete asset group
+      tags: [Asset Groups]
+      parameters:
+        - in: path
+          name: groupId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Group deleted
+
+  /assets/usage:
+    get:
+      summary: Get storage usage for the current user
+      tags: [Assets]
+      responses:
+        '200':
+          description: Usage payload (used bytes, limit, percent)
+
+  /assets:
+    get:
+      summary: List assets for the current user
+      tags: [Assets]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 100 }
+        - in: query
+          name: group_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: type
+          schema: { type: string, enum: [image, video, document] }
+        - in: query
+          name: tags
+          schema: { type: string, description: 'Comma-separated tags' }
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: sort
+          schema: { type: string, default: created_at }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: Paginated asset list
+
+  /assets/upload:
+    post:
+      summary: Upload a new asset
+      tags: [Assets]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                group_id:
+                  type: string
+                  format: uuid
+                tags:
+                  type: string
+                  description: 'Comma-separated tags'
+                alt_text:
+                  type: string
+      responses:
+        '201':
+          description: Asset uploaded
+        '402':
+          description: Storage limit exceeded
+
+  /assets/move:
+    post:
+      summary: Move assets to a different group
+      tags: [Assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_ids]
+              properties:
+                asset_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                group_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '200':
+          description: Assets moved
+
+  /assets/batch-tag:
+    post:
+      summary: Batch-update tags on multiple assets
+      tags: [Assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_ids, tags]
+              properties:
+                asset_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                tags:
+                  type: array
+                  items: { type: string }
+                mode:
+                  type: string
+                  enum: [add, replace, remove]
+      responses:
+        '200':
+          description: Tags updated
+
+  /assets/{assetId}:
+    get:
+      summary: Get asset by ID
+      tags: [Assets]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Asset details
+    put:
+      summary: Update asset metadata
+      tags: [Assets]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: array
+                  items: { type: string }
+                alt_text: { type: string }
+                group_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '200':
+          description: Asset updated
+    delete:
+      summary: Delete an asset
+      tags: [Assets]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Asset deleted
+
+  /assets/{assetId}/in-use:
+    get:
+      summary: Check where an asset is in use
+      tags: [Assets]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: References to the asset

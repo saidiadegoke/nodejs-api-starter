@@ -1,0 +1,46 @@
+openapi: '3.0.0'
+info:
+  title: Shared
+  version: '1.0.0'
+  description: Shared reference data (countries list, lookups).
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+paths:
+  /shared/countries:
+    get:
+      summary: List all countries
+      tags: [Countries]
+      responses:
+        '200':
+          description: Countries list
+
+  /shared/countries/search:
+    get:
+      summary: Search countries by name
+      tags: [Countries]
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Matching countries
+
+  /shared/countries/{id}:
+    get:
+      summary: Get country by ID
+      tags: [Countries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Country
+        '404':
+          description: Not found

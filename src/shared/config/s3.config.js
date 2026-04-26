@@ -17,7 +17,7 @@ const s3Config = {
 
 const s3Client = new S3Client(s3Config);
 
-const s3BucketName = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_S3_BUCKET || 'opinionpulse-files';
+const s3BucketName = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_S3_BUCKET || 'app-files';
 const s3BucketBaseUrl = process.env.AWS_S3_BUCKET_BASE_URL;
 
 module.exports = {

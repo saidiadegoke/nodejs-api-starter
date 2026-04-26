@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../../config/env.config');
+const AuthService = require('../../modules/auth/services/auth.service');
 const { logger } = require('../utils/logger');
 
 /**
@@ -30,10 +31,10 @@ const optionalAuth = async (req, res, next) => {
       // Verify token
       const payload = jwt.verify(token, jwtSecret);
 
-      // Attach user info to request (with roles from JWT)
+      // Role name strings only (ignore any legacy object blobs in the `roles` claim)
       req.user = {
         user_id: payload.user_id,
-        roles: payload.roles || [],
+        roles: AuthService.rolesClaimForToken(payload.roles || []),
         session_id: payload.session_id,
         type: payload.type
       };

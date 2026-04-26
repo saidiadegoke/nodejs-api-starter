@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../../config/env.config');
+const AuthService = require('../../modules/auth/services/auth.service');
 const { sendError } = require('../utils/response');
 const { UNAUTHORIZED } = require('../constants/statusCodes');
 const { logger } = require('../utils/logger');
@@ -23,13 +24,12 @@ const authenticate = async (req, res, next) => {
       return sendError(res, 'Authentication required', UNAUTHORIZED);
     }
     
-    // Verify token directly (don't depend on AuthService to avoid circular dependency)
     const payload = jwt.verify(token, jwtSecret);
     
-    // Attach user info to request (with roles from JWT)
+    // Attach user info to request (role name strings only; never pass through embedded permission objects)
     req.user = {
       user_id: payload.user_id,
-      roles: payload.roles || [],
+      roles: AuthService.rolesClaimForToken(payload.roles || []),
       session_id: payload.session_id,
       type: payload.type
     };

@@ -133,9 +133,9 @@ Usage:
   node scripts/add-permission-to-role.js --list-permissions
 
 Examples:
-  node scripts/add-permission-to-role.js admin analytics.view
-  node scripts/add-permission-to-role.js moderator polls.moderate
-  node scripts/add-permission-to-role.js content_creator authoring.create
+  node scripts/add-permission-to-role.js admin system.admin
+  node scripts/add-permission-to-role.js agent users.update
+  node scripts/add-permission-to-role.js editor users.view
 
 Options:
   --list-roles        List all available roles

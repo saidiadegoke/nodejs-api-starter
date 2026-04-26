@@ -35,11 +35,7 @@ class UserProfileController {
           p.state_province,
           p.educational_level,
           p.employment_status,
-          p.profile_completed,
-          p.rating_average as rating,
-          p.rating_count as total_ratings,
-          p.total_orders,
-          p.completed_orders
+          p.profile_completed
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         LEFT JOIN countries c ON p.country_id = c.id
@@ -70,10 +66,6 @@ class UserProfileController {
         roles: roles,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted', // TODO: Implement KYC
-        stats: {
-          total_orders: user.total_orders || 0,
-          completed_orders: user.completed_orders || 0
-        },
         settings: {
           notifications_enabled: true,
           push_notifications: true,
@@ -261,11 +253,7 @@ class UserProfileController {
           p.state_province,
           p.educational_level,
           p.employment_status,
-          p.profile_completed,
-          p.rating_average as rating,
-          p.rating_count as total_ratings,
-          p.total_orders,
-          p.completed_orders
+          p.profile_completed
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         LEFT JOIN countries c ON p.country_id = c.id
@@ -296,10 +284,6 @@ class UserProfileController {
         roles: roles,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted',
-        stats: {
-          total_orders: user.total_orders || 0,
-          completed_orders: user.completed_orders || 0
-        },
         settings: {
           notifications_enabled: true,
           push_notifications: true,
@@ -336,42 +320,8 @@ class UserProfileController {
       const role = roleResult.rows[0]?.name || 'user';
 
       const stats = {
-        role: role,
-        customer_stats: {
-          total_orders: 0,
-          completed_orders: 0,
-          cancelled_orders: 0,
-          total_spent: 0,
-          average_order_value: 0,
-          favorite_categories: []
-        }
+        role
       };
-
-      if (role === 'admin' || role === 'super_admin') {
-        stats.provider_stats = {
-          total_orders: 0,
-          completed_orders: 0,
-          cancelled_orders: 0,
-          total_earned: 0,
-          average_earnings_per_order: 0,
-          acceptance_rate: 0,
-          completion_rate: 0,
-          rating_breakdown: {
-            overall: 0,
-            timeliness: 0,
-            communication: 0,
-            quality: 0
-          },
-          this_week: {
-            orders: 0,
-            earnings: 0
-          },
-          this_month: {
-            orders: 0,
-            earnings: 0
-          }
-        };
-      }
 
       sendSuccess(res, stats, 'Statistics retrieved successfully', OK);
     } catch (error) {
@@ -387,13 +337,11 @@ class UserProfileController {
       const userId = req.params.user_id;
 
       const result = await pool.query(
-        `SELECT 
+        `SELECT
           u.id as user_id,
           p.first_name,
           p.last_name,
           p.profile_photo_url as profile_photo,
-          p.rating_average as rating,
-          p.rating_count as total_ratings,
           u.created_at
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
@@ -472,78 +420,6 @@ class UserProfileController {
     }
   }
 
-  /**
-   * Get user's own stories (context sources)
-   */
-  static async getUserStories(req, res) {
-    try {
-      const userId = req.user.user_id;
-      const { page = 1, limit = 20 } = req.query;
-      const offset = (page - 1) * limit;
-
-      // Get user's context sources with accurate counts
-      const result = await pool.query(
-        `SELECT 
-          cs.id,
-          cs.title,
-          cs.summary,
-          cs.source_type,
-          cs.source_url,
-          cs.author,
-          cs.publisher,
-          cs.publication_date,
-          cs.credibility_score,
-          cs.tags,
-          cs.created_at,
-          cs.updated_at,
-          COALESCE(comment_counts.comment_count, 0) as comments,
-          COALESCE(view_counts.view_count, 0) as views
-        FROM context_sources cs
-        LEFT JOIN (
-          SELECT 
-            commentable_id,
-            COUNT(*) as comment_count
-          FROM comments 
-          WHERE commentable_type = 'context_source'
-          GROUP BY commentable_id
-        ) comment_counts ON comment_counts.commentable_id = cs.id
-        LEFT JOIN (
-          SELECT 
-            source_id,
-            COUNT(DISTINCT user_id) as view_count
-          FROM context_engagements 
-          WHERE engagement_type = 'view'
-          GROUP BY source_id
-        ) view_counts ON view_counts.source_id = cs.id
-        WHERE cs.created_by = $1
-        ORDER BY cs.created_at DESC
-        LIMIT $2 OFFSET $3`,
-        [userId, limit, offset]
-      );
-
-      // Get total count
-      const countResult = await pool.query(
-        'SELECT COUNT(*) FROM context_sources WHERE created_by = $1',
-        [userId]
-      );
-
-      const total = parseInt(countResult.rows[0].count);
-      const pages = Math.ceil(total / limit);
-
-      sendSuccess(res, {
-        stories: result.rows,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages
-        }
-      }, 'User stories retrieved successfully', OK);
-    } catch (error) {
-      console.error('Error getting user stories:', error);
-      sendError(res, error.message, BAD_REQUEST);
-    }
-  }
 }
 
 module.exports = UserProfileController;

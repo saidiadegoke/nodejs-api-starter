@@ -86,21 +86,6 @@ class AuthService {
       user_agent: 'web'
     });
 
-    // Attribution: create referral if referral_code provided (first referrer wins)
-    if (referral_code && referral_code.trim()) {
-      try {
-        const ReferralService = require('../../referrals/services/referral.service');
-        const ReferralCodeService = require('../../referrals/services/referralCode.service');
-        const referrerId = await ReferralCodeService.resolveCode(referral_code.trim());
-        if (referrerId && referrerId !== user.id) {
-          await ReferralService.createReferral(referrerId, user.id, referral_code.trim());
-        }
-      } catch (refErr) {
-        // Non-fatal: log and continue (don't fail registration)
-        console.warn('[Auth] Referral attribution failed:', refErr.message);
-      }
-    }
-
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -184,7 +169,7 @@ class AuthService {
         role: roleNames[0] || null,
         roles: roleNames,
         profile_photo: user.profile_photo_url || null,
-        rating: user.rating_average || null,
+        rating: null,
         verified: user.email_verified && user.phone_verified,
         created_at: user.created_at
       }
@@ -192,13 +177,29 @@ class AuthService {
   }
 
   /**
-   * Generate access token
+   * Role names only for JWT `roles` claim — never embed permission rows or other objects.
+   */
+  static rolesClaimForToken(roles) {
+    if (!Array.isArray(roles)) return [];
+    const names = roles
+      .map((r) => {
+        if (typeof r === 'string' && r.length > 0) return r;
+        if (r && typeof r === 'object' && typeof r.name === 'string' && r.name.length > 0) return r.name;
+        return null;
+      })
+      .filter(Boolean);
+    return [...new Set(names)];
+  }
+
+  /**
+   * Generate access token (minimal claims: user_id, role name strings, type).
+   * Permissions are resolved server-side (e.g. GET /users/me/permissions, RBAC middleware).
    */
   static generateAccessToken(userId, roles = []) {
     return jwt.sign(
-      { 
-        user_id: userId, 
-        roles,
+      {
+        user_id: userId,
+        roles: this.rolesClaimForToken(roles),
         type: 'access'
       },
       jwtSecret,

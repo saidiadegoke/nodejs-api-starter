@@ -13,6 +13,18 @@ const LOG_DIR = process.env.LOG_DIR || '';
 const LOG_MAX_DAYS = process.env.LOG_MAX_DAYS || '14';
 const LOG_DATE_PATTERN = process.env.LOG_DATE_PATTERN || 'YYYY-MM-DD';
 
+/** Winston level: LOG_LEVEL wins; else debug in development or when LOG_DEBUG=true; else info */
+function resolveLogLevel() {
+  const explicit = process.env.LOG_LEVEL && String(process.env.LOG_LEVEL).trim();
+  if (explicit) {
+    return String(process.env.LOG_LEVEL).trim().toLowerCase();
+  }
+  if (process.env.NODE_ENV === 'development' || process.env.LOG_DEBUG === 'true') {
+    return 'debug';
+  }
+  return 'info';
+}
+
 function formatEntry(level, message, meta = {}) {
   const entry = {
     level,
@@ -75,7 +87,7 @@ if (LOG_DIR) {
 }
 
 const winstonLogger = winston.createLogger({
-  level: process.env.NODE_ENV === 'development' || process.env.LOG_DEBUG === 'true' ? 'debug' : 'info',
+  level: resolveLogLevel(),
   transports,
 });
 
@@ -93,9 +105,7 @@ const logger = {
   },
 
   debug: (message, meta = {}) => {
-    if (process.env.NODE_ENV === 'development' || process.env.LOG_DEBUG === 'true') {
-      winstonLogger.debug(message, meta);
-    }
+    winstonLogger.debug(message, meta);
   },
 
   /** Log a request for monitoring dashboards (method, path, statusCode, durationMs, requestId). */

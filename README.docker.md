@@ -1,78 +1,62 @@
-# SmartStore API - Docker Deployment
+# Docker Deployment
 
 This service can be deployed independently using Docker.
 
 ## Quick Start
 
-1. **Set environment variables** (via `.env` file or system environment):
+1. **Set environment variables** (via `.env` file):
    ```bash
-   # Required variables
    DB_HOST=your-postgres-host
    DB_PORT=5432
-   DB_USER=smartstore
+   DB_USER=postgres
    DB_PASSWORD=your-secure-password
-   DB_NAME=smartstore_db
+   DB_NAME=your_app
    JWT_SECRET=your-strong-secret-key
    JWT_REFRESH_SECRET=your-strong-refresh-secret
-   NEXT_PUBLIC_API_URL=https://api.your-domain.com
+   API_BASE_URL=https://api.your-domain.com
+   FRONTEND_URL=https://your-domain.com
    CORS_ORIGIN=https://your-domain.com
    ```
 
 2. **Build and start**:
    ```bash
-   cd smartstore-api
-   docker-compose up -d
+   docker compose up -d --build
    ```
 
-3. **Run migrations**:
+3. **Run migrations and seed**:
    ```bash
-   docker-compose exec api npm run migrate
+   docker compose exec api npm run migrate
+   docker compose exec api npm run seed
    ```
 
 ## Environment Variables
 
-All environment variables must be set. See `../env.example` for a complete list.
+See `.env.example` for the complete list.
 
-## Building
-
-```bash
-# Build image
-docker-compose build
-
-# Build without cache
-docker-compose build --no-cache
-```
-
-## Running
+## Common Commands
 
 ```bash
-# Start service
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop service
-docker-compose stop
-
-# Stop and remove
-docker-compose down
+docker compose build                   # build image
+docker compose build --no-cache        # clean rebuild
+docker compose up -d                   # start
+docker compose logs -f                 # tail logs
+docker compose stop                    # stop
+docker compose down                    # stop and remove containers
+docker compose exec api sh             # shell into the container
 ```
 
 ## Health Check
 
-The service includes a health check endpoint:
-- URL: `http://localhost:4050/health`
-- Check status: `docker-compose ps`
+The container exposes a health check:
+
+- URL: `http://localhost:5000/health`
+- Status: `docker compose ps`
 
 ## Volumes
 
-- `api_uploads`: Persistent storage for file uploads
+- `api_uploads` — persistent storage for file uploads (mounted at `/app/uploads`)
 
 ## Ports
 
-- **Internal Port**: `4050` (service listens on this port)
-- **External Access**: Via Nginx at `api.smartstore.ng` (port 80/443)
-- **Direct Access**: Optional - uncomment ports in docker-compose.yml if needed for debugging
-- **Override**: Set `API_PORT` environment variable
-
+- Internal: `5000` (override with `PORT`)
+- The `docker-compose.yml` binds `${PORT:-5000}:${PORT:-5000}` — expose behind your reverse proxy (Nginx / Traefik / Caddy) in production.

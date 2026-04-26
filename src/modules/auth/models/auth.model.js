@@ -60,7 +60,7 @@ class AuthModel {
    */
   static async findByIdentifier(identifier) {
     const result = await pool.query(
-      `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url, p.rating_average
+      `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
        FROM users u
        LEFT JOIN profiles p ON u.id = p.user_id
        WHERE (u.email = $1 OR u.phone = $1)

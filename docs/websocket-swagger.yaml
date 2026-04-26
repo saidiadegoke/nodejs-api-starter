@@ -1,0 +1,37 @@
+openapi: '3.0.0'
+info:
+  title: WebSocket
+  version: '1.0.0'
+  description: |
+    Real-time messaging. The WebSocket server runs on the same HTTP server under Socket.IO.
+
+    **Connect**: `io(baseUrl, { auth: { token: '<jwt>' } })`
+
+    **Rooms**: each connected user is auto-joined to `user:<userId>` and receives events emitted to that room (e.g. `notification`, `user_profile_updated`).
+
+    This HTTP module only exposes admin stats; message delivery happens over the socket transport.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /websocket/stats:
+    get:
+      summary: Get WebSocket connection statistics (admin only)
+      tags: [WebSocket]
+      responses:
+        '200':
+          description: Stats payload with connectedUsers and totalConnections
+        '403':
+          description: Admin access required

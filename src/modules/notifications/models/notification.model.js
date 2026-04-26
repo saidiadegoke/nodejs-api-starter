@@ -17,18 +17,16 @@ class NotificationModel {
     const {
       user_id,
       type,
-      actor_id,
-      poll_id = null,
-      comment_id = null,
+      actor_id = null,
       message,
       metadata = {}
     } = data;
 
     const result = await pool.query(
-      `INSERT INTO notifications (user_id, type, actor_id, poll_id, comment_id, message, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO notifications (user_id, type, actor_id, message, metadata)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [user_id, type, actor_id, poll_id, comment_id, message, JSON.stringify(metadata)]
+      [user_id, type, actor_id, message, JSON.stringify(metadata)]
     );
 
     return result.rows[0];
@@ -57,13 +55,10 @@ class NotificationModel {
         actor.email as actor_email,
         actor_prof.first_name as actor_first_name,
         actor_prof.last_name as actor_last_name,
-        actor_prof.profile_photo_url as actor_photo,
-        p.question as poll_question,
-        p.title as poll_title
+        actor_prof.profile_photo_url as actor_photo
       FROM notifications n
       LEFT JOIN users actor ON n.actor_id = actor.id
       LEFT JOIN profiles actor_prof ON actor.id = actor_prof.user_id
-      LEFT JOIN polls p ON n.poll_id = p.id
       WHERE ${whereClause}
       ORDER BY n.created_at DESC
       LIMIT $2 OFFSET $3`,

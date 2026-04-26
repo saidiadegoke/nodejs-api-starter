@@ -6,7 +6,7 @@ const { runSeeds } = require('./db/seed');
 const webSocketService = require('./shared/services/websocket.service');
 const http = require('http');
 
-const PORT = port || 4050;
+const PORT = port || 9999;
 
 // Test database connection and run idempotent seeds before starting server
 const startServer = async () => {

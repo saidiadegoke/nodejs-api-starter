@@ -11,7 +11,7 @@ class FileService {
    *
    * @param {Object} file - Multer file object (with buffer)
    * @param {string} uploadedBy - User UUID
-   * @param {string} context - File context (profile_photo, poll_image, etc.)
+   * @param {string} context - File context (profile_photo, user_assets, etc.)
    * @returns {Promise<Object>} Uploaded file record
    */
   static async uploadFile(file, uploadedBy, context = 'general') {
@@ -87,7 +87,7 @@ class FileService {
     const fileData = {
       provider: provider,
       provider_path: `/uploads/${context}/${fileId}`,
-      file_url: `https://cdn.runcitygo.com/uploads/${context}/${fileId}`,
+      file_url: `${process.env.API_BASE_URL || 'http://localhost:5000'}/uploads/${context}/${fileId}`,
       file_type: mimeType,
       file_size: fileSize,
       uploaded_by: uploadedBy,

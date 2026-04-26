@@ -46,7 +46,7 @@ const sendEmail = async ({ to, subject, templateFile, placeholders, replyTo, fro
 
     // Mail options configuration
     const mailOptions = {
-      from: `"SmartStore" <${fromEmail || process.env.FROM_EMAIL}>`,
+      from: `"${process.env.APP_NAME || 'App'}" <${fromEmail || process.env.FROM_EMAIL}>`,
       to,
       subject,
       html: htmlContent,

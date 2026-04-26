@@ -112,14 +112,6 @@ class FileModel {
     
     if (profilePhotos.rows.length > 0) return true;
 
-    // Check if used in polls
-    const pollImages = await pool.query(
-      'SELECT 1 FROM poll_images WHERE file_id = $1 LIMIT 1',
-      [fileId]
-    );
-    
-    if (pollImages.rows.length > 0) return true;
-
     return false;
   }
 

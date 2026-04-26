@@ -1,312 +1,120 @@
-# RunCityGo Backend Setup Guide
+# Setup Guide
 
 ## Prerequisites
-- Node.js v16+
-- PostgreSQL v13+
-- npm or pnpm
+
+- Node.js 18+
+- PostgreSQL 13+
+- npm
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Install dependencies
+
 ```bash
-cd runcitygo-backend
 npm install
 ```
 
-### 2. Setup Environment Variables
-Create a `.env` file in the root directory:
+### 2. Configure environment
 
-```env
-# Server Configuration
-PORT=3010
-NODE_ENV=development
-
-# Database Configuration
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=your_postgres_password
-DB_NAME=runcitygo_db
-
-# JWT Configuration
-JWT_SECRET=dev-secret-key-change-in-production-12345678
-JWT_EXPIRES_IN=1h
-JWT_REFRESH_SECRET=dev-refresh-secret-key-change-in-production-12345678
-JWT_REFRESH_EXPIRES_IN=30d
-
-# CORS Configuration
-CORS_ORIGIN=http://localhost:3000,http://localhost:3001
-
-# API Base URL
-API_BASE_URL=http://localhost:3010/api
-
-# Rate Limiting
-RATE_LIMIT_ENABLED=false
-
-# Logging
-LOG_LEVEL=info
-```
-
-### 3. Create Database
 ```bash
-# Using psql
-psql -U postgres -c "CREATE DATABASE runcitygo_db;"
-
-# Or using createdb
-createdb -U postgres runcitygo_db
+cp .env.example .env
 ```
 
-### 4. Run Migrations
+Edit `.env` and set at minimum:
+
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `JWT_SECRET`, `JWT_REFRESH_SECRET` (use long random strings, e.g. `openssl rand -base64 48`)
+- `CORS_ORIGIN` (comma-separated list of allowed frontend origins)
+
+Leave `AWS_*`, `SMTP_*`, and OAuth client credentials blank if you don't use them — the corresponding features degrade gracefully.
+
+### 3. Create the database
+
+```bash
+createdb your_app   # must match DB_NAME in .env
+```
+
+### 4. Run migrations and seed
+
 ```bash
 npm run migrate
-```
-
-This will create all tables:
-
-**Migration 001 - Users & Auth:**
-- ✅ users, profiles
-- ✅ roles, permissions
-- ✅ user_roles, role_permissions, user_permissions
-- ✅ social_accounts, user_sessions
-- ✅ password_resets, verification_tokens
-
-**Migration 002 - Files, Locations, Orders:**
-- ✅ countries (with ISO codes and phone codes)
-- ✅ files (centralized file storage)
-- ✅ locations (centralized GPS & address storage)
-- ✅ user_addresses (multiple addresses per user)
-- ✅ orders, order_items
-- ✅ order_reference_photos, order_progress_photos
-- ✅ order_timeline, order_location_tracking
-
-### 5. Seed Database
-```bash
 npm run seed
 ```
 
-This will create:
-- ✅ 5 System Roles: customer, shopper, dispatcher, admin, support
-- ✅ 20+ Base Permissions
-- ✅ Role-Permission assignments
-- ✅ 1 Super Admin user
+Seeding creates:
 
-**Super Admin Credentials:**
-- Email: `admin@runcitygo.com`
-- Phone: `+2348100000000`
-- Password: `Admin@123456`
+- A super admin user: `admin@example.com` / password `Admin@12` (change after first login)
+- System roles: `super_admin`, `admin`, `agent`, `user`
+- Base permissions on `system.*` and `users.*`
+- A list of ~30 countries with ISO codes and phone codes
 
-### 6. Start Server
-```bash
-# Development mode (with auto-reload)
-npm run dev
-
-# Production mode
-npm start
-```
-
-Server will run on: `http://localhost:3010`
-
-### 7. Run Tests
-
-**In a separate terminal** (make sure server is running):
+### 5. Start the server
 
 ```bash
-# Run all tests
-npm test
-
-# Run authentication tests only
-npm run test:auth
-
-# Run RBAC tests only
-npm run test:rbac
-
-# Run Order tests only
-npm run test:orders
-
-# Watch mode for development
-npm run test:watch
-
-# Verbose output
-npm run test:verbose
+npm run dev    # nodemon, auto-reload
+# or
+npm start      # production
 ```
 
-## Seeded Data
+Default port is `5000`. The API is available at:
 
-### Roles Created
-1. **customer** - Regular customers who create orders
-2. **shopper** - Service providers who fulfill shopping orders
-3. **dispatcher** - Delivery personnel
-4. **admin** - Platform administrators (all permissions)
-5. **support** - Customer support agents
+- `GET /` — version info + endpoint list
+- `GET /health` — liveness check
+- `GET /docs` — Swagger UI index
 
-### Permissions Created
-
-**Orders:**
-- orders.create, orders.read, orders.update, orders.delete
-- orders.list, orders.accept, orders.complete
-
-**Users:**
-- users.read, users.update, users.manage, users.delete
-
-**Payments:**
-- payments.read, payments.create, payments.refund
-
-**Wallet:**
-- wallet.read, wallet.withdraw, wallet.topup
-
-**Support:**
-- support.tickets, support.respond
-
-**Admin:**
-- admin.dashboard, admin.reports, admin.settings
-
-### Role-Permission Mapping
-
-| Permission | Customer | Shopper | Dispatcher | Support | Admin |
-|------------|----------|---------|------------|---------|-------|
-| orders.create | ✓ | | | | ✓ |
-| orders.accept | | ✓ | ✓ | | ✓ |
-| orders.complete | | ✓ | ✓ | | ✓ |
-| users.manage | | | | ✓ | ✓ |
-| wallet.withdraw | | ✓ | ✓ | | ✓ |
-| admin.* | | | | | ✓ |
-
-## Test Users
-
-**Only Super Admin is seeded.** All other test users are created dynamically during tests and automatically cleaned up after tests complete.
-
-## Database Cleanup
-
-If tests fail or you need to clean up test data:
+### 6. Run tests
 
 ```bash
-# Clean test data from database
-npm run test:cleanup
+npm test                  # all tests with coverage
+npm run test:auth         # auth only
+npm run test:rbac         # RBAC only
+npm run test:watch        # watch mode
+npm run test:cleanup      # clear test data
 ```
 
-This will remove all test users (emails like `test%@example.com`).
+## RBAC Management
+
+Built-in CLI scripts manage roles and permissions without touching SQL:
+
+```bash
+npm run rbac:setup                    # seed common roles/permissions
+npm run rbac:create-role              # new role
+npm run rbac:create-permission        # new permission
+npm run rbac:add-permission-to-role   # grant a permission to a role
+npm run rbac:add-role-to-user         # assign a role to a user
+npm run rbac:list-user-roles          # list a user's roles
+npm run rbac:list-role-permissions    # list permissions under a role
+```
+
+Run `npm run rbac` with no args for full usage.
 
 ## Troubleshooting
 
-### Database Connection Error
+### Database connection error
+
 ```bash
-# Check if PostgreSQL is running
-pg_isready
+pg_isready                          # is Postgres running?
+psql -U postgres -l | grep your_app # does the DB exist?
 
-# Check if database exists
-psql -U postgres -l | grep runcitygo_db
-
-# Recreate database if needed
-dropdb -U postgres runcitygo_db
-createdb -U postgres runcitygo_db
-npm run migrate
-npm run seed
+# Reset (destroys data)
+dropdb your_app && createdb your_app
+npm run migrate && npm run seed
 ```
 
-### Port Already in Use
-```bash
-# Find process using port 3010
-lsof -ti:3010
+### Port already in use
 
-# Kill process
-kill -9 $(lsof -ti:3010)
+```bash
+lsof -ti:5000 | xargs kill -9
 ```
 
-### Migration Errors
-```bash
-# Reset database (⚠️ This will delete all data)
-dropdb -U postgres runcitygo_db
-createdb -U postgres runcitygo_db
-npm run migrate
-npm run seed
-```
+### Migrations out of order
 
-### Test Failures
-```bash
-# Ensure server is running
-npm run dev
-
-# In another terminal, run tests
-npm test
-
-# If tests leave data behind
-npm run test:cleanup
-```
-
-## API Endpoints
-
-Once server is running, access:
-- API Info: `http://localhost:3010/api`
-- Health Check: `http://localhost:3010/api/health`
-
-### Authentication Endpoints
-- Register: `POST http://localhost:3010/api/auth/register`
-- Login: `POST http://localhost:3010/api/auth/login`
-- Verify Phone: `POST http://localhost:3010/api/auth/verify-phone`
-
-### User Endpoints (requires auth)
-- Profile: `GET http://localhost:3010/api/users/me`
-- Addresses: `GET http://localhost:3010/api/users/me/addresses`
-
-### Order Endpoints (requires auth)
-- Create Order: `POST http://localhost:3010/api/orders`
-- List Orders: `GET http://localhost:3010/api/orders`
-- Order Details: `GET http://localhost:3010/api/orders/:id`
-
-### Public Endpoints
-- Countries: `GET http://localhost:3010/api/shared/countries`
+Migrations run in filename order (`src/db/migrations/*.sql`). The runner tracks applied migrations in a `migrations` table; drop rows from there to replay a specific migration during development.
 
 ## Next Steps
 
-1. ✅ Setup completed
-2. ✅ Database migrated and seeded
-3. ✅ Super admin created
-4. ✅ Countries populated (Nigeria, US, UK, Ghana, Kenya, etc.)
-5. 🔄 Run tests to verify everything works
-6. 🚀 Start building features!
+- Add a business module: copy the shape of `src/modules/users/` (routes + controllers + services + models) and mount it in `src/routes/index.js`.
+- Add a Swagger spec for it: create `docs/{your-module}-swagger.yaml` and register it in the `swaggerDocs` map.
+- Add permissions: append to `src/db/seeds/002_seed_rbac.sql` or use the RBAC CLI.
 
-## Testing the API
-
-### Quick API Test
-```bash
-# Test health endpoint
-curl http://localhost:3010/api/health
-
-# Register a new customer
-curl -X POST http://localhost:3010/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "phone": "08012345678",
-    "password": "Test@123456",
-    "first_name": "Test",
-    "last_name": "User",
-    "role": "customer"
-  }'
-
-# Login
-curl -X POST http://localhost:3010/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "identifier": "test@example.com",
-    "password": "Test@123456"
-  }'
-
-# Get countries
-curl http://localhost:3010/api/shared/countries
-```
-
-## Need Help?
-
-Check the test files for API usage examples:
-- `src/tests/auth.test.js` - Authentication examples (30+ tests)
-- `src/tests/rbac.test.js` - RBAC examples (40+ tests)
-- `src/tests/orders.test.js` - Order management examples (30+ tests)
-- `src/tests/README.md` - Complete test documentation
-
-**Want to add a new module?** See `CONTRIBUTING.md` for step-by-step guide!
-
-## 📧 Support
-
-For questions or support, contact: info@runcitygo.com
-
+See `CONTRIBUTING.md` for conventions.

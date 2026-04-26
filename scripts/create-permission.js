@@ -3,7 +3,7 @@
 /**
  * CLI Script: Create Permission
  * Usage: node scripts/create-permission.js <resource> <action> [description]
- * Example: node scripts/create-permission.js polls create "Create new polls"
+ * Example: node scripts/create-permission.js users moderate "Moderate user accounts"
  */
 
 const { Pool } = require('pg');
@@ -108,38 +108,7 @@ async function createCommonPermissions() {
     { resource: 'users', action: 'create', description: 'Create new user accounts' },
     { resource: 'users', action: 'update', description: 'Update user profiles and settings' },
     { resource: 'users', action: 'delete', description: 'Delete user accounts' },
-    { resource: 'users', action: 'moderate', description: 'Moderate user accounts and content' },
-    
-    // Poll management
-    { resource: 'polls', action: 'view', description: 'View polls and responses' },
-    { resource: 'polls', action: 'create', description: 'Create new polls' },
-    { resource: 'polls', action: 'update', description: 'Update own polls' },
-    { resource: 'polls', action: 'delete', description: 'Delete own polls' },
-    { resource: 'polls', action: 'moderate', description: 'Moderate any polls' },
-    { resource: 'polls', action: 'respond', description: 'Respond to polls' },
-    
-    // Comments
-    { resource: 'comments', action: 'view', description: 'View comments' },
-    { resource: 'comments', action: 'create', description: 'Create comments' },
-    { resource: 'comments', action: 'update', description: 'Update own comments' },
-    { resource: 'comments', action: 'delete', description: 'Delete own comments' },
-    { resource: 'comments', action: 'moderate', description: 'Moderate any comments' },
-    
-    // Analytics
-    { resource: 'analytics', action: 'view', description: 'View analytics and statistics' },
-    { resource: 'analytics', action: 'export', description: 'Export analytics data' },
-    
-    // Authoring
-    { resource: 'authoring', action: 'create', description: 'Create content using wizards' },
-    { resource: 'authoring', action: 'bulk_create', description: 'Create content in bulk' },
-    
-    // Context sources (stories)
-    { resource: 'context_sources', action: 'view', description: 'View context sources' },
-    { resource: 'context_sources', action: 'create', description: 'Create context sources' },
-    { resource: 'context_sources', action: 'update', description: 'Update own context sources' },
-    { resource: 'context_sources', action: 'delete', description: 'Delete own context sources' },
-    { resource: 'context_sources', action: 'moderate', description: 'Moderate any context sources' },
-    
+
     // System administration
     { resource: 'system', action: 'admin', description: 'Full system administration access' },
     { resource: 'system', action: 'config', description: 'Manage system configuration' },
@@ -169,9 +138,9 @@ Usage:
   node scripts/create-permission.js --create-common
 
 Examples:
-  node scripts/create-permission.js polls create "Create new polls"
   node scripts/create-permission.js users moderate "Moderate user accounts"
-  node scripts/create-permission.js analytics view "View analytics dashboard"
+  node scripts/create-permission.js reports view "View reports"
+  node scripts/create-permission.js reports export "Export report data"
 
 Options:
   --list             List all existing permissions
@@ -180,7 +149,7 @@ Options:
 
 Notes:
   - Permission name will be automatically generated as "resource.action"
-  - resource should be lowercase (e.g., polls, users, comments)
+  - resource should be lowercase (e.g., users, reports)
   - action should be lowercase (e.g., create, view, update, delete)
   - description is optional but recommended
 `);

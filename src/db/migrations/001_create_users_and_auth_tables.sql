@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMP NULL,
-  
+
   CONSTRAINT check_email_or_phone CHECK (email IS NOT NULL OR phone IS NOT NULL)
 );
 
@@ -40,13 +40,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   gender VARCHAR(20),
   preferred_language VARCHAR(10) DEFAULT 'en',
   timezone VARCHAR(50),
-  rating_average DECIMAL(3,2) DEFAULT 0.0,
-  rating_count INTEGER DEFAULT 0,
-  total_orders INTEGER DEFAULT 0,
-  completed_orders INTEGER DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -76,7 +72,7 @@ CREATE TABLE IF NOT EXISTS permissions (
   action VARCHAR(50) NOT NULL,
   description TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
+
   UNIQUE(resource, action)
 );
 
@@ -91,7 +87,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
   assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   assigned_by UUID,
   expires_at TIMESTAMP NULL,
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
   FOREIGN KEY (assigned_by) REFERENCES users(id),
@@ -108,7 +104,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   role_id UUID NOT NULL,
   permission_id UUID NOT NULL,
   granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
+
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
   FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE,
   UNIQUE(role_id, permission_id)
@@ -127,7 +123,7 @@ CREATE TABLE IF NOT EXISTS user_permissions (
   granted_by UUID,
   expires_at TIMESTAMP NULL,
   reason TEXT,
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE,
   FOREIGN KEY (granted_by) REFERENCES users(id),
@@ -155,7 +151,7 @@ CREATE TABLE IF NOT EXISTS social_accounts (
   token_expires_at TIMESTAMP,
   connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   UNIQUE(provider, provider_user_id)
 );
@@ -177,7 +173,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   is_revoked BOOLEAN DEFAULT false,
   revoked_at TIMESTAMP NULL,
   revoked_reason VARCHAR(100),
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -198,7 +194,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
   expires_at TIMESTAMP NOT NULL,
   used_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -218,7 +214,7 @@ CREATE TABLE IF NOT EXISTS verification_tokens (
   expires_at TIMESTAMP NOT NULL,
   verified_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -226,4 +222,75 @@ CREATE INDEX idx_verification_tokens_user ON verification_tokens(user_id);
 CREATE INDEX idx_verification_tokens_type ON verification_tokens(type);
 CREATE INDEX idx_verification_tokens_expires ON verification_tokens(expires_at);
 
+-- ============================================================================
+-- FILES
+-- ============================================================================
+-- Core files table for user file uploads (images, documents, etc.)
+-- Used by the files and assets modules
 
+CREATE TABLE IF NOT EXISTS files (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  provider VARCHAR(50) NOT NULL DEFAULT 'local',
+  provider_path TEXT,
+  file_url TEXT NOT NULL,
+  file_type VARCHAR(50) NOT NULL,
+  file_size INTEGER,
+  uploaded_by UUID NOT NULL,
+  context VARCHAR(50) DEFAULT 'general',
+  metadata JSONB DEFAULT '{}'::jsonb,
+  is_public BOOLEAN DEFAULT FALSE,
+  asset_group_id UUID,
+  tags TEXT[],
+  alt_text TEXT,
+  deleted_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_files_uploaded_by ON files(uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_files_context ON files(context);
+CREATE INDEX IF NOT EXISTS idx_files_file_type ON files(file_type);
+CREATE INDEX IF NOT EXISTS idx_files_is_public ON files(is_public);
+CREATE INDEX IF NOT EXISTS idx_files_deleted_at ON files(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_files_asset_group_id ON files(asset_group_id);
+CREATE INDEX IF NOT EXISTS idx_files_tags ON files USING GIN(tags);
+
+-- ============================================================================
+-- ASSET GROUPS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS asset_groups (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  created_by UUID NOT NULL,
+  parent_id UUID REFERENCES asset_groups(id) ON DELETE CASCADE,
+  color VARCHAR(7),
+  icon VARCHAR(50),
+  sort_order INTEGER DEFAULT 0,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_groups_created_by ON asset_groups(created_by);
+CREATE INDEX IF NOT EXISTS idx_asset_groups_parent_id ON asset_groups(parent_id);
+
+-- Link files.asset_group_id to asset_groups
+ALTER TABLE files
+  ADD CONSTRAINT fk_files_asset_group
+  FOREIGN KEY (asset_group_id) REFERENCES asset_groups(id) ON DELETE SET NULL;
+
+-- Trigger: update updated_at on asset_groups changes
+CREATE OR REPLACE FUNCTION update_asset_groups_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_asset_groups_updated_at
+  BEFORE UPDATE ON asset_groups
+  FOR EACH ROW
+  EXECUTE FUNCTION update_asset_groups_updated_at();
