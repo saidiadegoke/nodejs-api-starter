@@ -38,6 +38,7 @@ Use this as a foundation for custom APIs — the modules included are intentiona
 | Swagger basic auth | `API_DOCS_PASSWORD` |
 | Storage quota | `STORAGE_LIMIT_MB` |
 | Payments (Paystack / Flutterwave / bank transfer) | Gateway keys on `payment_methods` rows; optional `PAYMENT_STATS_MONTHLY_GOAL`, `FLW_CHECKOUT_LOGO_URL` (see `.env.example` and **Payments module** below) |
+| Posts (rate limits, comment honeypot) | `POST_READ_RATE_LIMIT_MAX`, `POST_WRITE_RATE_LIMIT_MAX`, `POST_COMMENT_RATE_LIMIT_MAX`, `POST_LIKE_RATE_LIMIT_MAX`, `POST_RATE_LIMIT_WINDOW_MS`, optional `POST_COMMENT_HONEYPOT_FIELD`, `POST_COMMENT_MAX_DEPTH` (see `.env.example` and **Posts module** below) |
 
 ## Generated & local files (do not commit)
 
@@ -57,7 +58,7 @@ Keep secrets and machine-local output out of git. This repo’s `.gitignore` alr
 - **API Keys** — user-scoped, SHA-256-hashed at rest; raw key only shown once; `apiKeyAuth` middleware supports `Bearer sk_...` alongside JWT
 - **Webhooks** — user-scoped subscriptions with HMAC-SHA256 signed payloads; fire-and-forget delivery via `WebhookService.fire(userId, event, payload)`
 - **Payments** — Paystack / Flutterwave checkouts, webhooks, optional direct bank transfer with receipt upload; admin CRUD for `payment_methods` and `bank_accounts`
-- **Posts** — Draft / published / archived content; public feed, per-user slugs, multilevel threaded comments
+- **Posts** — CMS-style articles: drafts / publish / archive, per-user slugs, full-text search, RSS & sitemap, SEO fields + Open Graph, scheduled publish, gallery media (via `files` / assets), threaded comments with moderation, likes, in-app notifications, and env-tunable rate limits (see **Posts module** below)
 - **Swagger docs** — OpenAPI 3.0 specs served at `/docs`, auto-discoverable index
 - **Countries** — Seeded reference lookup
 
@@ -173,7 +174,8 @@ npm test                 # jest with coverage
 npm run test:auth        # auth suite only
 npm run test:rbac        # RBAC suite only
 npm run test:payments    # payments routes smoke (requires DB + migrations)
-npm run test:posts       # posts public list smoke (requires DB + migrations)
+npm run test:posts       # posts smoke (requires DB + migrations)
+npm test -- --testPathPattern=posts.media   # posts ↔ files + og_image + include=media
 
 # RBAC CLI
 npm run rbac:setup
@@ -226,23 +228,50 @@ docker compose exec api npm run seed
 
 ## Posts module
 
-- **Base path:** `/posts` (see `/docs/posts`).
-- **Public:** `GET /posts` lists **published** posts only; `GET /posts/:postId` is public for published rows, or returns a draft to the **author** / **admin** when a valid JWT is sent (`optionalAuth`).
-- **Author:** `POST /posts`, `GET /posts/mine`, `PUT` / `DELETE /posts/:postId` (JWT required). Slugs are normalized (lowercase, URL-safe); uniqueness is per `user_id`.
-- **Admin:** `GET /posts/admin/all` — `admin` or `super_admin` role.
-- **Comments (threaded):** `GET /posts/:postId/comments` — default **`layout=tree`** (nested `replies`). Use **`layout=flat&page=&limit=`** for paginated flat lists (newest first). **Moderation:** non-author comments on **published** posts start as **`pending`**; **`PATCH /posts/:postId/comments/:commentId/moderate`** (`admin` / `super_admin`) with `{ "status": "approved"|"rejected"|"spam" }`. Replies require an **approved** parent. **`GET /posts/admin/comments/pending`** — moderation queue.
-- **Search & feeds:** **`GET /posts/search?q=`** (full-text + rank, published only). **`GET /posts/feed.xml`** (RSS), **`GET /posts/sitemap.xml`**. Listing **`GET /posts?q=`** also uses search when `q` is set.
-- **SEO JSON:** **`GET /posts/:postId/seo`** — Open Graph / Twitter-shaped payload (uses `og_image_file_id` → `files.file_url` when set). **`og_image_file_id`** on create/update must point to an existing, non-deleted **`files`** row **you uploaded** (admins may use any file).
-- **Media:** **`GET /posts/:postId/media`**, **`PUT /posts/:postId/media`** with `{ "items": [ ... ] }` — use **`items: []`** to clear all attachments. Only **files you uploaded** (or **admin**) may be linked. **`GET /posts/:postId?include=media`** embeds the same **`media`** array as the dedicated media endpoint (combine with **`include=likes`** as needed).
-- **Scheduled publish:** set **`scheduled_publish_at`** (ISO) while **`status`** is **`draft`**; rows auto-flip to **`published`** when that time passes (checked on reads that call `applyScheduledPublishing`).
-- **Likes & notify:** **`POST/DELETE /posts/:postId/like`**; **`POST/DELETE .../comments/:commentId/like`**. **`GET /posts/:postId?include=likes`** adds **`engagement`**. In-app **`notifications`** to post/comment authors on new comments, pending queue, and likes (best-effort if table exists).
-- **Rate limits & honeypot:** see **`.env.example`** (`POST_*_RATE_LIMIT_*`, **`POST_COMMENT_HONEYPOT_FIELD`**).
-- **Tests:** `npm run test:posts` (smoke); `npm test -- --testPathPattern=posts.media` covers media attach/clear, `include=media`, and **`og_image_file_id`** validation.
+**Base path:** `/posts` · **OpenAPI:** `/docs/posts` · **Code:** `src/modules/posts/` (routes, controllers, services, models, rate-limit middleware).
+
+### Public (no auth unless noted)
+
+| Area | Endpoints / behavior |
+|------|----------------------|
+| List & read | **`GET /posts`** — published only, optional **`?page`**, **`?limit`**, **`?q`** (search when `q` is set). **`GET /posts/:postId`** — published public; send JWT with **`optionalAuth`** to read your own draft/archived. Query **`?include=likes`** and/or **`?include=media`** to embed engagement or media rows. |
+| Search | **`GET /posts/search?q=`** — required `q`; full-text rank + fallback match (returns **422** if `q` is missing). |
+| Feeds | **`GET /posts/feed.xml`** (RSS), **`GET /posts/sitemap.xml`**. |
+| SEO payload | **`GET /posts/:postId/seo`** — JSON bundle for OG/Twitter (uses **`og_image_file_id`** → **`files`** when set). |
+| Comments (read) | **`GET /posts/:postId/comments`** — **`layout=tree`** (default, nested **`replies`**) or **`layout=flat`** with **`page`**, **`limit`**. Visibility respects moderation (public sees **approved** only). |
+| Media (read) | **`GET /posts/:postId/media`** — file URLs joined from **`post_media`** + **`files`**. |
+
+### Author (JWT)
+
+- **`POST /posts`** — create (body: `title`, optional `slug`, `body`, `excerpt`, `status`, `meta`, SEO fields, **`scheduled_publish_at`**, **`og_image_file_id`**). **`og_image_file_id`** must be your own non-deleted file (same rule as media).
+- **`GET /posts/mine`** — paginate your posts across statuses.
+- **`PUT /posts/:postId`**, **`DELETE /posts/:postId`** — owner (or admin).
+- **`PUT /posts/:postId/media`** — replace gallery: **`{ "items": [ { "file_id", "role"?, "sort_order"? } ] }`** where **`role`** is **`featured`**, **`gallery`**, or **`inline`**. Use **`items: []`** to clear. Files must be **yours** unless caller is admin.
+- **`POST /posts/:postId/comments`**, **`PATCH` / `DELETE`** own comment — see Swagger for bodies.
+- **`POST/DELETE /posts/:postId/like`** and **`POST/DELETE .../comments/:commentId/like`**.
+
+### Admin (`admin` or `super_admin` role)
+
+- **`GET /posts/admin/all`** — list every post; filters for **`status`**, **`q`**.
+- **`GET /posts/admin/comments/pending`** — moderation queue.
+- **`PATCH /posts/:postId/comments/:commentId/moderate`** — body **`status`**: **`approved`**, **`rejected`**, or **`spam`**. Replies on published posts require an **approved** parent before threading.
+
+### Behavior notes
+
+- **Slugs:** normalized (lowercase, URL-safe); **unique per `user_id`** (conflict → **409**).
+- **Scheduled publish:** set **`scheduled_publish_at`** (ISO) on a **draft**; flips to **published** when **`applyScheduledPublishing()`** runs on post reads/lists (no separate cron—add a scheduler in production if you need exact-time publish without traffic).
+- **Notifications:** best-effort rows in **`notifications`** for comments, moderation, and likes (same table as the notifications module).
+- **Anti-abuse:** rate limits via **`POST_*_RATE_LIMIT_MAX`** and **`POST_RATE_LIMIT_WINDOW_MS`**; optional honeypot **`POST_COMMENT_HONEYPOT_FIELD`**; max reply depth **`POST_COMMENT_MAX_DEPTH`** (see **`.env.example`**).
+
+### Tests
+
+- **`npm run test:posts`** — public list, RSS, search, missing-post comments.
+- **`npm test -- --testPathPattern=posts.media`** — upload-style DB fixtures: attach/clear media, **`?include=media`**, **`og_image_file_id`** validation, cross-user file **403**.
 
 ## Payments module
 
 - **Base path:** `/payments` (see `/docs/payments`).
-- **Gateways:** Keys and webhook secrets live on **`payment_methods`** rows (`/payments/payment-methods/admin/...`). Migration `004` seeds inactive placeholder rows; activate and paste keys in admin or SQL.
+- **Gateways:** Keys and webhook secrets live on **`payment_methods`** rows (`/payments/payment-methods/admin/...`). The initial schema migration seeds placeholder gateway rows; activate and paste keys in admin or SQL.
 - **Webhooks:** `POST /payments/webhook/paystack` and `POST /payments/webhook/flutterwave` — point your provider dashboards at your public API URL + these paths.
 - **Direct transfer:** Configure at least one **`bank_accounts`** row and set it active (`/payments/bank-accounts/admin/...`). Customer instructions email uses **`SMTP_*`** / **`FROM_EMAIL`** when set.
 - **Public stats:** `GET /payments/stats` — optional denominator via **`PAYMENT_STATS_MONTHLY_GOAL`** in `.env`.
