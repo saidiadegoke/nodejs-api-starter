@@ -43,7 +43,11 @@ npm run seed
 
 Seeding creates:
 
-- A super admin user: `admin@example.com` / password `Admin@12` (change after first login)
+- A super admin user: **`admin@example.com`** with password **`Admin@12`** (change after first login; matches `src/db/seeds/001_seed_users.sql`).
+
+`npm run seed` is idempotent: if `admin@example.com` already exists, the INSERT is skipped and the **password is not updated**. Older copies of this repo seeded a bcrypt hash for the plaintext **`password`** instead of **`Admin@12`**; if **`Admin@12`** does not work, try **`password`** once, then change password, or run the `UPDATE` suggested in comments at the top of `001_seed_users.sql`.
+
+To set any user’s password from the shell (requires `DB_*` in `.env`): **`npm run rbac:set-user-password -- <email> <new_password>`** (see `scripts/README.md`).
 - System roles: `super_admin`, `admin`, `agent`, `user`
 - Base permissions on `system.*` and `users.*`
 - A list of ~30 countries with ISO codes and phone codes
@@ -109,7 +113,7 @@ lsof -ti:5000 | xargs kill -9
 
 ### Migrations out of order
 
-Migrations run in filename order (`src/db/migrations/*.sql`). The runner tracks applied migrations in a `migrations` table; drop rows from there to replay a specific migration during development.
+Migrations run in filename order (`src/db/migrations/*.sql`). The runner records applied files in **`schema_migrations`**. To replay during development, remove the matching row(s) from that table (or reset the database). The baseline schema ships as **`001_initial_schema.sql`** (one file); older clones that already ran the former `001`–`007` set must not expect a second `001_*` migration to apply automatically—use a fresh DB or reconcile `schema_migrations` if you hit conflicts.
 
 ## Next Steps
 

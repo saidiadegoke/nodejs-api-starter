@@ -15,6 +15,8 @@ const assetsRoutes = require('../modules/assets/routes');
 const adminRoutes = require('../modules/admin/routes');
 const apiKeysRoutes = require('../modules/api-keys/routes');
 const webhooksRoutes = require('../modules/webhooks/routes');
+const paymentsRoutes = require('../modules/payments/routes');
+const postsRoutes = require('../modules/posts/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -48,7 +50,9 @@ router.get('/', (req, res) => {
       websocket: '/docs/websocket',
       admin: '/docs/admin',
       apiKeys: '/docs/api-keys',
-      webhooks: '/docs/webhooks'
+      webhooks: '/docs/webhooks',
+      payments: '/docs/payments',
+      posts: '/docs/posts'
     },
     endpoints: {
       auth: '/auth',
@@ -61,13 +65,17 @@ router.get('/', (req, res) => {
       admin: '/admin',
       apiKeys: '/api-keys',
       webhooks: '/webhooks',
+      payments: '/payments',
+      posts: '/posts',
       health: '/health'
     },
     features: {
       authentication: 'JWT (access + refresh tokens)',
       authorization: 'RBAC (multiple roles per user)',
       file_storage: 'Centralized with multi-provider support',
-      real_time: 'WebSocket support enabled'
+      real_time: 'WebSocket support enabled',
+      payments: 'Paystack, Flutterwave, direct bank transfer, webhooks',
+      posts: 'User-authored posts with draft / published workflow'
     }
   });
 });
@@ -85,6 +93,8 @@ router.use('/assets', assetsRoutes);
 router.use('/admin', adminRoutes);
 router.use('/api-keys', apiKeysRoutes);
 router.use('/webhooks', webhooksRoutes);
+router.use('/payments', paymentsRoutes);
+router.use('/posts', postsRoutes);
 
 /**
  * Swagger API Documentation
@@ -119,7 +129,9 @@ const swaggerDocs = {
   websocket: YAML.load(fs.readFileSync(path.join(docsDir, 'websocket-swagger.yaml'), 'utf8')),
   admin: YAML.load(fs.readFileSync(path.join(docsDir, 'admin-swagger.yaml'), 'utf8')),
   'api-keys': YAML.load(fs.readFileSync(path.join(docsDir, 'api-keys-swagger.yaml'), 'utf8')),
-  webhooks: YAML.load(fs.readFileSync(path.join(docsDir, 'webhooks-swagger.yaml'), 'utf8'))
+  webhooks: YAML.load(fs.readFileSync(path.join(docsDir, 'webhooks-swagger.yaml'), 'utf8')),
+  payments: YAML.load(fs.readFileSync(path.join(docsDir, 'payments-swagger.yaml'), 'utf8')),
+  posts: YAML.load(fs.readFileSync(path.join(docsDir, 'posts-swagger.yaml'), 'utf8'))
 };
 
 Object.keys(swaggerDocs).forEach((key) => {

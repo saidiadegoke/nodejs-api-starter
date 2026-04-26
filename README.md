@@ -37,6 +37,7 @@ Use this as a foundation for custom APIs — the modules included are intentiona
 | Transactional email | `SMTP_*`, `FROM_EMAIL` |
 | Swagger basic auth | `API_DOCS_PASSWORD` |
 | Storage quota | `STORAGE_LIMIT_MB` |
+| Payments (Paystack / Flutterwave / bank transfer) | Gateway keys on `payment_methods` rows; optional `PAYMENT_STATS_MONTHLY_GOAL`, `FLW_CHECKOUT_LOGO_URL` (see `.env.example` and **Payments module** below) |
 
 ## Generated & local files (do not commit)
 
@@ -55,6 +56,8 @@ Keep secrets and machine-local output out of git. This repo’s `.gitignore` alr
 - **Request logging middleware** — hourly traffic counters on every request; full log entries persisted only for errors (4xx/5xx) and slow requests (>= 3s)
 - **API Keys** — user-scoped, SHA-256-hashed at rest; raw key only shown once; `apiKeyAuth` middleware supports `Bearer sk_...` alongside JWT
 - **Webhooks** — user-scoped subscriptions with HMAC-SHA256 signed payloads; fire-and-forget delivery via `WebhookService.fire(userId, event, payload)`
+- **Payments** — Paystack / Flutterwave checkouts, webhooks, optional direct bank transfer with receipt upload; admin CRUD for `payment_methods` and `bank_accounts`
+- **Posts** — Draft / published / archived content; public feed, per-user slugs, multilevel threaded comments
 - **Swagger docs** — OpenAPI 3.0 specs served at `/docs`, auto-discoverable index
 - **Countries** — Seeded reference lookup
 
@@ -82,6 +85,9 @@ createdb your_app
 # 4. Run migrations and seed
 npm run migrate
 npm run seed
+
+# Default super-admin (from seed): admin@example.com / Admin@12 — change after first login.
+# Re-running seed does not update an existing admin row. Older DBs may still use password "password"; see src/db/seeds/001_seed_users.sql.
 
 # 5. Start the dev server
 npm run dev
@@ -117,6 +123,8 @@ api-template/
 │   │   ├── admin/                # Error logs, platform settings, audit log
 │   │   ├── api-keys/             # User API key generation & auth
 │   │   ├── webhooks/             # User-scoped webhook subscriptions
+│   │   ├── payments/             # Gateways, bank transfer, receipts, admin tooling
+│   │   ├── posts/                # User posts (CMS-style)
 │   │   └── shared/               # Countries
 │   ├── shared/                   # Cross-cutting: middleware, emails, utils
 │   ├── routes/                   # Route aggregator + Swagger mount
@@ -138,11 +146,21 @@ PostgreSQL with UUID primary keys. Core tables:
 
 **RBAC**: `roles`, `permissions`, `user_roles`, `role_permissions`, `user_permissions`
 
-**Files**: `files`, `asset_groups` (plus module-level `user_activities`, `notifications`, etc.)
+**Files**: `files`, `asset_groups` (plus module-level `user_activities`, etc.)
 
 **Reference**: `countries`
 
-Migrations live in `src/db/migrations/` and run in filename order.
+**Notifications**: `notifications` — `user_id`, `type`, `actor_id`, `message`, `metadata`, `read`.
+
+**Payments**: `payment_methods`, `bank_accounts`, `payments` (optional opaque `campaign_id` / `subscription_id` UUID columns for your own correlations; no foreign keys in the template).
+
+**Posts**: `posts` — `user_id`, `title`, `slug` (unique per user), `body`, `excerpt`, `status`, `published_at`, `meta`, **`scheduled_publish_at`**, **SEO** (`seo_title`, `seo_description`, `og_image_file_id`, `twitter_card`, `canonical_url`, `robots_directive`), **`search_vector`** (GIN + trigger).
+
+**Post comments**: `post_comments` — `post_id`, `user_id`, `parent_id` (self-FK for nesting), `body`, soft `deleted_at`, **`moderation_status`** / `moderated_at` / `moderated_by`.
+
+**Post engagement**: `post_media` (post ↔ `files`), `post_likes`, `post_comment_likes`.
+
+Migrations live in `src/db/migrations/` and run in filename order. The baseline is a single file, **`001_initial_schema.sql`**. If an older checkout already applied the former `001`–`007` files, reset the database or align `schema_migrations` before relying on the merged migration.
 
 ## Scripts
 
@@ -154,6 +172,8 @@ npm run seed             # seed admin user + RBAC
 npm test                 # jest with coverage
 npm run test:auth        # auth suite only
 npm run test:rbac        # RBAC suite only
+npm run test:payments    # payments routes smoke (requires DB + migrations)
+npm run test:posts       # posts public list smoke (requires DB + migrations)
 
 # RBAC CLI
 npm run rbac:setup
@@ -161,6 +181,7 @@ npm run rbac:create-role
 npm run rbac:create-permission
 npm run rbac:add-permission-to-role
 npm run rbac:add-role-to-user
+npm run rbac:set-user-password
 npm run rbac:list-user-roles
 npm run rbac:list-role-permissions
 ```
@@ -179,6 +200,8 @@ Swagger UI is mounted at `/docs`. Each module has its own spec:
 - `/docs/admin` — Error logs, platform settings, audit log
 - `/docs/api-keys` — API key CRUD
 - `/docs/webhooks` — Webhook subscriptions
+- `/docs/payments` — Payments, payment methods, bank accounts
+- `/docs/posts` — Posts (public + author + admin)
 
 Raw JSON: `/docs/{module}.json`. To password-protect `/docs`, set `API_DOCS_PASSWORD` in env (basic auth).
 
@@ -200,6 +223,30 @@ docker compose up -d --build
 docker compose exec api npm run migrate
 docker compose exec api npm run seed
 ```
+
+## Posts module
+
+- **Base path:** `/posts` (see `/docs/posts`).
+- **Public:** `GET /posts` lists **published** posts only; `GET /posts/:postId` is public for published rows, or returns a draft to the **author** / **admin** when a valid JWT is sent (`optionalAuth`).
+- **Author:** `POST /posts`, `GET /posts/mine`, `PUT` / `DELETE /posts/:postId` (JWT required). Slugs are normalized (lowercase, URL-safe); uniqueness is per `user_id`.
+- **Admin:** `GET /posts/admin/all` — `admin` or `super_admin` role.
+- **Comments (threaded):** `GET /posts/:postId/comments` — default **`layout=tree`** (nested `replies`). Use **`layout=flat&page=&limit=`** for paginated flat lists (newest first). **Moderation:** non-author comments on **published** posts start as **`pending`**; **`PATCH /posts/:postId/comments/:commentId/moderate`** (`admin` / `super_admin`) with `{ "status": "approved"|"rejected"|"spam" }`. Replies require an **approved** parent. **`GET /posts/admin/comments/pending`** — moderation queue.
+- **Search & feeds:** **`GET /posts/search?q=`** (full-text + rank, published only). **`GET /posts/feed.xml`** (RSS), **`GET /posts/sitemap.xml`**. Listing **`GET /posts?q=`** also uses search when `q` is set.
+- **SEO JSON:** **`GET /posts/:postId/seo`** — Open Graph / Twitter-shaped payload (uses `og_image_file_id` → `files.file_url` when set). **`og_image_file_id`** on create/update must point to an existing, non-deleted **`files`** row **you uploaded** (admins may use any file).
+- **Media:** **`GET /posts/:postId/media`**, **`PUT /posts/:postId/media`** with `{ "items": [ ... ] }` — use **`items: []`** to clear all attachments. Only **files you uploaded** (or **admin**) may be linked. **`GET /posts/:postId?include=media`** embeds the same **`media`** array as the dedicated media endpoint (combine with **`include=likes`** as needed).
+- **Scheduled publish:** set **`scheduled_publish_at`** (ISO) while **`status`** is **`draft`**; rows auto-flip to **`published`** when that time passes (checked on reads that call `applyScheduledPublishing`).
+- **Likes & notify:** **`POST/DELETE /posts/:postId/like`**; **`POST/DELETE .../comments/:commentId/like`**. **`GET /posts/:postId?include=likes`** adds **`engagement`**. In-app **`notifications`** to post/comment authors on new comments, pending queue, and likes (best-effort if table exists).
+- **Rate limits & honeypot:** see **`.env.example`** (`POST_*_RATE_LIMIT_*`, **`POST_COMMENT_HONEYPOT_FIELD`**).
+- **Tests:** `npm run test:posts` (smoke); `npm test -- --testPathPattern=posts.media` covers media attach/clear, `include=media`, and **`og_image_file_id`** validation.
+
+## Payments module
+
+- **Base path:** `/payments` (see `/docs/payments`).
+- **Gateways:** Keys and webhook secrets live on **`payment_methods`** rows (`/payments/payment-methods/admin/...`). Migration `004` seeds inactive placeholder rows; activate and paste keys in admin or SQL.
+- **Webhooks:** `POST /payments/webhook/paystack` and `POST /payments/webhook/flutterwave` — point your provider dashboards at your public API URL + these paths.
+- **Direct transfer:** Configure at least one **`bank_accounts`** row and set it active (`/payments/bank-accounts/admin/...`). Customer instructions email uses **`SMTP_*`** / **`FROM_EMAIL`** when set.
+- **Public stats:** `GET /payments/stats` — optional denominator via **`PAYMENT_STATS_MONTHLY_GOAL`** in `.env`.
+- **Smoke tests:** `npm run test:payments` (expects migrated DB, same as full `npm test`).
 
 ## Extending
 

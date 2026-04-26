@@ -1,0 +1,705 @@
+openapi: '3.0.0'
+info:
+  title: Posts
+  version: '1.0.0'
+  description: |
+    User-authored content with **draft / published / archived** workflow. Slugs are unique per author.
+    Public listing returns only **published** posts; authors and admins can read drafts via `GET /posts/{postId}`.
+
+    **Comments** are threaded via `parent_id` (unlimited depth by default; cap with `POST_COMMENT_MAX_DEPTH`).
+    Listing uses the same visibility rules as the post. Creating a comment requires a JWT; on **draft** posts,
+    only the **author** or **admin** may comment.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Post:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        body:
+          type: string
+        excerpt:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        meta:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        author_email:
+          type: string
+          description: Present on some list responses
+
+    PostCreate:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        slug:
+          type: string
+          description: Optional; generated from title if omitted
+        body:
+          type: string
+        excerpt:
+          type: string
+          maxLength: 1000
+        status:
+          type: string
+          enum: [draft, published, archived]
+        meta:
+          type: object
+        scheduled_publish_at:
+          type: string
+          format: date-time
+        seo_title:
+          type: string
+        seo_description:
+          type: string
+        og_image_file_id:
+          type: string
+          format: uuid
+          description: Must reference an existing, non-deleted file in `files` that you uploaded (same rules as post media).
+        twitter_card:
+          type: string
+          enum: [summary, summary_large_image]
+        canonical_url:
+          type: string
+        robots_directive:
+          type: string
+
+    PostUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        slug:
+          type: string
+        body:
+          type: string
+        excerpt:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        meta:
+          type: object
+        scheduled_publish_at:
+          type: string
+          format: date-time
+          nullable: true
+        seo_title:
+          type: string
+        seo_description:
+          type: string
+        og_image_file_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set to a file you uploaded, or null to clear. Admins may use any file.
+        twitter_card:
+          type: string
+          enum: [summary, summary_large_image]
+        canonical_url:
+          type: string
+          nullable: true
+        robots_directive:
+          type: string
+          nullable: true
+
+    CommentNode:
+      type: object
+      description: Comment with nested replies (same shape recursively)
+      properties:
+        id:
+          type: string
+          format: uuid
+        post_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        body:
+          type: string
+        author_email:
+          type: string
+        meta:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        replies:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentNode'
+
+    CommentCreate:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 10000
+        parent_id:
+          type: string
+          format: uuid
+          description: Omit for a top-level comment; set to reply to any depth
+        meta:
+          type: object
+
+security:
+  - BearerAuth: []
+
+paths:
+  /posts:
+    get:
+      summary: List published posts (public)
+      tags: [Posts]
+      security: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - in: query
+          name: q
+          description: Full-text search (tsvector) plus title/excerpt/body fallback
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated published posts
+
+    post:
+      summary: Create a post
+      tags: [Posts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostCreate'
+      responses:
+        '201':
+          description: Created
+        '403':
+          description: og_image_file_id not owned by caller
+        '404':
+          description: og_image_file_id not found
+        '409':
+          description: Slug conflict for this user
+
+  /posts/mine:
+    get:
+      summary: List my posts (all statuses)
+      tags: [Posts]
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, published, archived]
+      responses:
+        '200':
+          description: Paginated posts
+
+  /posts/admin/all:
+    get:
+      summary: List all posts (admin)
+      tags: [Posts — Admin]
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated posts
+
+  /posts/search:
+    get:
+      summary: Full-text search (published posts)
+      tags: [Posts]
+      security: []
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Ranked results
+        '400':
+          description: Missing q
+
+  /posts/feed.xml:
+    get:
+      summary: RSS 2.0 feed of published posts
+      tags: [Posts — Feeds]
+      security: []
+      responses:
+        '200':
+          description: application/rss+xml
+
+  /posts/sitemap.xml:
+    get:
+      summary: Basic sitemap (published post URLs)
+      tags: [Posts — Feeds]
+      security: []
+      responses:
+        '200':
+          description: application/xml
+
+  /posts/admin/comments/pending:
+    get:
+      summary: Comments awaiting moderation
+      tags: [Posts — Admin]
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Paginated pending comments
+
+  /posts/{postId}/comments:
+    get:
+      summary: List comments as a nested tree
+      description: Same visibility as GET /posts/{postId}. Optional Bearer to match draft visibility.
+      tags: [Post comments]
+      security: []
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: layout
+          description: tree (default) or flat (paginated)
+          schema:
+            type: string
+            enum: [tree, flat]
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: '{ layout, comments } or paginated flat list'
+        '404':
+          description: Post not found or not visible
+
+    post:
+      summary: Add a comment or reply
+      tags: [Post comments]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreate'
+      responses:
+        '201':
+          description: Created comment row
+        '400':
+          description: Invalid parent or max depth exceeded
+        '403':
+          description: Not allowed on this post
+        '404':
+          description: Post not found
+
+  /posts/{postId}/comments/{commentId}:
+    patch:
+      summary: Edit own comment (or admin)
+      tags: [Post comments]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: commentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  maxLength: 10000
+      responses:
+        '200':
+          description: Updated
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+
+    delete:
+      summary: Soft-delete own comment (or admin)
+      tags: [Post comments]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: commentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Deleted
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+
+  /posts/{postId}/comments/{commentId}/like:
+    post:
+      summary: Like an approved comment
+      tags: [Post comments]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: commentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: '{ like_count, liked }'
+    delete:
+      summary: Unlike comment
+      tags: [Post comments]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: commentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: '{ like_count, liked }'
+
+  /posts/{postId}/comments/{commentId}/moderate:
+    patch:
+      summary: Moderate a comment (admin)
+      tags: [Post comments]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: commentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [approved, rejected, spam]
+      responses:
+        '200':
+          description: Updated comment
+
+  /posts/{postId}/like:
+    post:
+      summary: Like a published post
+      tags: [Posts — Engagement]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: '{ like_count, liked }'
+    delete:
+      summary: Remove like
+      tags: [Posts — Engagement]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: '{ like_count, liked }'
+
+  /posts/{postId}/seo:
+    get:
+      summary: SEO / Open Graph / Twitter JSON for meta tags
+      tags: [Posts]
+      security: []
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: SEO bundle
+        '404':
+          description: Not visible
+
+  /posts/{postId}/media:
+    get:
+      summary: List media attachments (joined file URLs)
+      tags: [Posts]
+      security: []
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: '{ media: [] }'
+    put:
+      summary: Replace post media set (author or admin)
+      description: >-
+        Send `items: []` to remove all attachments. Otherwise each item needs a `file_id`
+        you uploaded (admins may attach any file).
+      tags: [Posts]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  description: Empty array clears all post media rows.
+                  items:
+                    type: object
+                    required: [file_id]
+                    properties:
+                      file_id:
+                        type: string
+                        format: uuid
+                      role:
+                        type: string
+                        enum: [featured, gallery, inline]
+                      sort_order:
+                        type: integer
+      responses:
+        '200':
+          description: Updated media list
+        '403':
+          description: File not owned by caller (non-admin)
+
+  /posts/{postId}:
+    get:
+      summary: Get post by id
+      description: Published posts are public. Drafts/archived visible to author or admin only.
+      tags: [Posts]
+      security: []
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: include
+          required: false
+          schema:
+            type: string
+            description: >-
+              Comma-separated flags: `likes` adds engagement summary (when authenticated);
+              `media` embeds the same media array as `GET /posts/{postId}/media` (joined file URLs).
+      responses:
+        '200':
+          description: Post
+        '404':
+          description: Not found or not visible
+
+    put:
+      summary: Update post (author or admin)
+      tags: [Posts]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostUpdate'
+      responses:
+        '200':
+          description: Updated
+        '403':
+          description: Forbidden (or og_image_file_id not owned by caller when non-admin)
+        '404':
+          description: Not found (post or og_image file)
+        '409':
+          description: Slug conflict
+
+    delete:
+      summary: Delete post (author or admin)
+      tags: [Posts]
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Deleted
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found

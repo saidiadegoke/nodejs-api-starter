@@ -56,6 +56,10 @@ Commands:
     Add a role to a user
     Example: node scripts/rbac.js add-role-to-user user@example.com admin 30
 
+  set-user-password <user_email> <new_password>
+    Set password hash for user (by email); bcrypt cost 10, min 8 chars
+    Example: node scripts/rbac.js set-user-password admin@example.com 'Admin@12'
+
   list-roles
     List all roles
 
@@ -93,6 +97,9 @@ Examples:
   
   # Assign role to user
   node scripts/rbac.js add-role-to-user user@example.com content_creator
+
+  # Reset password (by email)
+  node scripts/rbac.js set-user-password admin@example.com 'Admin@12'
   
   # View user's roles
   node scripts/rbac.js show-user-roles user@example.com
@@ -125,6 +132,15 @@ Examples:
         
       case 'add-role-to-user':
         await runScript('add-role-to-user.js', commandArgs);
+        break;
+
+      case 'set-user-password':
+        if (commandArgs.length < 2) {
+          console.error('❌ Error: provide <user_email> and <new_password>');
+          console.error('Example: node scripts/rbac.js set-user-password admin@example.com \'Admin@12\'');
+          process.exit(1);
+        }
+        await runScript('set-user-password.js', commandArgs);
         break;
         
       case 'list-roles':

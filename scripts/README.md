@@ -32,6 +32,7 @@ Individual scripts:
 - `npm run rbac:create-permission` — create a new permission
 - `npm run rbac:add-permission-to-role` — grant a permission to a role
 - `npm run rbac:add-role-to-user` — assign a role to a user (optionally with expiry)
+- `npm run rbac:set-user-password` — set a user's password by email (recovery / ops; bcrypt, min 8 chars)
 - `npm run rbac:list-user-roles` — list a user's roles
 - `npm run rbac:list-role-permissions` — list permissions for a role
 
@@ -66,6 +67,16 @@ node scripts/rbac.js add-permission-to-role <role_name> <permission_name>
 # Example
 node scripts/rbac.js add-permission-to-role admin system.admin
 ```
+
+### Set a user's password (by email)
+
+```bash
+npm run rbac:set-user-password -- <email> <new_password>
+# or
+node scripts/rbac.js set-user-password <email> <new_password>
+```
+
+Requires `.env` with `DB_*`. Password must be at least **8** characters (same rule as `POST /auth/change-password`). Use `--` before arguments so npm does not swallow flags. Does not revoke existing sessions.
 
 ### Add a role to a user
 

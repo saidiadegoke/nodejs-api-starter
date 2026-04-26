@@ -1,8 +1,11 @@
 -- Create Super Admin User
--- Password: Admin@12 (bcrypt hash with cost 10)
--- Generate proper hash with: bcrypt.hash('Admin@123456', 10)
+-- Login: admin@example.com / Admin@12  (bcrypt cost 10; rotate after first login in production)
+-- Regenerate: node -e "console.log(require('bcryptjs').hashSync('Admin@12',10))"
+-- Legacy: older template seeds used the same bcrypt string for plaintext "password". If Admin@12 fails
+-- on an old DB, log in with "password" once, change password, or run:
+--   UPDATE users SET password_hash = '$2a$10$jhQRFJ1CV3akvRAY.3lc1uPxrNt68lmZm2YozRyX/NxfYDr.iw/HK' WHERE email = 'admin@example.com';
 INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status) VALUES
-('admin@example.com', '+2348100000000', true, true, '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'active')
+('admin@example.com', '+2348100000000', true, true, '$2a$10$jhQRFJ1CV3akvRAY.3lc1uPxrNt68lmZm2YozRyX/NxfYDr.iw/HK', 'active')
 ON CONFLICT DO NOTHING;
 
 -- Create profile for Super Admin (idempotent)

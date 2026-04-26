@@ -1,0 +1,666 @@
+openapi: '3.0.0'
+info:
+  title: Payments
+  version: '1.0.0'
+  description: |
+    Paystack, Flutterwave, and manual **direct bank transfer** flows. Gateway keys and webhook
+    secrets are stored on **`payment_methods`** rows (see admin payment-method CRUD), not in
+    environment variables.
+
+    **Webhooks:** `POST /payments/webhook/paystack` (header `x-paystack-signature`) and
+    `POST /payments/webhook/flutterwave` (header `verif-hash`). Configure the same URLs in
+    your gateway dashboards.
+
+    **Optional auth:** `POST /payments/create` uses optional JWT — logged-in users are linked
+    by `user_id`; guests should send `anonymous_donor_email` (and related fields) when applicable.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PaymentCreate:
+      type: object
+      required: [amount, type, payment_method]
+      properties:
+        amount:
+          type: number
+          exclusiveMinimum: 0
+        currency:
+          type: string
+          enum: [NGN, USD, GBP, EUR]
+          default: NGN
+        type:
+          type: string
+          description: Business classification (donation, checkout, invoice, etc.)
+          enum:
+            - donation
+            - dues
+            - campaign
+            - event
+            - merchandise
+            - subscription
+            - order
+            - invoice
+            - membership
+            - checkout
+            - other
+        payment_method:
+          type: string
+          enum: [paystack, flutterwave, direct_transfer]
+        purpose:
+          type: string
+        redirect_url:
+          type: string
+          format: uri
+        anonymous_donor_email:
+          type: string
+          format: email
+        anonymous_donor_first_name:
+          type: string
+        anonymous_donor_last_name:
+          type: string
+        email:
+          type: string
+          format: email
+        metadata:
+          type: object
+        first_name:
+          type: string
+        notes:
+          type: string
+        campaign_id:
+          type: string
+          format: uuid
+          description: Optional opaque correlation id (no FK in template)
+
+    RefundBody:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    PaymentMethodCreate:
+      type: object
+      required: [name, code, type]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+          pattern: '^[a-z0-9_]+$'
+        type:
+          type: string
+          enum: [gateway, manual]
+        is_active:
+          type: boolean
+        supported_currencies:
+          type: array
+          items:
+            type: string
+        processing_fee:
+          type: number
+        processing_fee_type:
+          type: string
+          enum: [percentage, fixed]
+        api_public_key:
+          type: string
+        api_secret_key:
+          type: string
+        webhook_secret:
+          type: string
+        base_url:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        icon_url:
+          type: string
+
+    BankAccountCreate:
+      type: object
+      required: [bank_name, account_number, account_name]
+      properties:
+        bank_name:
+          type: string
+        account_number:
+          type: string
+        account_name:
+          type: string
+        is_active:
+          type: boolean
+
+security:
+  - BearerAuth: []
+
+paths:
+  /payments/create:
+    post:
+      summary: Create a payment (checkout or bank-transfer instructions)
+      tags: [Payments]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+      responses:
+        '201':
+          description: Created — includes payment_id, paymentLink or bank details
+        '400':
+          description: Validation error
+        '502':
+          description: Gateway did not return a checkout URL
+
+  /payments/process:
+    post:
+      summary: Re-init checkout (not implemented)
+      tags: [Payments]
+      security: []
+      responses:
+        '501':
+          description: Use POST /payments/create instead
+
+  /payments/verify/{reference}:
+    get:
+      summary: Verify payment by gateway reference
+      tags: [Payments]
+      security: []
+      parameters:
+        - in: path
+          name: reference
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Verification result
+        '404':
+          description: Payment not found
+
+  /payments/by-reference/{reference}:
+    get:
+      summary: Get payment row by transaction reference
+      tags: [Payments]
+      security: []
+      parameters:
+        - in: path
+          name: reference
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payment
+        '404':
+          description: Not found
+
+  /payments/webhook/{processor}:
+    post:
+      summary: Gateway webhook (Paystack or Flutterwave)
+      tags: [Payments]
+      security: []
+      parameters:
+        - in: path
+          name: processor
+          required: true
+          schema:
+            type: string
+            enum: [paystack, flutterwave]
+      responses:
+        '200':
+          description: Acknowledged
+        '400':
+          description: Invalid signature
+
+  /payments/direct-transfer/{paymentId}/bank-account:
+    get:
+      summary: Bank details for a direct-transfer payment
+      tags: [Payments]
+      security: []
+      parameters:
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payment summary + bank account
+        '400':
+          description: Not a direct_transfer payment
+
+  /payments/direct-transfer/{paymentId}/upload-receipt:
+    post:
+      summary: Attach an already-uploaded file id as receipt
+      tags: [Payments]
+      security: []
+      parameters:
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [receipt_file_id]
+              properties:
+                receipt_file_id:
+                  type: string
+                  format: uuid
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Updated payment
+
+  /payments/direct-transfer/{paymentId}/submit-receipt:
+    post:
+      summary: Upload receipt file (multipart) in one step
+      tags: [Payments]
+      security: []
+      parameters:
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: File stored + payment updated
+
+  /payments/stats:
+    get:
+      summary: Public aggregates (totals, recent payments, optional monthly goal)
+      tags: [Payments]
+      security: []
+      responses:
+        '200':
+          description: Stats payload
+
+  /payments/callback:
+    post:
+      summary: Alternate verify entrypoint (body/query reference)
+      tags: [Payments]
+      security: []
+      responses:
+        '200':
+          description: Same as verify
+
+  /payments/my-payments:
+    get:
+      summary: List current user's payments
+      tags: [Payments]
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: payment_type
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list
+
+  /payments/my-donations/summary:
+    get:
+      summary: Donation-oriented summary for the current user
+      tags: [Payments]
+      responses:
+        '200':
+          description: Summary object
+
+  /payments/{id}:
+    get:
+      summary: Get one payment (internal UUID id)
+      description: |
+        Allowed when `user_id` matches the JWT subject, or when the payment is anonymous and the
+        user's email matches `anonymous_donor_email`. Payments with neither owner hint return 403.
+      tags: [Payments]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment
+        '403':
+          description: Access denied
+        '404':
+          description: Not found
+
+  /payments/{id}/receipt:
+    post:
+      summary: Generate receipt URL for a completed payment
+      tags: [Payments]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: receipt_url
+        '403':
+          description: Access denied
+
+  /payments/admin/all:
+    get:
+      summary: List all payments (admin)
+      tags: [Payments — Admin]
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: type
+          schema:
+            type: string
+        - in: query
+          name: payment_method
+          schema:
+            type: string
+        - in: query
+          name: start_date
+          schema:
+            type: string
+        - in: query
+          name: end_date
+          schema:
+            type: string
+        - in: query
+          name: campaign
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated payments
+
+  /payments/admin/stats:
+    get:
+      summary: Admin payment statistics
+      tags: [Payments — Admin]
+      responses:
+        '200':
+          description: Stats
+
+  /payments/admin/summary:
+    get:
+      summary: Summary aggregates for dashboards
+      tags: [Payments — Admin]
+      responses:
+        '200':
+          description: Summary
+
+  /payments/admin/payment/{id}:
+    get:
+      summary: Get any payment by internal id
+      tags: [Payments — Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment
+
+  /payments/admin/{id}/requery:
+    post:
+      summary: Re-verify with gateway (not for direct_transfer)
+      tags: [Payments — Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Updated payment + verification payload
+
+  /payments/admin/{id}/refund:
+    post:
+      summary: Mark payment refunded (after gateway refund if applicable)
+      tags: [Payments — Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundBody'
+      responses:
+        '200':
+          description: Updated payment
+
+  /payments/admin/{id}:
+    put:
+      summary: Update payment status (admin)
+      tags: [Payments — Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                notes:
+                  type: string
+                processor_response:
+                  type: object
+      responses:
+        '200':
+          description: Updated payment
+
+  /payments/payment-methods/admin/all:
+    get:
+      summary: List payment methods
+      tags: [Payment methods]
+      responses:
+        '200':
+          description: Paginated list
+
+  /payments/payment-methods/admin:
+    post:
+      summary: Create payment method
+      tags: [Payment methods]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMethodCreate'
+      responses:
+        '201':
+          description: Created
+
+  /payments/payment-methods/admin/{id}:
+    get:
+      summary: Get payment method
+      tags: [Payment methods]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Row
+        '404':
+          description: Not found
+    put:
+      summary: Update payment method
+      tags: [Payment methods]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMethodCreate'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Delete payment method
+      tags: [Payment methods]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Deleted
+
+  /payments/bank-accounts/admin/all:
+    get:
+      summary: List bank accounts
+      tags: [Bank accounts]
+      responses:
+        '200':
+          description: Paginated list
+
+  /payments/bank-accounts/admin:
+    post:
+      summary: Create bank account
+      tags: [Bank accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BankAccountCreate'
+      responses:
+        '200':
+          description: Created row
+
+  /payments/bank-accounts/admin/{id}:
+    put:
+      summary: Update bank account
+      tags: [Bank accounts]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BankAccountCreate'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Delete bank account
+      tags: [Bank accounts]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+
+  /payments/bank-accounts/admin/{id}/set-active:
+    post:
+      summary: Set this account as the single active bank account
+      tags: [Bank accounts]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK

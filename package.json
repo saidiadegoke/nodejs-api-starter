@@ -12,6 +12,8 @@
     "test:auth": "NODE_ENV=test jest src/tests/auth.api.test.js --runInBand",
     "test:rbac": "NODE_ENV=test jest src/tests/rbac.test.js --runInBand",
     "test:assets": "NODE_ENV=test jest src/tests/assets.test.js --runInBand",
+    "test:payments": "NODE_ENV=test jest src/tests/payments.api.test.js --runInBand",
+    "test:posts": "NODE_ENV=test jest src/tests/posts.api.test.js --runInBand",
     "test:watch": "NODE_ENV=test jest --watch",
     "test:verbose": "NODE_ENV=test jest --verbose --runInBand",
     "test:cleanup": "node src/tests/test-db-cleanup.js",
@@ -22,7 +24,8 @@
     "rbac:add-permission-to-role": "node scripts/add-permission-to-role.js",
     "rbac:add-role-to-user": "node scripts/add-role-to-user.js",
     "rbac:list-user-roles": "node scripts/list-user-roles.js",
-    "rbac:list-role-permissions": "node scripts/list-role-permissions.js"
+    "rbac:list-role-permissions": "node scripts/list-role-permissions.js",
+    "rbac:set-user-password": "node scripts/set-user-password.js"
   },
   "repository": {
     "type": "git",
@@ -74,7 +77,7 @@
     "pg": "^8.11.3",
     "socket.io": "^4.7.5",
     "swagger-ui-express": "^5.0.1",
-    "uuid": "^14.0.0",
+    "uuid": "^9.0.1",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
   },

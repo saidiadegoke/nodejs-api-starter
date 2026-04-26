@@ -29,6 +29,8 @@ This service can be deployed independently using Docker.
    docker compose exec api npm run seed
    ```
 
+4. **Default admin** (after a successful seed): `admin@example.com` / `Admin@12` — rotate in production. If login fails on an old volume, see **SETUP.md** (legacy `password` hash).
+
 ## Environment Variables
 
 See `.env.example` for the complete list.
