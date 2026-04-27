@@ -1,0 +1,259 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 001 — Catalog'
+  version: '1.0.0'
+  description: |
+    Universities and subject combinations (`docs/001-jupeb-catalog-technical-design.md`).
+    Base path: **`/catalog`**.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UniversityId:
+      name: universityId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SubjectCombinationId:
+      name: subjectCombinationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+tags:
+  - name: Catalog — public
+    description: Unauthenticated read for preload UIs
+  - name: Catalog — admin
+    description: Requires JWT; roles typically `admin`, `super_admin`, `registrar`
+
+paths:
+  /catalog/universities/public:
+    get:
+      tags: [Catalog — public]
+      summary: List active universities (public)
+      security: []
+      responses:
+        '200':
+          description: Array of universities in response data
+
+  /catalog/subject-combinations/public:
+    get:
+      tags: [Catalog — public]
+      summary: List active subject combinations (public)
+      security: []
+      parameters:
+        - name: university_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: When set, returns global combos plus combos scoped to this university
+      responses:
+        '200':
+          description: Array in response data
+
+  /catalog/universities:
+    get:
+      tags: [Catalog — admin]
+      summary: List universities (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, inactive] }
+      responses:
+        '200':
+          description: Paginated list in response data and pagination object
+        '401':
+          description: Unauthorized
+    post:
+      tags: [Catalog — admin]
+      summary: Create university
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, jupeb_prefix]
+              properties:
+                code: { type: string }
+                name: { type: string }
+                short_name: { type: string }
+                jupeb_prefix:
+                  type: string
+                  description: Exactly three digits (e.g. `001`)
+                metadata: { type: object }
+      responses:
+        '201':
+          description: Created — response data is the university row
+        '401': { description: Unauthorized }
+        '422': { description: Validation error }
+
+  /catalog/universities/{universityId}:
+    get:
+      tags: [Catalog — admin]
+      summary: Get university by id
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityId'
+      responses:
+        '200': { description: University in response data }
+        '404': { description: Not found }
+    patch:
+      tags: [Catalog — admin]
+      summary: Patch university
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                short_name: { type: string }
+                code: { type: string }
+                jupeb_prefix: { type: string }
+                metadata: { type: object }
+      responses:
+        '200': { description: Updated row in response data }
+
+  /catalog/universities/{universityId}/activate:
+    post:
+      tags: [Catalog — admin]
+      summary: Set university status active
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityId'
+      responses:
+        '200': { description: OK }
+
+  /catalog/universities/{universityId}/deactivate:
+    post:
+      tags: [Catalog — admin]
+      summary: Set university status inactive
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityId'
+      responses:
+        '200': { description: OK }
+
+  /catalog/subject-combinations:
+    get:
+      tags: [Catalog — admin]
+      summary: List subject combinations (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: university_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Paginated }
+    post:
+      tags: [Catalog — admin]
+      summary: Create subject combination
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, title, subjects]
+              properties:
+                code: { type: string }
+                title: { type: string }
+                subjects:
+                  type: array
+                  items: { type: string }
+                  minItems: 3
+                  maxItems: 6
+                is_global: { type: boolean, default: true }
+                university_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Created }
+
+  /catalog/subject-combinations/{subjectCombinationId}:
+    get:
+      tags: [Catalog — admin]
+      summary: Get subject combination
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectCombinationId'
+      responses:
+        '200': { description: OK }
+    patch:
+      tags: [Catalog — admin]
+      summary: Patch subject combination
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectCombinationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200': { description: OK }
+
+  /catalog/subject-combinations/{subjectCombinationId}/activate:
+    post:
+      tags: [Catalog — admin]
+      summary: Activate subject combination
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectCombinationId'
+      responses:
+        '200': { description: OK }
+
+  /catalog/subject-combinations/{subjectCombinationId}/deactivate:
+    post:
+      tags: [Catalog — admin]
+      summary: Deactivate subject combination
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectCombinationId'
+      responses:
+        '200': { description: OK }

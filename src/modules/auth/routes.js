@@ -22,7 +22,20 @@ router.post(
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
     body('first_name').notEmpty().withMessage('First name is required'),
     body('last_name').notEmpty().withMessage('Last name is required'),
-    body('role').notEmpty().isIn(['super_admin', 'admin', 'agent', 'user']).withMessage('Valid role is required (super_admin, admin, agent, user)'),
+    body('role')
+      .notEmpty()
+      .isIn([
+        'super_admin',
+        'admin',
+        'agent',
+        'user',
+        'registrar',
+        'program_director',
+        'institution_admin',
+      ])
+      .withMessage(
+        'Valid role is required (super_admin, admin, agent, user, registrar, program_director, institution_admin)'
+      ),
     body('referral_code').optional().trim().isLength({ max: 32 }).withMessage('Referral code must be at most 32 characters'),
     // Custom validation: at least one of email or phone must be provided
     body().custom((value, { req }) => {

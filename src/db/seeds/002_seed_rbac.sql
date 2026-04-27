@@ -7,7 +7,12 @@ INSERT INTO roles (name, display_name, description, is_system) VALUES
 ('super_admin', 'Super Admin', 'Full system access and administration', true),
 ('admin', 'Administrator', 'Administrator with full management access', true),
 ('agent', 'Agent', 'Support agent with limited management access', true),
-('user', 'User', 'Regular user with basic access', true)
+('user', 'User', 'Regular user with basic access', true),
+('registrar', 'Registrar', 'JUPEB registrar operations (catalog, sessions, numbering)', true),
+('program_director', 'Program Director', 'Institution program director (NIN verify, provisional registration)', true),
+('institution_admin', 'Institution Admin', 'Institution-level administration', true),
+('financial_admin', 'Financial Admin', 'JUPEB finance reporting and reconciliation', true),
+('student', 'Student', 'JUPEB student participant (registration, finance, submissions)', true)
 ON CONFLICT (name) DO NOTHING;
 
 -- ==================== PERMISSIONS ====================
@@ -22,7 +27,9 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 ('users.view', 'users', 'view', 'View user profiles'),
 ('users.create', 'users', 'create', 'Create new users'),
 ('users.update', 'users', 'update', 'Update user profiles'),
-('users.delete', 'users', 'delete', 'Delete users')
+('users.delete', 'users', 'delete', 'Delete users'),
+('jupeb.catalog.manage', 'jupeb', 'catalog', 'Manage JUPEB catalog (universities, subject combinations)'),
+('jupeb.identity.verify', 'jupeb', 'identity_verify', 'Verify NIN and access identity proofs')
 ON CONFLICT (resource, action) DO NOTHING;
 
 -- ==================== ROLE PERMISSIONS ====================
@@ -44,6 +51,20 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'agent'
 AND p.name IN ('users.view', 'users.update')
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- registrar: JUPEB catalog management
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'registrar'
+AND p.name = 'jupeb.catalog.manage'
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- institution roles: NIN / identity verify
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name IN ('program_director', 'institution_admin', 'registrar')
+AND p.name = 'jupeb.identity.verify'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- user has no resource permissions by default; add as needed

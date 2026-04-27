@@ -49,9 +49,19 @@ class AuthService {
     }
 
     // Role is required; user creation flow must provide it
-    const validRoles = ['super_admin', 'admin', 'agent', 'user'];
+    const validRoles = [
+      'super_admin',
+      'admin',
+      'agent',
+      'user',
+      'registrar',
+      'program_director',
+      'institution_admin',
+    ];
     if (!role || !validRoles.includes(role)) {
-      throw new Error('Valid role is required (super_admin, admin, agent, user)');
+      throw new Error(
+        'Valid role is required (super_admin, admin, agent, user, registrar, program_director, institution_admin)'
+      );
     }
 
     // Format phone number with country code

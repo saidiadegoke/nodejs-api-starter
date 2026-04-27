@@ -2,7 +2,10 @@ openapi: '3.0.0'
 info:
   title: Users
   version: '1.0.0'
-  description: User profile, activity, addresses, KYC, notification settings, and admin user listing.
+  description: |
+    User profile, activity, addresses, KYC, notification settings, and admin user listing.
+
+    JUPEB: when migration `009_jupeb_enhancements` is applied, **`GET /users/me`** (and the profile returned after **`PUT /users/me`**) includes **`jupeb_university_id`** (nullable UUID) for institution scoping. Set it via `PATCH /admin/users/{userId}/jupeb-university` (see JUPEB 009 Swagger).
 
 servers:
   - url: http://localhost:5000
@@ -42,7 +45,9 @@ paths:
       tags: [Users]
       responses:
         '200':
-          description: Current user profile
+          description: |
+            Current user profile. Includes `jupeb_university_id` (nullable) when the profiles table has that column;
+            use JUPEB admin `PATCH` to set or clear it.
         '401':
           description: Unauthorized
     put:

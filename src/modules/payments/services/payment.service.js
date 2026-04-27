@@ -68,11 +68,20 @@ class PaymentService {
     const txRef =
       processor === 'flutterwave' && transactionId ? transactionId : transactionRef;
 
-    return this.paymentModel.updateStatus(payment.id, 'completed', {
+    const updated = await this.paymentModel.updateStatus(payment.id, 'completed', {
       transaction_ref: txRef,
       paid_at: new Date(),
       processor_response: processorPayload,
     });
+    try {
+      const {
+        syncRegistrationProjectionForPaymentId,
+      } = require('../../jupeb/services/registration-payment-projection.service');
+      await syncRegistrationProjectionForPaymentId(updated.id);
+    } catch {
+      /* optional JUPEB wiring */
+    }
+    return updated;
   }
 
   async refundPayment(idOrPaymentId, reason) {
@@ -80,7 +89,16 @@ class PaymentService {
     if (!payment) payment = await this.paymentModel.findByPaymentId(idOrPaymentId);
     if (!payment) throw new Error('Payment not found');
     if (payment.status !== 'completed') throw new Error('Payment is not completed');
-    return this.paymentModel.updateStatus(payment.id, 'refunded', { notes: reason });
+    const updated = await this.paymentModel.updateStatus(payment.id, 'refunded', { notes: reason });
+    try {
+      const {
+        syncRegistrationProjectionForPaymentId,
+      } = require('../../jupeb/services/registration-payment-projection.service');
+      await syncRegistrationProjectionForPaymentId(updated.id);
+    } catch {
+      /* optional JUPEB wiring */
+    }
+    return updated;
   }
 
   async getPaymentByPaymentId(paymentId) {

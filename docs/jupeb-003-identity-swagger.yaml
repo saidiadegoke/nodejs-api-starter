@@ -1,0 +1,130 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 003 — Identity'
+  version: '1.0.0'
+  description: |
+    NIN verification and biometric captures linked to registrations (`docs/003-jupeb-identity-technical-design.md`).
+    Base path: **`/identity`**.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    VerificationId:
+      name: verificationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CaptureId:
+      name: captureId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+tags:
+  - name: Identity — NIN
+  - name: Identity — Biometrics
+
+paths:
+  /identity/nin/verify:
+    post:
+      tags: [Identity — NIN]
+      summary: Verify NIN via configured provider (mock in dev)
+      description: |
+        Allowed roles include `program_director`, `institution_admin`, `registrar`, `admin`, `super_admin`.
+        Response never returns raw NIN; profile fields come from provider payload.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nin]
+              properties:
+                nin:
+                  type: string
+                  description: 11-digit Nigerian NIN
+                  example: '12345678901'
+                idempotency_key:
+                  type: string
+      responses:
+        '200': { description: Verification result in response data }
+        '401': { description: Unauthorized }
+        '422': { description: Invalid NIN format }
+
+  /identity/nin/verifications/{verificationId}:
+    get:
+      tags: [Identity — NIN]
+      summary: Get verification record (sanitized)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VerificationId'
+      responses:
+        '200': { description: OK }
+        '403': { description: Not owner / not privileged }
+        '404': { description: Not found }
+
+  /identity/biometrics:
+    post:
+      tags: [Identity — Biometrics]
+      summary: Record a biometric capture for a registration
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registration_id, capture_type, quality_score]
+              properties:
+                registration_id: { type: string, format: uuid }
+                capture_type:
+                  type: string
+                  enum: [face, fingerprint]
+                file_id: { type: string, format: uuid }
+                external_reference: { type: string }
+                quality_score: { type: number }
+                device_metadata: { type: object }
+                captured_at: { type: string, format: date-time }
+      responses:
+        '201': { description: Created }
+        '403': { description: Access denied for registration }
+        '409': { description: Duplicate capture type for registration }
+
+  /identity/registrations/{registrationId}/biometrics:
+    get:
+      tags: [Identity — Biometrics]
+      summary: List biometric captures for a registration
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: Array in response data }
+
+  /identity/biometrics/{captureId}:
+    delete:
+      tags: [Identity — Biometrics]
+      summary: Delete a biometric capture
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CaptureId'
+      responses:
+        '200': { description: Deleted or not found per implementation }

@@ -14,6 +14,7 @@
     "test:assets": "NODE_ENV=test jest src/tests/assets.test.js --runInBand",
     "test:payments": "NODE_ENV=test jest src/tests/payments.api.test.js --runInBand",
     "test:posts": "NODE_ENV=test jest src/tests/posts.api.test.js --runInBand",
+    "test:jupeb": "NODE_ENV=test jest src/tests/jupeb.catalog.utils.test.js src/tests/jupeb.catalog.api.test.js src/tests/jupeb.sessions.utils.test.js src/tests/jupeb.sessions.api.test.js src/tests/jupeb.identity.utils.test.js src/tests/jupeb.identity.api.test.js src/tests/jupeb.submission.utils.test.js src/tests/jupeb.submission.api.test.js src/tests/jupeb.registration.utils.test.js src/tests/jupeb.registration.api.test.js src/tests/jupeb.finance.utils.test.js src/tests/jupeb.finance.api.test.js src/tests/jupeb.academic.utils.test.js src/tests/jupeb.academic.api.test.js src/tests/jupeb.institution-scope.api.test.js --runInBand",
     "test:watch": "NODE_ENV=test jest --watch",
     "test:verbose": "NODE_ENV=test jest --verbose --runInBand",
     "test:cleanup": "node src/tests/test-db-cleanup.js",

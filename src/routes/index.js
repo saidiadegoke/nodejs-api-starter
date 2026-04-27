@@ -17,6 +17,7 @@ const apiKeysRoutes = require('../modules/api-keys/routes');
 const webhooksRoutes = require('../modules/webhooks/routes');
 const paymentsRoutes = require('../modules/payments/routes');
 const postsRoutes = require('../modules/posts/routes');
+const jupebRoutes = require('../modules/jupeb/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -52,7 +53,16 @@ router.get('/', (req, res) => {
       apiKeys: '/docs/api-keys',
       webhooks: '/docs/webhooks',
       payments: '/docs/payments',
-      posts: '/docs/posts'
+      posts: '/docs/posts',
+      jupeb001Catalog: '/docs/jupeb-001-catalog',
+      jupeb002Sessions: '/docs/jupeb-002-sessions',
+      jupeb003Identity: '/docs/jupeb-003-identity',
+      jupeb004Submission: '/docs/jupeb-004-submission',
+      jupeb005Registration: '/docs/jupeb-005-registration',
+      jupeb006Finance: '/docs/jupeb-006-finance',
+      jupeb007Academic: '/docs/jupeb-007-academic',
+      jupeb008Overview: '/docs/jupeb-008-overview',
+      jupeb009InstitutionScope: '/docs/jupeb-009-institution-scope'
     },
     endpoints: {
       auth: '/auth',
@@ -67,6 +77,13 @@ router.get('/', (req, res) => {
       webhooks: '/webhooks',
       payments: '/payments',
       posts: '/posts',
+      catalog: '/catalog',
+      sessions: '/sessions',
+      identity: '/identity',
+      submission: '/submission',
+      registration: '/registration',
+      finance: '/finance',
+      academic: '/academic',
       health: '/health'
     },
     features: {
@@ -82,7 +99,10 @@ router.get('/', (req, res) => {
 
 /**
  * Module routes
+ * JUPEB feature routes (catalog, sessions, registration, etc.) are mounted at `/` so paths are
+ * e.g. `/catalog`, `/registration` — they must be registered before `/admin` so `PATCH /admin/users/.../jupeb-university` is handled here.
  */
+router.use('/', jupebRoutes);
 router.use('/auth', authRoutes);
 router.use('/users', users);
 router.use('/files', filesRoutes);
@@ -131,7 +151,18 @@ const swaggerDocs = {
   'api-keys': YAML.load(fs.readFileSync(path.join(docsDir, 'api-keys-swagger.yaml'), 'utf8')),
   webhooks: YAML.load(fs.readFileSync(path.join(docsDir, 'webhooks-swagger.yaml'), 'utf8')),
   payments: YAML.load(fs.readFileSync(path.join(docsDir, 'payments-swagger.yaml'), 'utf8')),
-  posts: YAML.load(fs.readFileSync(path.join(docsDir, 'posts-swagger.yaml'), 'utf8'))
+  posts: YAML.load(fs.readFileSync(path.join(docsDir, 'posts-swagger.yaml'), 'utf8')),
+  'jupeb-001-catalog': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-001-catalog-swagger.yaml'), 'utf8')),
+  'jupeb-002-sessions': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-002-sessions-swagger.yaml'), 'utf8')),
+  'jupeb-003-identity': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-003-identity-swagger.yaml'), 'utf8')),
+  'jupeb-004-submission': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-004-submission-swagger.yaml'), 'utf8')),
+  'jupeb-005-registration': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-005-registration-swagger.yaml'), 'utf8')),
+  'jupeb-006-finance': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-006-finance-swagger.yaml'), 'utf8')),
+  'jupeb-007-academic': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-007-academic-swagger.yaml'), 'utf8')),
+  'jupeb-008-overview': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-008-overview-swagger.yaml'), 'utf8')),
+  'jupeb-009-institution-scope': YAML.load(
+    fs.readFileSync(path.join(docsDir, 'jupeb-009-institution-scope-swagger.yaml'), 'utf8')
+  )
 };
 
 Object.keys(swaggerDocs).forEach((key) => {

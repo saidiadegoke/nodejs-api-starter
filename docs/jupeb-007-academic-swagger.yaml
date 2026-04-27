@@ -1,0 +1,124 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 007 — Academic (phase 2)'
+  version: '1.0.0'
+  description: |
+    Course catalog, per-registration grades, and score snapshots (`docs/007-jupeb-academic-technical-design.md`).
+    Base path: **`/academic`**.
+
+    **Scoring:** grades `A`–`E` each award +1; `F` awards 0 and increments failed count.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+tags:
+  - name: Academic — courses
+  - name: Academic — results
+
+paths:
+  /academic/courses:
+    get:
+      tags: [Academic — courses]
+      summary: List active courses (public)
+      security: []
+      responses:
+        '200': { description: Array in response data }
+    post:
+      tags: [Academic — courses]
+      summary: Create course
+      description: Roles `registrar`, `admin`, `super_admin`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, title]
+              properties:
+                code: { type: string }
+                title: { type: string }
+      responses:
+        '201': { description: Created }
+        '409': { description: Duplicate code }
+
+  /academic/registrations/{registrationId}/results:
+    get:
+      tags: [Academic — results]
+      summary: List course results for a registration
+      description: Student owner or privileged institution/registrar roles.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: Array in response data }
+    post:
+      tags: [Academic — results]
+      summary: Bulk upsert grades (recomputes score snapshot)
+      description: Roles `registrar`, `institution_admin`, `admin`, `super_admin`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [results]
+              properties:
+                results:
+                  type: array
+                  items:
+                    type: object
+                    required: [course_id, grade]
+                    properties:
+                      course_id: { type: string, format: uuid }
+                      grade:
+                        type: string
+                        enum: [A, B, C, D, E, F]
+      responses:
+        '200': { description: Saved rows array in response data }
+        '422': { description: Invalid grade or inactive course }
+
+  /academic/registrations/{registrationId}/score:
+    get:
+      tags: [Academic — results]
+      summary: Score breakdown (live aggregate + stored snapshot)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200':
+          description: |
+            Includes results, aggregate (passed_courses_count, failed_courses_count, plus_one_total), and snapshot
+
+  /academic/registrations/{registrationId}/recompute-score:
+    post:
+      tags: [Academic — results]
+      summary: Force recompute score snapshot from stored results
+      description: Roles `registrar`, `admin`, `super_admin` only.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: Snapshot row in response data }

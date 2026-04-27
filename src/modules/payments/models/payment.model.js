@@ -29,6 +29,7 @@ class Payment {
       recurring_interval,
       notes,
       internal_notes,
+      registration_id,
     } = data;
 
     const result = await pool.query(
@@ -37,11 +38,11 @@ class Payment {
         transaction_ref, processor_response, user_id,
         anonymous_donor_first_name, anonymous_donor_last_name, anonymous_donor_email, anonymous_donor_phone,
         campaign_id, subscription_id, purpose, metadata, user_agent, ip_address,
-        source, is_recurring, recurring_interval, notes, internal_notes
+        source, is_recurring, recurring_interval, notes, internal_notes, registration_id
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,
         $12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::inet,
-        $22,$23,$24,$25,$26
+        $22,$23,$24,$25,$26,$27
       ) RETURNING *`,
       [
         payment_id,
@@ -70,6 +71,7 @@ class Payment {
         recurring_interval || null,
         notes || null,
         internal_notes || null,
+        registration_id || null,
       ]
     );
     return result.rows[0];
@@ -205,6 +207,73 @@ class Payment {
     values.push(limit, offset);
     const result = await pool.query(q, values);
     return result.rows;
+  }
+
+  async findByRegistrationId(registrationId, options = {}) {
+    const { limit = 50, offset = 0 } = options;
+    const result = await pool.query(
+      `SELECT * FROM payments WHERE registration_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [registrationId, limit, offset]
+    );
+    return result.rows;
+  }
+
+  async countPendingForRegistration(registrationId) {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payments
+       WHERE registration_id = $1 AND status IN ('pending', 'pending_transfer', 'processing')`,
+      [registrationId]
+    );
+    return result.rows[0].c;
+  }
+
+  async findJupebByUserId(userId, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const result = await pool.query(
+      `SELECT p.* FROM payments p
+       INNER JOIN jupeb_registrations r ON r.id = p.registration_id
+       WHERE r.user_id = $1
+       ORDER BY p.created_at DESC LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+    return result.rows;
+  }
+
+  async countJupebByUserId(userId) {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payments p
+       INNER JOIN jupeb_registrations r ON r.id = p.registration_id
+       WHERE r.user_id = $1`,
+      [userId]
+    );
+    return result.rows[0].c;
+  }
+
+  async findJupebLinkedWithRegistration({ limit = 50, offset = 0, session_id }) {
+    const values = [];
+    let i = 1;
+    let where = 'WHERE p.registration_id IS NOT NULL';
+    if (session_id) {
+      where += ` AND r.session_id = $${i++}`;
+      values.push(session_id);
+    }
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM payments p
+       INNER JOIN jupeb_registrations r ON r.id = p.registration_id
+       ${where}`,
+      values
+    );
+    const total = countResult.rows[0].total;
+    const dataResult = await pool.query(
+      `SELECT p.*, r.session_id AS jupeb_session_id, r.university_id AS jupeb_university_id
+       FROM payments p
+       INNER JOIN jupeb_registrations r ON r.id = p.registration_id
+       ${where}
+       ORDER BY p.created_at DESC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...values, limit, offset]
+    );
+    return { rows: dataResult.rows, total };
   }
 
   async findAll(options = {}) {

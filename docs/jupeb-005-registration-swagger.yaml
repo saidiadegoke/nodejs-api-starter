@@ -1,0 +1,210 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 005 — Registration workflow'
+  version: '1.0.0'
+  description: |
+    Enrollment lifecycle, codes, approvals, and numbering preview (`docs/005-jupeb-registration-technical-design.md`).
+    Base path: **`/registration`**.
+
+    Final number assignment for a **closed** session is triggered from **JUPEB 002**:
+    `POST /sessions/{sessionId}/finalize-candidate-numbers`.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+tags:
+  - name: Registration — institution
+  - name: Registration — student
+  - name: Registration — registrar
+
+paths:
+  /registration/institution/registrations:
+    post:
+      tags: [Registration — institution]
+      summary: Create enrollment row with claim code (session must be open)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, university_id, subject_combination_id]
+              properties:
+                session_id: { type: string, format: uuid }
+                university_id: { type: string, format: uuid }
+                subject_combination_id: { type: string, format: uuid }
+                nin_verification_id: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Created row includes institution_issued_code and provisional_candidate_code
+    get:
+      tags: [Registration — institution]
+      summary: List registrations (filters)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: university_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: Paginated }
+
+  /registration/institution/registrations/{registrationId}:
+    patch:
+      tags: [Registration — institution]
+      summary: Update subject combination before student confirms
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject_combination_id]
+              properties:
+                subject_combination_id: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+
+  /registration/institution/registrations/{registrationId}/approve:
+    post:
+      tags: [Registration — institution]
+      summary: Approve after institution review (unlocks dashboard)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: OK }
+
+  /registration/institution/registrations/{registrationId}/reject:
+    post:
+      tags: [Registration — institution]
+      summary: Reject with reason
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /registration/me/claim-code:
+    post:
+      tags: [Registration — student]
+      summary: Bind institution code to authenticated user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [institution_issued_code]
+              properties:
+                institution_issued_code: { type: string }
+      responses:
+        '200': { description: OK }
+        '409': { description: Code already claimed }
+
+  /registration/me/current:
+    get:
+      tags: [Registration — student]
+      summary: Current registration summary
+      security:
+        - BearerAuth: []
+      responses:
+        '200': { description: OK }
+
+  /registration/me/confirm-subjects:
+    post:
+      tags: [Registration — student]
+      summary: Confirm subject combination (optional body to change combo while allowed)
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject_combination_id: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+
+  /registration/me/submit:
+    post:
+      tags: [Registration — student]
+      summary: Submit to institution review
+      security:
+        - BearerAuth: []
+      responses:
+        '200': { description: OK }
+
+  /registration/me/dashboard-access:
+    get:
+      tags: [Registration — student]
+      summary: Locked / unlocked dashboard state
+      security:
+        - BearerAuth: []
+      responses:
+        '200': { description: OK }
+
+  /registration/sessions/{sessionId}/numbering-preview:
+    get:
+      tags: [Registration — registrar]
+      summary: Dry-run final candidate numbers (session must be closed)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Response data includes proposed numbering rows and any conflicts array
+        '422':
+          description: Session not closed

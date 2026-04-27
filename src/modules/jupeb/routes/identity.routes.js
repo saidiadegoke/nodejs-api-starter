@@ -1,0 +1,17 @@
+const router = require('express').Router();
+const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const IdentityController = require('../controllers/identity.controller');
+
+const ninVerifyRoles = [
+  requireAuth,
+  requireRole('admin', 'super_admin', 'registrar', 'program_director', 'institution_admin'),
+];
+
+router.post('/nin/verify', ninVerifyRoles, IdentityController.verifyNin);
+router.get('/nin/verifications/:verificationId', requireAuth, IdentityController.getVerification);
+
+router.delete('/biometrics/:captureId', requireAuth, IdentityController.deleteBiometric);
+router.post('/biometrics', requireAuth, IdentityController.createBiometric);
+router.get('/registrations/:registrationId/biometrics', requireAuth, IdentityController.listBiometrics);
+
+module.exports = router;

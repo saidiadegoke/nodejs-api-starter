@@ -1,0 +1,169 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 002 — Registration sessions'
+  version: '1.0.0'
+  description: |
+    Academic-year registration windows and lifecycle (`docs/002-jupeb-sessions-technical-design.md`).
+    Base path: **`/sessions`**.
+
+    **Finalize candidate numbers** (closed session) is implemented here:
+    `POST /sessions/{sessionId}/finalize-candidate-numbers` (delegates to registration numbering).
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+tags:
+  - name: Sessions
+    description: Authenticated reads; writes require registrar/admin/super_admin (reopen is super_admin only)
+
+paths:
+  /sessions:
+    get:
+      tags: [Sessions]
+      summary: List sessions (paginated)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Paginated rows in response data }
+        '401': { description: Unauthorized }
+    post:
+      tags: [Sessions]
+      summary: Create session (draft)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [academic_year, year_short, opens_at, closes_at]
+              properties:
+                academic_year:
+                  type: string
+                  example: '2026/2027'
+                year_short:
+                  type: string
+                  description: Last two digits of the second academic year
+                  example: '27'
+                opens_at: { type: string, format: date-time }
+                closes_at: { type: string, format: date-time }
+                student_submission_deadline: { type: string, format: date-time }
+                institution_approval_deadline: { type: string, format: date-time }
+                notes: { type: string }
+      responses:
+        '201': { description: Created }
+        '409': { description: Duplicate academic_year }
+
+  /sessions/{sessionId}:
+    get:
+      tags: [Sessions]
+      summary: Get session by id
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: Session in response data }
+        '404': { description: Not found }
+    patch:
+      tags: [Sessions]
+      summary: Patch session (rules depend on status)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Updated }
+
+  /sessions/{sessionId}/stats:
+    get:
+      tags: [Sessions]
+      summary: Registration counts by status for this session
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: Stats object in response data }
+
+  /sessions/{sessionId}/open:
+    post:
+      tags: [Sessions]
+      summary: Transition draft → open (only one open session globally)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: OK }
+        '409': { description: Another session already open }
+
+  /sessions/{sessionId}/close:
+    post:
+      tags: [Sessions]
+      summary: Transition open → closed
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: OK }
+
+  /sessions/{sessionId}/reopen:
+    post:
+      tags: [Sessions]
+      summary: Reopen a closed session (super_admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: OK }
+
+  /sessions/{sessionId}/finalize-candidate-numbers:
+    post:
+      tags: [Sessions]
+      summary: Assign final JUPEB candidate numbers (session must be closed)
+      description: |
+        Idempotent batch update for approved registrations without jupeb_candidate_number.
+        See also JUPEB 005 and GET /registration/sessions/{sessionId}/numbering-preview.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: |
+            Response data includes session_id, assigned, skipped, and numbers (per-registration final numbers).
+        '422': { description: Session not closed }

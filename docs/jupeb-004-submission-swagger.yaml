@@ -1,0 +1,242 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 004 — Document submission'
+  version: '1.0.0'
+  description: |
+    Document requirements and per-registration uploads (`docs/004-jupeb-submission-technical-design.md`).
+    Base path: **`/submission`**.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RequirementId:
+      name: requirementId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+tags:
+  - name: Submission — admin
+  - name: Submission — student
+  - name: Submission — institution
+
+paths:
+  /submission/requirements:
+    get:
+      tags: [Submission — admin]
+      summary: List all document requirements (admin/registrar)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Paginated }
+    post:
+      tags: [Submission — admin]
+      summary: Create requirement
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, label, allowed_mime_types, max_file_size_mb, is_mandatory]
+              properties:
+                key: { type: string }
+                label: { type: string }
+                allowed_mime_types:
+                  type: array
+                  items: { type: string }
+                max_file_size_mb: { type: number }
+                is_mandatory: { type: boolean }
+      responses:
+        '201': { description: Created }
+
+  /submission/requirements/{requirementId}:
+    patch:
+      tags: [Submission — admin]
+      summary: Patch requirement
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequirementId'
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: OK }
+
+  /submission/requirements/{requirementId}/activate:
+    post:
+      tags: [Submission — admin]
+      summary: Activate requirement
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequirementId'
+      responses:
+        '200': { description: OK }
+
+  /submission/requirements/{requirementId}/deactivate:
+    post:
+      tags: [Submission — admin]
+      summary: Deactivate requirement
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequirementId'
+      responses:
+        '200': { description: OK }
+
+  /submission/me/requirements:
+    get:
+      tags: [Submission — student]
+      summary: Active requirements with satisfaction flags for current registration
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: registration_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Array in response data }
+
+  /submission/me/documents:
+    get:
+      tags: [Submission — student]
+      summary: List my registration documents
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: registration_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Submission — student]
+      summary: Attach document (submitted)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requirement_id, file_id]
+              properties:
+                requirement_id: { type: string, format: uuid }
+                file_id: { type: string, format: uuid }
+                registration_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Created }
+
+  /submission/me/documents/{documentId}:
+    patch:
+      tags: [Submission — student]
+      summary: Replace a submitted document (new file_id)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_id]
+              properties:
+                file_id: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+
+  /submission/me/validate-completeness:
+    post:
+      tags: [Submission — student]
+      summary: Check mandatory requirements satisfied
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: registration_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Returns data with complete flag and missing_keys array
+
+  /submission/institution/registrations/{registrationId}/documents:
+    get:
+      tags: [Submission — institution]
+      summary: List documents for a registration (institution review roles)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: OK }
+
+  /submission/institution/documents/{documentId}/accept:
+    post:
+      tags: [Submission — institution]
+      summary: Accept submitted document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                review_note: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /submission/institution/documents/{documentId}/reject:
+    post:
+      tags: [Submission — institution]
+      summary: Reject submitted document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                review_note: { type: string }
+      responses:
+        '200': { description: OK }

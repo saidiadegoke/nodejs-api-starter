@@ -35,7 +35,8 @@ class UserProfileController {
           p.state_province,
           p.educational_level,
           p.employment_status,
-          p.profile_completed
+          p.profile_completed,
+          p.jupeb_university_id
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         LEFT JOIN countries c ON p.country_id = c.id
@@ -253,7 +254,8 @@ class UserProfileController {
           p.state_province,
           p.educational_level,
           p.employment_status,
-          p.profile_completed
+          p.profile_completed,
+          p.jupeb_university_id
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         LEFT JOIN countries c ON p.country_id = c.id
