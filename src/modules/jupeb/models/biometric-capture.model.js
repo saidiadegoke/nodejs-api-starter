@@ -52,6 +52,14 @@ class BiometricCaptureModel {
     const result = await pool.query(`DELETE FROM jupeb_biometric_captures WHERE id = $1 RETURNING *`, [id]);
     return result.rows[0] || null;
   }
+
+  async markReplaced(id) {
+    const result = await pool.query(
+      `UPDATE jupeb_biometric_captures SET replaced_at = CURRENT_TIMESTAMP WHERE id = $1 AND replaced_at IS NULL RETURNING *`,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
 }
 
 module.exports = new BiometricCaptureModel();

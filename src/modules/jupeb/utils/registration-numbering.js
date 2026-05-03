@@ -15,4 +15,19 @@ function formatCandidateNumber(yearShort, jupebPrefix, provisionalSerial) {
   return `${ys}${pref}${String(ser).padStart(4, '0')}`;
 }
 
-module.exports = { formatCandidateNumber };
+// Crockford-ish base32 minus confusable chars (no 0/O/1/I).
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function makeInstitutionCode() {
+  const len = Math.max(4, Math.min(16, parseInt(process.env.JUPEB_INSTITUTION_CODE_LENGTH, 10) || 6));
+  // eslint-disable-next-line global-require
+  const crypto = require('crypto');
+  const bytes = crypto.randomBytes(len);
+  let out = '';
+  for (let i = 0; i < len; i += 1) {
+    out += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+  }
+  return out;
+}
+
+module.exports = { formatCandidateNumber, makeInstitutionCode };

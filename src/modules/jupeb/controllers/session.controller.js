@@ -8,6 +8,17 @@ const {
 } = require('../../../shared/constants/statusCodes');
 
 class SessionController {
+  static async exportCsv(req, res) {
+    try {
+      const csv = await sessionService.exportCsv();
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="sessions.csv"');
+      res.status(200).send(csv);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async list(req, res) {
     try {
       const { rows, page, limit, total } = await sessionService.list({

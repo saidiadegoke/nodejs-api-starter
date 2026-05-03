@@ -1,6 +1,6 @@
 const catalogService = require('../services/catalog.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
-const { NOT_FOUND, CONFLICT, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
+const { NOT_FOUND, CONFLICT, INTERNAL_SERVER_ERROR, CREATED } = require('../../../shared/constants/statusCodes');
 
 function mapPgError(err) {
   if (err && err.code === '23505') {
@@ -12,7 +12,7 @@ function mapPgError(err) {
 class CatalogController {
   static async listUniversitiesPublic(req, res) {
     try {
-      const rows = await catalogService.listUniversitiesPublic();
+      const rows = await catalogService.listUniversitiesPublic({ type: req.query.type });
       return sendSuccess(res, rows, 'Universities retrieved');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -119,7 +119,7 @@ class CatalogController {
 
   static async getSubjectCombinationById(req, res) {
     try {
-      const row = await catalogService.getSubjectCombinationById(req.params.subjectCombinationId);
+      const row = await catalogService.getSubjectCombinationById(req.params.subjectCombinationId, { embedItems: true });
       return sendSuccess(res, row, 'Subject combination retrieved');
     } catch (err) {
       const status = err.status || NOT_FOUND;
@@ -181,6 +181,104 @@ class CatalogController {
     } catch (err) {
       const status = err.status || NOT_FOUND;
       return sendError(res, err.message, status);
+    }
+  }
+
+  // ----- Subjects -----
+  static async listSubjectsPublic(req, res) {
+    try {
+      const rows = await catalogService.listSubjectsPublic();
+      return sendSuccess(res, rows, 'Subjects retrieved');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async listSubjectsAdmin(req, res) {
+    try {
+      const { rows, page, limit, total } = await catalogService.listSubjectsAdmin({
+        page: req.query.page,
+        limit: req.query.limit,
+        status: req.query.status,
+      });
+      return sendPaginated(res, rows, page, limit, total);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async getSubjectById(req, res) {
+    try {
+      const row = await catalogService.getSubjectById(req.params.subjectId);
+      return sendSuccess(res, row, 'Subject retrieved');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async createSubject(req, res) {
+    try {
+      const row = await catalogService.createSubject(req.body);
+      return sendSuccess(res, row, 'Subject created', CREATED);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async patchSubject(req, res) {
+    try {
+      const row = await catalogService.patchSubject(req.params.subjectId, req.body);
+      return sendSuccess(res, row, 'Subject updated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async activateSubject(req, res) {
+    try {
+      const row = await catalogService.setSubjectStatus(req.params.subjectId, 'active');
+      return sendSuccess(res, row, 'Subject activated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async deactivateSubject(req, res) {
+    try {
+      const row = await catalogService.setSubjectStatus(req.params.subjectId, 'inactive');
+      return sendSuccess(res, row, 'Subject deactivated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async bulkUniversities(req, res) {
+    try {
+      const csv = typeof req.body === 'string' ? req.body : (req.body && req.body.csv) || '';
+      const data = await catalogService.bulkCreateUniversities(csv);
+      return sendSuccess(res, data, 'Universities bulk processed');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async bulkSubjects(req, res) {
+    try {
+      const csv = typeof req.body === 'string' ? req.body : (req.body && req.body.csv) || '';
+      const data = await catalogService.bulkCreateSubjects(csv);
+      return sendSuccess(res, data, 'Subjects bulk processed');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async bulkSubjectCombinations(req, res) {
+    try {
+      const csv = typeof req.body === 'string' ? req.body : (req.body && req.body.csv) || '';
+      const data = await catalogService.bulkCreateSubjectCombinations(csv);
+      return sendSuccess(res, data, 'Subject combinations bulk processed');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
   }
 }

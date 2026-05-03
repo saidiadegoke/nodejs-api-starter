@@ -52,12 +52,21 @@ class RegistrationController {
     }
   }
 
+  static async getCodeStatus(req, res) {
+    try {
+      const data = await registrationService.getCodeStatus(req.query.code);
+      return sendSuccess(res, data, 'Code status');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async claimCode(req, res) {
     try {
       const row = await registrationService.claimCode(req.body, req.user.user_id);
       return sendSuccess(res, row, 'Code claimed');
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -65,6 +74,33 @@ class RegistrationController {
     try {
       const data = await registrationService.getMeCurrent(req.user.user_id);
       return sendSuccess(res, data, 'Current registration');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async getMeProfile(req, res) {
+    try {
+      const data = await registrationService.getMeProfile(req.user.user_id);
+      return sendSuccess(res, data, 'Candidate profile');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async updateAcademicIntake(req, res) {
+    try {
+      const data = await registrationService.updateAcademicIntake(req.user.user_id, req.body);
+      return sendSuccess(res, data, 'Academic intake updated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async getMeSubmissionPreview(req, res) {
+    try {
+      const data = await registrationService.getMeSubmissionPreview(req.user.user_id);
+      return sendSuccess(res, data, 'Submission preview');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

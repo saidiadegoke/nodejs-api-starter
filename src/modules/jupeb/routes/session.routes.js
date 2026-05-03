@@ -7,6 +7,7 @@ const sessionWrite = [requireAuth, requireRole('admin', 'super_admin', 'registra
 const superAdminOnly = [requireAuth, requireRole('super_admin')];
 
 router.get('/', sessionRead, SessionController.list);
+router.get('/export', sessionWrite, SessionController.exportCsv);
 router.post('/', sessionWrite, SessionController.create);
 
 router.get('/:sessionId/stats', sessionRead, SessionController.stats);

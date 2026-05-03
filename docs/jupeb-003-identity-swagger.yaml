@@ -45,6 +45,14 @@ paths:
       description: |
         Allowed roles include `program_director`, `institution_admin`, `registrar`, `admin`, `super_admin`.
         Response never returns raw NIN; profile fields come from provider payload.
+
+        ## Pending state
+        When the upstream NIN provider is unavailable (timeout, 5xx, circuit-open), the verification
+        is persisted with `status = pending` and a `retry_after` timestamp. The candidate's intake fields
+        (name, email, phone, subject_combination_id) are stored on the row so they don't need to be
+        re-typed. A background resolver and the explicit retry endpoint flip the row to `verified`
+        or `failed` once the provider responds. Webhooks `jupeb.nin.verified` and `jupeb.nin.failed`
+        are fired on resolution.
       security:
         - BearerAuth: []
       requestBody:
@@ -61,8 +69,42 @@ paths:
                   example: '12345678901'
                 idempotency_key:
                   type: string
+                intake_payload:
+                  type: object
+                  description: Candidate fields captured alongside the NIN; persisted on the verification row so the form is not lost when the provider is unavailable.
+                  properties:
+                    name: { type: string }
+                    email: { type: string, format: email }
+                    phone: { type: string }
+                    subject_combination_id: { type: string, format: uuid }
       responses:
-        '200': { description: Verification result in response data }
+        '200':
+          description: |
+            Verification result. The response `data.status` is one of:
+              - `verified` — provider returned a valid profile.
+              - `failed` — provider rejected the NIN (terminal).
+              - `pending` — provider unavailable; will be retried automatically. Response also includes `retry_after` (ISO timestamp) and `last_error_code`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      verification_id: { type: string, format: uuid }
+                      status:
+                        type: string
+                        enum: [verified, failed, pending]
+                      profile: { type: object }
+                      retry_after:
+                        type: string
+                        format: date-time
+                        description: Present when status=pending. Earliest moment the resolver will re-attempt.
+                      last_error_code:
+                        type: string
+                        description: Present when status=pending. e.g. `provider_unavailable`.
+                      error: { type: object, description: Present when status=failed. }
         '401': { description: Unauthorized }
         '422': { description: Invalid NIN format }
 
@@ -70,19 +112,89 @@ paths:
     get:
       tags: [Identity — NIN]
       summary: Get verification record (sanitized)
+      description: |
+        Returns the persisted state of a NIN verification. For pending rows the response
+        carries the candidate's `intake_payload` (the form fields submitted alongside the
+        NIN), `attempt_count`, `retry_after`, and `last_error_code` so clients can reflect
+        the current resolution state without polling.
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/VerificationId'
       responses:
-        '200': { description: OK }
+        '200':
+          description: |
+            Sanitized verification row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      nin_last4: { type: string }
+                      provider: { type: string }
+                      provider_reference: { type: string, nullable: true }
+                      status:
+                        type: string
+                        enum: [verified, failed, pending]
+                      response_payload: { type: object }
+                      error_payload: { type: object }
+                      verified_at: { type: string, format: date-time, nullable: true }
+                      requested_by: { type: string, format: uuid, nullable: true }
+                      created_at: { type: string, format: date-time }
+                      intake_payload:
+                        type: object
+                        description: Candidate fields submitted with the original verify call (name, email, phone, subject_combination_id).
+                      attempt_count: { type: integer }
+                      retry_after: { type: string, format: date-time, nullable: true }
+                      last_error_code: { type: string, nullable: true }
         '403': { description: Not owner / not privileged }
         '404': { description: Not found }
+
+  /identity/nin/verifications/{verificationId}/retry:
+    post:
+      tags: [Identity — NIN]
+      summary: Re-attempt a pending NIN verification
+      description: |
+        Manually re-trigger NIN verification for a row in `pending` state. Idempotent: if the
+        verification is already terminal (`verified` or `failed`), the current state is returned
+        unchanged.
+
+        On a successful resolution this fires `jupeb.nin.verified` (or `jupeb.nin.failed`) webhooks
+        and queues a `jupeb_nin_verified` / `jupeb_nin_failed` in-app notification for the candidate.
+
+        Allowed roles match `POST /identity/nin/verify`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VerificationId'
+      responses:
+        '200':
+          description: |
+            Updated verification state. `data.status` may still be `pending` if the provider is
+            still unavailable; in that case `attempt_count` is incremented and `retry_after` is
+            pushed forward by the backoff schedule.
+        '401': { description: Unauthorized }
+        '404': { description: Verification not found }
+        '422': { description: Invalid verification id }
 
   /identity/biometrics:
     post:
       tags: [Identity — Biometrics]
       summary: Record a biometric capture for a registration
+      description: |
+        Exactly one of `file_id` or `external_reference` is required.
+
+        **Self-service lock:** if the registration's matching `*_skipped_at` column is set
+        and the caller is not a privileged role (`super_admin`, `admin`, `registrar`,
+        `program_director`, `institution_admin`), this returns 403. Privileged users can
+        still capture on the candidate's behalf.
+
+        **Quality threshold:** when `JUPEB_FACE_MIN_QUALITY` is set, face captures with
+        `quality_score` below the threshold return 422.
       security:
         - BearerAuth: []
       requestBody:
@@ -99,26 +211,43 @@ paths:
                   enum: [face, fingerprint]
                 file_id: { type: string, format: uuid }
                 external_reference: { type: string }
-                quality_score: { type: number }
+                quality_score: { type: number, minimum: 0, maximum: 1 }
                 device_metadata: { type: object }
                 captured_at: { type: string, format: date-time }
       responses:
         '201': { description: Created }
-        '403': { description: Access denied for registration }
-        '409': { description: Duplicate capture type for registration }
+        '403': { description: Access denied or self-service capture is locked }
+        '409': { description: Duplicate active capture type for registration }
+        '422': { description: Validation error or quality below threshold }
 
-  /identity/registrations/{registrationId}/biometrics:
-    get:
+  /identity/biometrics/{captureId}:
+    put:
       tags: [Identity — Biometrics]
-      summary: List biometric captures for a registration
+      summary: Replace a biometric capture in place
+      description: |
+        Soft-archives the existing row by setting `replaced_at`, then inserts a fresh
+        capture for the same `(registration_id, capture_type)`. The unique index excludes
+        replaced rows, so re-capture works without manual delete.
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/RegistrationId'
+        - $ref: '#/components/parameters/CaptureId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_id: { type: string, format: uuid }
+                external_reference: { type: string }
+                quality_score: { type: number }
+                device_metadata: { type: object }
+                captured_at: { type: string, format: date-time }
       responses:
-        '200': { description: Array in response data }
-
-  /identity/biometrics/{captureId}:
+        '200': { description: New active capture row }
+        '404': { description: Capture not found }
+        '422': { description: Already replaced or invalid payload }
     delete:
       tags: [Identity — Biometrics]
       summary: Delete a biometric capture
@@ -128,3 +257,60 @@ paths:
         - $ref: '#/components/parameters/CaptureId'
       responses:
         '200': { description: Deleted or not found per implementation }
+
+  /identity/registrations/{registrationId}/biometrics:
+    get:
+      tags: [Identity — Biometrics]
+      summary: List biometric captures for a registration
+      description: |
+        Returns all rows including `replaced_at`-archived ones. Active captures are those
+        with `replaced_at = null`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: Array in response data }
+
+  /identity/registrations/{registrationId}/biometrics/skip:
+    post:
+      tags: [Identity — Biometrics]
+      summary: Mark a biometric capture type as skipped (locks self-service)
+      description: |
+        Stamps `fingerprint_skipped_at` or `face_skipped_at` on the registration. While
+        the column is set, non-privileged callers receive 403 from `POST /identity/biometrics`
+        for that capture type — matching the figma "skip → contact your institution" copy.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [capture_type]
+              properties:
+                capture_type:
+                  type: string
+                  enum: [face, fingerprint]
+      responses:
+        '200': { description: Updated registration row with skip timestamp }
+        '404': { description: Registration not found }
+        '422': { description: Invalid capture_type }
+
+  /identity/registrations/{registrationId}/photo:
+    get:
+      tags: [Identity — Biometrics]
+      summary: Signed URL for the latest face capture
+      description: |
+        Returns `{ url, file_id, file_type, captured_at }` for the most recent active
+        face capture. Leverages the existing `files` module's signed-URL helper.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: URL + metadata }
+        '404': { description: No face capture for this registration }

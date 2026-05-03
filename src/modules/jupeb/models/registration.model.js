@@ -112,6 +112,29 @@ class RegistrationModel {
     return result.rows[0];
   }
 
+  async setBiometricSkip(id, captureType) {
+    const column = captureType === 'face' ? 'face_skipped_at' : 'fingerprint_skipped_at';
+    const result = await pool.query(
+      `UPDATE jupeb_registrations
+         SET ${column} = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
+  async updateAcademicIntake(id, { sittings_count, result_types }) {
+    const result = await pool.query(
+      `UPDATE jupeb_registrations
+         SET sittings_count = $2,
+             result_types = $3::jsonb,
+             updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 RETURNING *`,
+      [id, sittings_count, JSON.stringify(result_types || [])]
+    );
+    return result.rows[0];
+  }
+
   async listInstitution({ university_id, session_id, status, limit, offset }) {
     const values = [];
     let idx = 1;

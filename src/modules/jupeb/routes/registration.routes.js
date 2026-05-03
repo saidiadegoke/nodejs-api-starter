@@ -15,8 +15,12 @@ router.get('/institution/registrations', instReg, RegistrationController.institu
 router.post('/institution/registrations/:registrationId/approve', instReg, RegistrationController.institutionApprove);
 router.post('/institution/registrations/:registrationId/reject', instReg, RegistrationController.institutionReject);
 
+router.get('/me/code-status', jupebStudent, RegistrationController.getCodeStatus);
 router.post('/me/claim-code', jupebStudent, RegistrationController.claimCode);
 router.get('/me/current', jupebStudent, RegistrationController.getMeCurrent);
+router.get('/me/profile', jupebStudent, RegistrationController.getMeProfile);
+router.get('/me/submission-preview', jupebStudent, RegistrationController.getMeSubmissionPreview);
+router.patch('/me/academic-intake', jupebStudent, RegistrationController.updateAcademicIntake);
 router.post('/me/confirm-subjects', jupebStudent, RegistrationController.confirmSubjects);
 router.post('/me/submit', jupebStudent, RegistrationController.submit);
 router.get('/me/dashboard-access', jupebStudent, RegistrationController.dashboardAccess);

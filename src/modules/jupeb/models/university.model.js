@@ -1,12 +1,39 @@
 const pool = require('../../../db/pool');
 
 class UniversityModel {
-  async create({ code, name, short_name = null, jupeb_prefix, metadata = {} }) {
+  async create({
+    code,
+    name,
+    short_name = null,
+    jupeb_prefix,
+    metadata = {},
+    university_type = null,
+    email = null,
+    address = null,
+    phone = null,
+    expected_candidate_count = null,
+    description = null,
+  }) {
     const result = await pool.query(
-      `INSERT INTO jupeb_universities (code, name, short_name, jupeb_prefix, metadata)
-       VALUES ($1, $2, $3, $4, $5::jsonb)
+      `INSERT INTO jupeb_universities (
+         code, name, short_name, jupeb_prefix, metadata, university_type,
+         email, address, phone, expected_candidate_count, description
+       )
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [code.trim(), name.trim(), short_name ? short_name.trim() : null, jupeb_prefix, JSON.stringify(metadata)]
+      [
+        code.trim(),
+        name.trim(),
+        short_name ? short_name.trim() : null,
+        jupeb_prefix,
+        JSON.stringify(metadata),
+        university_type,
+        email,
+        address,
+        phone,
+        expected_candidate_count,
+        description,
+      ]
     );
     return result.rows[0];
   }
@@ -19,9 +46,19 @@ class UniversityModel {
     return result.rows[0];
   }
 
-  async findPublicActive() {
+  async findPublicActive({ universityType } = {}) {
+    if (universityType) {
+      const r = await pool.query(
+        `SELECT id, code, name, short_name, jupeb_prefix, status, metadata, university_type, created_at, updated_at
+         FROM jupeb_universities
+         WHERE deleted_at IS NULL AND status = 'active' AND university_type = $1
+         ORDER BY name ASC`,
+        [universityType]
+      );
+      return r.rows;
+    }
     const result = await pool.query(
-      `SELECT id, code, name, short_name, jupeb_prefix, status, metadata, created_at, updated_at
+      `SELECT id, code, name, short_name, jupeb_prefix, status, metadata, university_type, created_at, updated_at
        FROM jupeb_universities
        WHERE deleted_at IS NULL AND status = 'active'
        ORDER BY name ASC`
@@ -56,7 +93,19 @@ class UniversityModel {
   }
 
   async updateById(id, fields) {
-    const allowed = ['name', 'short_name', 'metadata', 'jupeb_prefix', 'code'];
+    const allowed = [
+      'name',
+      'short_name',
+      'metadata',
+      'jupeb_prefix',
+      'code',
+      'university_type',
+      'email',
+      'address',
+      'phone',
+      'expected_candidate_count',
+      'description',
+    ];
     const sets = [];
     const values = [];
     let i = 1;

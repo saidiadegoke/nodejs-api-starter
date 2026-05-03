@@ -1,12 +1,12 @@
 const pool = require('../../../db/pool');
 
 class SubjectCombinationModel {
-  async create({ code, title, subjects, is_global = true, university_id = null }) {
+  async create({ code, title, is_global = true, university_id = null }) {
     const result = await pool.query(
-      `INSERT INTO jupeb_subject_combinations (code, title, subjects, is_global, university_id)
-       VALUES ($1, $2, $3::jsonb, $4, $5)
+      `INSERT INTO jupeb_subject_combinations (code, title, is_global, university_id)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [code.trim(), title.trim(), JSON.stringify(subjects), is_global, university_id]
+      [code.trim(), title.trim(), is_global, university_id]
     );
     return result.rows[0];
   }
@@ -19,10 +19,43 @@ class SubjectCombinationModel {
     return result.rows[0];
   }
 
+  async listItems(combinationId) {
+    const r = await pool.query(
+      `SELECT i.id, i.position, i.subject_id, s.code, s.name
+       FROM jupeb_subject_combination_items i
+       JOIN jupeb_subjects s ON s.id = i.subject_id
+       WHERE i.combination_id = $1
+       ORDER BY i.position ASC`,
+      [combinationId]
+    );
+    return r.rows;
+  }
+
+  async replaceItems(combinationId, subjectIdsInOrder) {
+    await pool.query(`DELETE FROM jupeb_subject_combination_items WHERE combination_id = $1`, [combinationId]);
+    for (let i = 0; i < subjectIdsInOrder.length; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO jupeb_subject_combination_items (combination_id, subject_id, position)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [combinationId, subjectIdsInOrder[i], i]
+      );
+    }
+  }
+
+  async findByCode(code) {
+    const result = await pool.query(
+      `SELECT * FROM jupeb_subject_combinations WHERE LOWER(code) = LOWER($1) AND deleted_at IS NULL`,
+      [String(code).trim()]
+    );
+    return result.rows[0];
+  }
+
   async findPublicActive({ universityId }) {
     if (universityId) {
       const result = await pool.query(
-        `SELECT id, code, title, subjects, status, is_global, university_id, created_at, updated_at
+        `SELECT id, code, title, status, is_global, university_id, created_at, updated_at
          FROM jupeb_subject_combinations
          WHERE deleted_at IS NULL AND status = 'active'
            AND (is_global = true OR university_id = $1)
@@ -32,7 +65,7 @@ class SubjectCombinationModel {
       return result.rows;
     }
     const result = await pool.query(
-      `SELECT id, code, title, subjects, status, is_global, university_id, created_at, updated_at
+      `SELECT id, code, title, status, is_global, university_id, created_at, updated_at
        FROM jupeb_subject_combinations
        WHERE deleted_at IS NULL AND status = 'active' AND is_global = true
        ORDER BY title ASC`
@@ -75,19 +108,14 @@ class SubjectCombinationModel {
   }
 
   async updateById(id, fields) {
-    const allowed = ['title', 'subjects', 'is_global', 'university_id', 'code'];
+    const allowed = ['title', 'is_global', 'university_id', 'code'];
     const sets = [];
     const values = [];
     let i = 1;
     for (const key of allowed) {
       if (fields[key] !== undefined) {
-        if (key === 'subjects') {
-          sets.push(`subjects = $${i++}::jsonb`);
-          values.push(JSON.stringify(fields[key]));
-        } else {
-          sets.push(`${key} = $${i++}`);
-          values.push(fields[key]);
-        }
+        sets.push(`${key} = $${i++}`);
+        values.push(fields[key]);
       }
     }
     if (!sets.length) return this.findById(id);

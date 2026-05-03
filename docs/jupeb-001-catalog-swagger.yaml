@@ -1,10 +1,15 @@
 openapi: 3.0.0
 info:
   title: 'JUPEB 001 — Catalog'
-  version: '1.0.0'
+  version: '1.1.0'
   description: |
-    Universities and subject combinations (`docs/001-jupeb-catalog-technical-design.md`).
+    Universities, subjects, and subject combinations (`docs/001-jupeb-catalog-technical-design.md`).
     Base path: **`/catalog`**.
+
+    Subjects are first-class as of migration 013; combinations reference them via
+    `jupeb_subject_combination_items` (migration 016). The legacy
+    `jupeb_subject_combinations.subjects` JSONB column was dropped in migration 017 —
+    `subject_items` on read responses is the single source of truth.
 
 servers:
   - url: http://localhost:5000
@@ -21,53 +26,151 @@ components:
       name: universityId
       in: path
       required: true
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
+    SubjectId:
+      name: subjectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     SubjectCombinationId:
       name: subjectCombinationId
       in: path
       required: true
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
+  schemas:
+    University:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        short_name: { type: string, nullable: true }
+        jupeb_prefix: { type: string, description: 'Three numeric digits, e.g. "001"' }
+        status: { type: string, enum: [active, inactive] }
+        university_type: { type: string, enum: [federal, state, private], nullable: true }
+        email: { type: string, format: email, nullable: true }
+        address: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        expected_candidate_count: { type: integer, nullable: true, minimum: 0 }
+        description: { type: string, nullable: true }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Subject:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, maxLength: 20 }
+        name: { type: string, maxLength: 120 }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [active, inactive] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SubjectCombinationItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer, minimum: 0 }
+        subject_id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+    SubjectCombination:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        title: { type: string }
+        is_global: { type: boolean }
+        university_id: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [active, inactive] }
+        subject_items:
+          type: array
+          items: { $ref: '#/components/schemas/SubjectCombinationItem' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BulkResult:
+      type: object
+      properties:
+        total: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        outcomes:
+          type: array
+          items:
+            type: object
+            properties:
+              row: { type: integer }
+              ok: { type: boolean }
+              data: { type: object, nullable: true }
+              error_code: { type: string, nullable: true }
+              error_message: { type: string, nullable: true }
 
 tags:
   - name: Catalog — public
     description: Unauthenticated read for preload UIs
   - name: Catalog — admin
-    description: Requires JWT; roles typically `admin`, `super_admin`, `registrar`
+    description: Requires JWT; roles `admin`, `super_admin`, or `registrar`
 
 paths:
   /catalog/universities/public:
     get:
       tags: [Catalog — public]
-      summary: List active universities (public)
+      summary: List active universities
+      description: |
+        Optional `type` filter restricts to a single institution category.
       security: []
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, enum: [federal, state, private] }
       responses:
         '200':
-          description: Array of universities in response data
+          description: Array in response data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/University' }
+        '422': { description: Invalid type }
 
   /catalog/subject-combinations/public:
     get:
       tags: [Catalog — public]
-      summary: List active subject combinations (public)
+      summary: List active subject combinations
       security: []
       parameters:
         - name: university_id
           in: query
-          schema:
-            type: string
-            format: uuid
-          description: When set, returns global combos plus combos scoped to this university
+          schema: { type: string, format: uuid }
+          description: When set, returns global combos plus combos scoped to this university.
       responses:
         '200':
-          description: Array in response data
+          description: Array in response data (each row carries `subject_items`).
+
+  /catalog/subjects/public:
+    get:
+      tags: [Catalog — public]
+      summary: List active subjects
+      security: []
+      responses:
+        '200':
+          description: Array of subjects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Subject' }
 
   /catalog/universities:
     get:
       tags: [Catalog — admin]
-      summary: List universities (admin)
+      summary: List universities (paginated)
       security:
         - BearerAuth: []
       parameters:
@@ -81,10 +184,8 @@ paths:
           in: query
           schema: { type: string, enum: [active, inactive] }
       responses:
-        '200':
-          description: Paginated list in response data and pagination object
-        '401':
-          description: Unauthorized
+        '200': { description: Paginated list; rows are `University`. }
+        '401': { description: Unauthorized }
     post:
       tags: [Catalog — admin]
       summary: Create university
@@ -103,28 +204,63 @@ paths:
                 short_name: { type: string }
                 jupeb_prefix:
                   type: string
-                  description: Exactly three digits (e.g. `001`)
+                  description: Exactly three digits (e.g. `001`).
+                university_type:
+                  type: string
+                  enum: [federal, state, private]
+                email: { type: string, format: email }
+                address: { type: string }
+                phone: { type: string }
+                expected_candidate_count:
+                  type: integer
+                  minimum: 0
+                description: { type: string }
                 metadata: { type: object }
       responses:
         '201':
-          description: Created — response data is the university row
+          description: Created — response data is the `University` row.
+        '422': { description: Validation error (incl. malformed email, negative capacity) }
         '401': { description: Unauthorized }
-        '422': { description: Validation error }
+
+  /catalog/universities/bulk:
+    post:
+      tags: [Catalog — admin]
+      summary: Bulk-create universities from CSV
+      description: |
+        CSV header columns supported: `code,name,jupeb_prefix,short_name,university_type,
+        email,address,phone,expected_candidate_count,description`. Per-row validation; failures
+        are reported in `outcomes[]` rather than aborting the batch.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string }
+      responses:
+        '200':
+          description: Per-row outcome summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BulkResult' }
+        '413': { description: Too many rows }
 
   /catalog/universities/{universityId}:
     get:
       tags: [Catalog — admin]
-      summary: Get university by id
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/UniversityId'
       responses:
-        '200': { description: University in response data }
+        '200': { description: 'University in response data' }
         '404': { description: Not found }
     patch:
       tags: [Catalog — admin]
-      summary: Patch university
+      summary: Update university (incl. contact fields and university_type)
       security:
         - BearerAuth: []
       parameters:
@@ -139,36 +275,146 @@ paths:
                 short_name: { type: string }
                 code: { type: string }
                 jupeb_prefix: { type: string }
+                university_type: { type: string, enum: [federal, state, private], nullable: true }
+                email: { type: string, format: email, nullable: true }
+                address: { type: string, nullable: true }
+                phone: { type: string, nullable: true }
+                expected_candidate_count: { type: integer, minimum: 0, nullable: true }
+                description: { type: string, nullable: true }
                 metadata: { type: object }
       responses:
-        '200': { description: Updated row in response data }
+        '200': { description: Updated `University` in response data }
 
   /catalog/universities/{universityId}/activate:
     post:
       tags: [Catalog — admin]
-      summary: Set university status active
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/UniversityId'
-      responses:
-        '200': { description: OK }
+      responses: { '200': { description: OK } }
 
   /catalog/universities/{universityId}/deactivate:
     post:
       tags: [Catalog — admin]
-      summary: Set university status inactive
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/UniversityId'
+      responses: { '200': { description: OK } }
+
+  /catalog/subjects:
+    get:
+      tags: [Catalog — admin]
+      summary: List subjects (paginated)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, inactive] }
       responses:
-        '200': { description: OK }
+        '200': { description: Paginated list of `Subject` }
+    post:
+      tags: [Catalog — admin]
+      summary: Create subject
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string, maxLength: 20 }
+                name: { type: string, maxLength: 120 }
+                description: { type: string }
+      responses:
+        '201': { description: Created `Subject` }
+        '409': { description: Subject with this code already exists }
+        '422': { description: Validation error }
+
+  /catalog/subjects/bulk:
+    post:
+      tags: [Catalog — admin]
+      summary: Bulk-create subjects from CSV
+      description: 'CSV columns: `code,name,description`.'
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string }
+      responses:
+        '200':
+          description: Per-row outcomes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BulkResult' }
+
+  /catalog/subjects/{subjectId}:
+    get:
+      tags: [Catalog — admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectId'
+      responses:
+        '200': { description: 'Subject row in response data' }
+        '404': { description: Not found }
+    patch:
+      tags: [Catalog — admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: Updated `Subject` }
+        '409': { description: Code conflict }
+
+  /catalog/subjects/{subjectId}/activate:
+    post:
+      tags: [Catalog — admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectId'
+      responses: { '200': { description: OK } }
+
+  /catalog/subjects/{subjectId}/deactivate:
+    post:
+      tags: [Catalog — admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SubjectId'
+      responses: { '200': { description: OK } }
 
   /catalog/subject-combinations:
     get:
       tags: [Catalog — admin]
-      summary: List subject combinations (admin)
+      summary: List subject combinations (paginated)
       security:
         - BearerAuth: []
       parameters:
@@ -185,10 +431,20 @@ paths:
           in: query
           schema: { type: string, format: uuid }
       responses:
-        '200': { description: Paginated }
+        '200': { description: Paginated `SubjectCombination` rows }
     post:
       tags: [Catalog — admin]
       summary: Create subject combination
+      description: |
+        `code` and `title` are **optional** — when omitted they are auto-derived
+        from the sorted subject codes/names with a numeric suffix to break collisions.
+        `subjects` is a required array of 3–6 unique subject references; each entry is
+        looked up against `jupeb_subjects` by code (case-insensitive) → name. When
+        `JUPEB_ENFORCE_SUBJECT_CATALOG=true`, missing entries return 422; otherwise the
+        service auto-creates the missing subject row.
+
+        On success the response includes `subject_items[]` ordered by position. The
+        legacy JSONB `subjects` field is no longer returned.
       security:
         - BearerAuth: []
       requestBody:
@@ -197,10 +453,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [code, title, subjects]
+              required: [subjects]
               properties:
-                code: { type: string }
-                title: { type: string }
+                code: { type: string, description: Auto-derived if omitted. }
+                title: { type: string, description: Auto-derived if omitted. }
                 subjects:
                   type: array
                   items: { type: string }
@@ -209,21 +465,57 @@ paths:
                 is_global: { type: boolean, default: true }
                 university_id: { type: string, format: uuid }
       responses:
-        '201': { description: Created }
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubjectCombination' }
+        '422': { description: Validation error (incl. unknown subject in strict mode) }
+
+  /catalog/subject-combinations/bulk:
+    post:
+      tags: [Catalog — admin]
+      summary: Bulk-create subject combinations from CSV
+      description: |
+        CSV columns: `subjects` (comma/semicolon/pipe-separated within the cell),
+        optional `code`, `title`, `is_global`, `university_id`. Codes/titles auto-derive
+        when omitted.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string }
+      responses:
+        '200':
+          description: Per-row outcomes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BulkResult' }
 
   /catalog/subject-combinations/{subjectCombinationId}:
     get:
       tags: [Catalog — admin]
-      summary: Get subject combination
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SubjectCombinationId'
       responses:
-        '200': { description: OK }
+        '200':
+          description: 'SubjectCombination with embedded subject_items[].'
     patch:
       tags: [Catalog — admin]
-      summary: Patch subject combination
+      summary: Update subject combination
+      description: |
+        Passing `subjects` re-resolves the membership and replaces the join rows in
+        lockstep — preserving order and deleting orphans.
       security:
         - BearerAuth: []
       parameters:
@@ -233,27 +525,33 @@ paths:
           application/json:
             schema:
               type: object
+              properties:
+                code: { type: string }
+                title: { type: string }
+                subjects:
+                  type: array
+                  items: { type: string }
+                  minItems: 3
+                  maxItems: 6
+                is_global: { type: boolean }
+                university_id: { type: string, format: uuid }
       responses:
-        '200': { description: OK }
+        '200': { description: Updated `SubjectCombination` }
 
   /catalog/subject-combinations/{subjectCombinationId}/activate:
     post:
       tags: [Catalog — admin]
-      summary: Activate subject combination
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SubjectCombinationId'
-      responses:
-        '200': { description: OK }
+      responses: { '200': { description: OK } }
 
   /catalog/subject-combinations/{subjectCombinationId}/deactivate:
     post:
       tags: [Catalog — admin]
-      summary: Deactivate subject combination
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SubjectCombinationId'
-      responses:
-        '200': { description: OK }
+      responses: { '200': { description: OK } }

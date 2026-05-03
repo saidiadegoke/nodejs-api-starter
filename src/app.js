@@ -82,6 +82,11 @@ app.use(notFoundHandler);
 // Global error handler
 app.use(errorHandler);
 
+if (process.env.NODE_ENV !== 'test') {
+  // eslint-disable-next-line global-require
+  require('./modules/jupeb/jobs/nin-resolver.job').start();
+}
+
 module.exports = app;
 
 

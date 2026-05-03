@@ -1,13 +1,16 @@
 openapi: 3.0.0
 info:
   title: 'JUPEB 002 — Registration sessions'
-  version: '1.0.0'
+  version: '1.1.0'
   description: |
-    Academic-year registration windows and lifecycle (`docs/002-jupeb-sessions-technical-design.md`).
-    Base path: **`/sessions`**.
+    Academic-year registration windows, fees, cutoff dates, and lifecycle
+    (`docs/002-jupeb-sessions-technical-design.md`). Base path: **`/sessions`**.
 
-    **Finalize candidate numbers** (closed session) is implemented here:
-    `POST /sessions/{sessionId}/finalize-candidate-numbers` (delegates to registration numbering).
+    Migration 015 added cutoff/fee fields and `max_ca_score` to support the figma
+    "Create New Session" modal.
+
+    `POST /sessions/{sessionId}/finalize-candidate-numbers` assigns final JUPEB
+    candidate numbers (session must be closed).
 
 servers:
   - url: http://localhost:5000
@@ -24,13 +27,68 @@ components:
       name: sessionId
       in: path
       required: true
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
+  schemas:
+    Session:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        academic_year: { type: string, example: '2026/2027' }
+        year_short: { type: string, example: '27' }
+        status: { type: string, enum: [draft, open, closed, archived] }
+        opens_at: { type: string, format: date-time }
+        closes_at: { type: string, format: date-time }
+        student_submission_deadline: { type: string, format: date-time, nullable: true }
+        institution_approval_deadline: { type: string, format: date-time, nullable: true }
+        candidate_info_cutoff_at: { type: string, format: date-time, nullable: true }
+        profile_update_cutoff_at: { type: string, format: date-time, nullable: true }
+        ca_cutoff_at: { type: string, format: date-time, nullable: true }
+        max_ca_score: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+        affiliation_fee_existing: { type: number, nullable: true, minimum: 0 }
+        affiliation_fee_new: { type: number, nullable: true, minimum: 0 }
+        exam_fee_per_candidate: { type: number, nullable: true, minimum: 0 }
+        registration_fee_amount: { type: number, nullable: true, minimum: 0 }
+        registration_fee_currency: { type: string, example: 'NGN' }
+        notes: { type: string, nullable: true, description: 'Aliased as `description` on input.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SessionStatsDelta:
+      type: object
+      properties:
+        value: { type: number }
+        previous: { type: number }
+        delta_pct:
+          type: number
+          nullable: true
+          description: '`null` when previous is 0 and current is non-zero.'
+        direction:
+          type: string
+          enum: [up, down, flat]
+    SessionStats:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        total_registrations: { type: integer }
+        registrations_by_status: { type: object, additionalProperties: { type: integer } }
+        institutions_count: { type: integer }
+        subject_combinations_count: { type: integer }
+        candidates_with_biometrics: { type: integer }
+        candidates_without_biometrics: { type: integer }
+        previous_session_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Present when ?previous_session_id is supplied.
+        deltas:
+          type: object
+          description: Present when ?previous_session_id is supplied.
+          additionalProperties: { $ref: '#/components/schemas/SessionStatsDelta' }
 
 tags:
   - name: Sessions
-    description: Authenticated reads; writes require registrar/admin/super_admin (reopen is super_admin only)
+    description: |
+      Authenticated reads; writes require `registrar`/`admin`/`super_admin`
+      (reopen is `super_admin` only).
 
 paths:
   /sessions:
@@ -40,21 +98,19 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - name: page
-          in: query
-          schema: { type: integer, minimum: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer }
-        - name: status
-          in: query
-          schema: { type: string }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: limit, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: string } }
       responses:
-        '200': { description: Paginated rows in response data }
+        '200': { description: Paginated `Session` rows }
         '401': { description: Unauthorized }
     post:
       tags: [Sessions]
       summary: Create session (draft)
+      description: |
+        Cutoff dates are validated to be in chronological order:
+        `closes_at ≤ candidate_info_cutoff_at ≤ profile_update_cutoff_at ≤ ca_cutoff_at`.
+        `description` is accepted as an alias for `notes`.
       security:
         - BearerAuth: []
       requestBody:
@@ -65,32 +121,64 @@ paths:
               type: object
               required: [academic_year, year_short, opens_at, closes_at]
               properties:
-                academic_year:
-                  type: string
-                  example: '2026/2027'
-                year_short:
-                  type: string
-                  description: Last two digits of the second academic year
-                  example: '27'
+                academic_year: { type: string, example: '2026/2027' }
+                year_short: { type: string, example: '27' }
                 opens_at: { type: string, format: date-time }
                 closes_at: { type: string, format: date-time }
                 student_submission_deadline: { type: string, format: date-time }
                 institution_approval_deadline: { type: string, format: date-time }
+                candidate_info_cutoff_at: { type: string, format: date-time }
+                profile_update_cutoff_at: { type: string, format: date-time }
+                ca_cutoff_at: { type: string, format: date-time }
+                max_ca_score: { type: integer, minimum: 0, maximum: 100 }
+                affiliation_fee_existing: { type: number, minimum: 0 }
+                affiliation_fee_new: { type: number, minimum: 0 }
+                exam_fee_per_candidate: { type: number, minimum: 0 }
+                registration_fee_amount: { type: number, minimum: 0 }
+                registration_fee_currency: { type: string, default: 'NGN', minLength: 3, maxLength: 3 }
                 notes: { type: string }
+                description: { type: string, description: Alias for `notes`. }
       responses:
-        '201': { description: Created }
+        '201':
+          description: Created `Session`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Session' }
         '409': { description: Duplicate academic_year }
+        '422': { description: Validation error (cutoff order, max_ca_score range, etc.) }
+
+  /sessions/export:
+    get:
+      tags: [Sessions]
+      summary: Export sessions as CSV
+      description: |
+        Streams a CSV with columns `id, academic_year, year_short, status, opens_at,
+        closes_at, candidate_info_cutoff_at, profile_update_cutoff_at, ca_cutoff_at,
+        max_ca_score, affiliation_fee_existing, affiliation_fee_new,
+        exam_fee_per_candidate, registration_fee_amount, registration_fee_currency,
+        created_at`. Admin/registrar/super_admin only.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: CSV stream
+          content:
+            text/csv:
+              schema: { type: string }
+        '403': { description: Forbidden }
 
   /sessions/{sessionId}:
     get:
       tags: [Sessions]
-      summary: Get session by id
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SessionId'
       responses:
-        '200': { description: Session in response data }
+        '200': { description: 'Session row in response data' }
         '404': { description: Not found }
     patch:
       tags: [Sessions]
@@ -104,18 +192,32 @@ paths:
           application/json:
             schema: { type: object }
       responses:
-        '200': { description: Updated }
+        '200': { description: Updated `Session` }
 
   /sessions/{sessionId}/stats:
     get:
       tags: [Sessions]
-      summary: Registration counts by status for this session
+      summary: Session KPIs (with optional period-over-period delta)
+      description: |
+        Returns registration totals plus institution count, subject-combination count,
+        and biometric coverage. When `previous_session_id` is supplied, response
+        includes a `deltas` block for each metric.
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SessionId'
+        - name: previous_session_id
+          in: query
+          schema: { type: string, format: uuid }
       responses:
-        '200': { description: Stats object in response data }
+        '200':
+          description: KPIs and (optionally) deltas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SessionStats' }
 
   /sessions/{sessionId}/open:
     post:
@@ -137,8 +239,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SessionId'
-      responses:
-        '200': { description: OK }
+      responses: { '200': { description: OK } }
 
   /sessions/{sessionId}/reopen:
     post:
@@ -148,16 +249,16 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SessionId'
-      responses:
-        '200': { description: OK }
+      responses: { '200': { description: OK } }
 
   /sessions/{sessionId}/finalize-candidate-numbers:
     post:
       tags: [Sessions]
       summary: Assign final JUPEB candidate numbers (session must be closed)
       description: |
-        Idempotent batch update for approved registrations without jupeb_candidate_number.
-        See also JUPEB 005 and GET /registration/sessions/{sessionId}/numbering-preview.
+        Idempotent batch update for approved registrations without
+        `jupeb_candidate_number`. See also JUPEB 005 and
+        `GET /registration/sessions/{sessionId}/numbering-preview`.
       security:
         - BearerAuth: []
       parameters:
@@ -165,5 +266,5 @@ paths:
       responses:
         '200':
           description: |
-            Response data includes session_id, assigned, skipped, and numbers (per-registration final numbers).
+            Response data includes `session_id`, `assigned`, `skipped`, `numbers[]`.
         '422': { description: Session not closed }

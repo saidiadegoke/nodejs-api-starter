@@ -41,6 +41,13 @@ paths:
     post:
       tags: [Registration — institution]
       summary: Create enrollment row with claim code (session must be open)
+      description: |
+        Creates a registration in `code_issued` state and allocates the institution claim code.
+
+        `nin_verification_id` may reference a verification in any status (`verified`, `pending`,
+        or `failed`). When `pending`, the registration row can still be claimed and progressed
+        by the student, but the institution **cannot approve** until the verification resolves
+        to `verified` (see `POST .../approve` 422 response).
       security:
         - BearerAuth: []
       requestBody:
@@ -57,7 +64,30 @@ paths:
                 nin_verification_id: { type: string, format: uuid }
       responses:
         '201':
-          description: Created row includes institution_issued_code and provisional_candidate_code
+          description: |
+            Created row includes `institution_issued_code`, `provisional_candidate_code`, and
+            an embedded `nin_verification` summary (`{ id, status }`) — or `null` when no
+            verification is linked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string }
+                      institution_issued_code: { type: string }
+                      provisional_candidate_code: { type: string }
+                      nin_verification:
+                        nullable: true
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          status:
+                            type: string
+                            enum: [verified, failed, pending]
     get:
       tags: [Registration — institution]
       summary: List registrations (filters)
@@ -106,12 +136,26 @@ paths:
     post:
       tags: [Registration — institution]
       summary: Approve after institution review (unlocks dashboard)
+      description: |
+        Transitions the registration to `approved` and sets `dashboard_unlocked_at`.
+
+        **NIN gate:** if the registration is linked to a `nin_verification_id` whose status is
+        not `verified`, this endpoint returns `422` with a message naming the current NIN
+        status (e.g. "Cannot approve while NIN verification is pending"). Resolve via
+        `POST /identity/nin/verifications/{verificationId}/retry` or wait for the background
+        resolver, then re-call approve.
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/RegistrationId'
       responses:
-        '200': { description: OK }
+        '200':
+          description: |
+            Registration approved. Response includes embedded `nin_verification` summary.
+        '422':
+          description: |
+            Approval blocked — either registration is not in a state that allows approval, or
+            the linked NIN verification is not yet `verified`.
 
   /registration/institution/registrations/{registrationId}/reject:
     post:
@@ -133,6 +177,46 @@ paths:
       responses:
         '200': { description: OK }
 
+  /registration/me/code-status:
+    get:
+      tags: [Registration — student]
+      summary: Validate an institution code without claiming it
+      description: |
+        Read-only probe driving the figma 6-cell code wizard. Returns whether the code
+        is claimable, plus the candidate's institution name.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Status + structured error_code on failure
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      valid: { type: boolean }
+                      university_name: { type: string, nullable: true }
+                      university:
+                        type: object
+                        nullable: true
+                        properties:
+                          id: { type: string, format: uuid }
+                          name: { type: string }
+                          jupeb_prefix: { type: string }
+                      expires_at: { type: string, format: date-time, nullable: true }
+                      error_code:
+                        type: string
+                        enum: [code_required, code_not_found, code_expired, code_already_used]
+                        description: Present only when valid is false.
+
   /registration/me/claim-code:
     post:
       tags: [Registration — student]
@@ -151,15 +235,163 @@ paths:
       responses:
         '200': { description: OK }
         '409': { description: Code already claimed }
+        '410':
+          description: |
+            Code expired. Body includes structured detail:
+            `{ success: false, message, details: { error_code: "code_expired", expires_at } }`.
 
   /registration/me/current:
     get:
       tags: [Registration — student]
       summary: Current registration summary
+      description: |
+        Returns the candidate's current registration. Embeds:
+        - `nin_verification: { id, status } | null`
+        - `subject_combination: { id, code, title }`
+        - `university: { id, name, jupeb_prefix }`
+        - `session: { id, academic_year, year_short }`
+        - `sittings_count`, `result_types`
       security:
         - BearerAuth: []
       responses:
         '200': { description: OK }
+
+  /registration/me/profile:
+    get:
+      tags: [Registration — student]
+      summary: Composite profile read for the wizard / Profile screen
+      description: |
+        Single-call composite joining users + profiles + nin_verifications + the
+        candidate's registration + subject combination + university + session.
+        When the linked NIN verification is `pending`, NIN-derived fields fall back to
+        the cached `intake_payload` so the student never re-types their info.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Composite payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      candidate:
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          full_name: { type: string, nullable: true }
+                          provisional_candidate_code: { type: string, nullable: true }
+                          jupeb_candidate_number: { type: string, nullable: true }
+                          status: { type: string }
+                          photo_url: { type: string, nullable: true }
+                      basic_information:
+                        type: object
+                        properties:
+                          date_of_birth: { type: string, format: date, nullable: true }
+                          gender: { type: string, nullable: true }
+                          residential_address: { type: string, nullable: true }
+                          state_of_origin: { type: string, nullable: true }
+                          lga: { type: string, nullable: true }
+                          place_of_birth: { type: string, nullable: true }
+                      contact_information:
+                        type: object
+                        properties:
+                          email: { type: string, format: email, nullable: true }
+                          phone: { type: string, nullable: true }
+                      next_of_kin:
+                        type: object
+                        nullable: true
+                        properties:
+                          name: { type: string }
+                          relationship: { type: string }
+                          contact: { type: string }
+                      subject_combination: { type: object }
+                      university: { type: object }
+                      session: { type: object }
+                      nin_verification: { type: object, nullable: true }
+
+  /registration/me/submission-preview:
+    get:
+      tags: [Registration — student]
+      summary: Aggregated submission preview (final review screen)
+      description: |
+        Composite read for the figma "Submit Details" screen. Includes everything in
+        `/me/profile` plus an array of uploaded documents (with signed download URLs)
+        and a biometric coverage summary.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Composite preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      candidate: { type: object }
+                      basic_information: { type: object }
+                      contact_information: { type: object }
+                      next_of_kin: { type: object, nullable: true }
+                      subject_combination: { type: object }
+                      university: { type: object }
+                      session: { type: object }
+                      nin_verification: { type: object, nullable: true }
+                      documents:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            requirement_id: { type: string, format: uuid }
+                            status: { type: string }
+                            file_id: { type: string, format: uuid, nullable: true }
+                            download_url: { type: string, nullable: true }
+                            created_at: { type: string, format: date-time }
+                      biometrics:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            capture_type: { type: string, enum: [face, fingerprint] }
+                            quality_score: { type: number, nullable: true }
+                            captured_at: { type: string, format: date-time }
+                      biometric_status:
+                        type: string
+                        enum: [none, partial, complete]
+
+  /registration/me/academic-intake:
+    patch:
+      tags: [Registration — student]
+      summary: Set sittings count + result types (WAEC/NECO/etc.)
+      description: |
+        Drives the figma Document Upload form. `sittings_count` must be 1 or 2;
+        `result_types` accepts entries from the set `waec`, `neco`, `gce`, `nabteb`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sittings_count, result_types]
+              properties:
+                sittings_count: { type: integer, enum: [1, 2] }
+                result_types:
+                  type: array
+                  items: { type: string, enum: [waec, neco, gce, nabteb] }
+                  minItems: 1
+      responses:
+        '200': { description: Updated registration row }
+        '404': { description: No registration found for current user }
+        '422': { description: Validation error }
 
   /registration/me/confirm-subjects:
     post:

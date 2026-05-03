@@ -539,4 +539,189 @@ describe('JUPEB registration API', () => {
     await pool.query(`DELETE FROM profiles WHERE user_id = $1`, [pdId]);
     await pool.query(`DELETE FROM users WHERE id = $1`, [pdId]);
   });
+
+  describe('NIN-pending integration', () => {
+    let ninPendingMigrated = false;
+    beforeAll(async () => {
+      try {
+        const r = await pool.query(
+          `SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'jupeb_nin_verifications' AND column_name = 'intake_payload'`
+        );
+        ninPendingMigrated = r.rowCount > 0;
+      } catch {
+        ninPendingMigrated = false;
+      }
+    });
+
+    afterEach(() => {
+      delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
+    });
+
+    async function makeFixtures(token, tag) {
+      const suffix = `${tag}-${Date.now()}-${Math.floor(Math.random() * 9999)}`;
+      const prefix = nextJupebTestPrefix();
+      const uniRes = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: nextJupebTestUniversityCode(tag),
+          name: `${tag} Uni ${suffix}`,
+          jupeb_prefix: prefix,
+        });
+      expect(uniRes.status).toBe(201);
+      const scRes = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: nextJupebTestUniversityCode(`${tag}SC`),
+          title: `${tag} Combo`,
+          subjects: ['A', 'B', 'C'],
+          is_global: true,
+        });
+      expect(scRes.status).toBe(201);
+      let sessRes;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+        sessRes = await request(app)
+          .post('/sessions')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            academic_year: academicYear,
+            year_short: yearShort,
+            opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+            closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          });
+        if (sessRes.status === 201) break;
+      }
+      expect(sessRes.status).toBe(201);
+      await closeAllOpenJupebSessions(token);
+      await request(app).post(`/sessions/${sessRes.body.data.id}/open`).set('Authorization', `Bearer ${token}`);
+      return {
+        sessionId: sessRes.body.data.id,
+        universityId: uniRes.body.data.id,
+        subjectCombinationId: scRes.body.data.id,
+      };
+    }
+
+    it('embeds nin_verification:null on response when no verification is linked', async () => {
+      if (!registrationMigrated || !ninPendingMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'NV');
+      const res = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ session_id: sessionId, university_id: universityId, subject_combination_id: subjectCombinationId });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toHaveProperty('nin_verification');
+      expect(res.body.data.nin_verification).toBeNull();
+    });
+
+    it('embeds display objects (subject_combination, university, session) on the response', async () => {
+      if (!registrationMigrated || !ninPendingMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'NV');
+      const res = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ session_id: sessionId, university_id: universityId, subject_combination_id: subjectCombinationId });
+      expect(res.status).toBe(201);
+      expect(res.body.data.subject_combination).toBeDefined();
+      expect(res.body.data.subject_combination.id).toBe(subjectCombinationId);
+      expect(res.body.data.subject_combination.code).toBeDefined();
+      expect(res.body.data.subject_combination.title).toBeDefined();
+      expect(res.body.data.university).toBeDefined();
+      expect(res.body.data.university.id).toBe(universityId);
+      expect(res.body.data.university.name).toBeDefined();
+      expect(res.body.data.session).toBeDefined();
+      expect(res.body.data.session.id).toBe(sessionId);
+      expect(res.body.data.session.academic_year).toBeDefined();
+    });
+
+    it('embeds nin_verification:{id,status:pending} when registration is created with a pending verification', async () => {
+      if (!registrationMigrated || !ninPendingMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'NP');
+
+      process.env.JUPEB_NIN_FORCE_UNAVAILABLE = '1';
+      const nin = `9${String(Date.now()).slice(-10)}`;
+      const verifyRes = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, idempotency_key: `idem-reg-${Date.now()}` });
+      expect(verifyRes.body.data.status).toBe('pending');
+      const ninVerificationId = verifyRes.body.data.verification_id;
+      delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
+
+      const res = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          session_id: sessionId,
+          university_id: universityId,
+          subject_combination_id: subjectCombinationId,
+          nin_verification_id: ninVerificationId,
+        });
+      expect(res.status).toBe(201);
+      expect(res.body.data.nin_verification).toEqual({ id: ninVerificationId, status: 'pending' });
+    });
+
+    it('institution approve returns 422 when linked NIN verification is pending; succeeds after retry resolves it', async () => {
+      if (!registrationMigrated || !ninPendingMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'NA');
+
+      process.env.JUPEB_NIN_FORCE_UNAVAILABLE = '1';
+      const nin = `9${String(Date.now()).slice(-10)}`;
+      const verifyRes = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, idempotency_key: `idem-gate-${Date.now()}` });
+      const ninVerificationId = verifyRes.body.data.verification_id;
+      delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
+
+      const createReg = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          session_id: sessionId,
+          university_id: universityId,
+          subject_combination_id: subjectCombinationId,
+          nin_verification_id: ninVerificationId,
+        });
+      expect(createReg.status).toBe(201);
+      const registrationId = createReg.body.data.id;
+
+      await request(app)
+        .post('/registration/me/claim-code')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ institution_issued_code: createReg.body.data.institution_issued_code });
+      await request(app).post('/registration/me/confirm-subjects').set('Authorization', `Bearer ${token}`).send({});
+      await request(app).post('/registration/me/submit').set('Authorization', `Bearer ${token}`).send({});
+
+      const blocked = await request(app)
+        .post(`/registration/institution/registrations/${registrationId}/approve`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(blocked.status).toBe(422);
+      expect(blocked.body.message).toMatch(/NIN/i);
+
+      const retryRes = await request(app)
+        .post(`/identity/nin/verifications/${ninVerificationId}/retry`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(retryRes.body.data.status).toBe('verified');
+
+      const approved = await request(app)
+        .post(`/registration/institution/registrations/${registrationId}/approve`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(approved.status).toBe(200);
+      expect(approved.body.data.status).toBe('approved');
+      expect(approved.body.data.nin_verification.status).toBe('verified');
+    });
+  });
 });

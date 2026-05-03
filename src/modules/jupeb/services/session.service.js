@@ -53,8 +53,16 @@ class SessionService {
       student_submission_deadline,
       institution_approval_deadline,
       notes,
+      description,
       registration_fee_amount,
       registration_fee_currency,
+      candidate_info_cutoff_at,
+      profile_update_cutoff_at,
+      ca_cutoff_at,
+      max_ca_score,
+      affiliation_fee_existing,
+      affiliation_fee_new,
+      exam_fee_per_candidate,
     } = body;
     if (!academic_year || !year_short) {
       throw httpError(422, 'academic_year and year_short are required');
@@ -85,6 +93,44 @@ class SessionService {
     if (feeAmount != null && feeCurrency == null) {
       feeCurrency = 'NGN';
     }
+    const cutoffCandidate = candidate_info_cutoff_at
+      ? parseTs(candidate_info_cutoff_at, 'candidate_info_cutoff_at')
+      : null;
+    const cutoffProfile = profile_update_cutoff_at
+      ? parseTs(profile_update_cutoff_at, 'profile_update_cutoff_at')
+      : null;
+    const cutoffCa = ca_cutoff_at ? parseTs(ca_cutoff_at, 'ca_cutoff_at') : null;
+    const ordered = [
+      ['closes_at', c],
+      ['candidate_info_cutoff_at', cutoffCandidate],
+      ['profile_update_cutoff_at', cutoffProfile],
+      ['ca_cutoff_at', cutoffCa],
+    ].filter(([, v]) => v != null);
+    for (let i = 1; i < ordered.length; i += 1) {
+      const [prevName, prevTs] = ordered[i - 1];
+      const [thisName, thisTs] = ordered[i];
+      if (thisTs.getTime() < prevTs.getTime()) {
+        throw httpError(422, `${thisName} must be on or after ${prevName}`);
+      }
+    }
+
+    let maxCaScore = null;
+    if (max_ca_score !== undefined && max_ca_score !== null && max_ca_score !== '') {
+      maxCaScore = Number(max_ca_score);
+      if (!Number.isFinite(maxCaScore) || !Number.isInteger(maxCaScore) || maxCaScore < 0 || maxCaScore > 100) {
+        throw httpError(422, 'max_ca_score must be an integer between 0 and 100');
+      }
+    }
+
+    function nonNegMoney(label, value) {
+      if (value === undefined || value === null || value === '') return null;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) {
+        throw httpError(422, `${label} must be a non-negative number`);
+      }
+      return n;
+    }
+
     try {
       return await sessionModel.create({
         academic_year,
@@ -93,10 +139,17 @@ class SessionService {
         closes_at: c.toISOString(),
         student_submission_deadline: sdl ? sdl.toISOString() : null,
         institution_approval_deadline: adl ? adl.toISOString() : null,
-        notes: notes || null,
+        notes: notes !== undefined ? notes || null : description || null,
         created_by: userId,
         registration_fee_amount: feeAmount,
         registration_fee_currency: feeCurrency,
+        candidate_info_cutoff_at: cutoffCandidate ? cutoffCandidate.toISOString() : null,
+        profile_update_cutoff_at: cutoffProfile ? cutoffProfile.toISOString() : null,
+        ca_cutoff_at: cutoffCa ? cutoffCa.toISOString() : null,
+        max_ca_score: maxCaScore,
+        affiliation_fee_existing: nonNegMoney('affiliation_fee_existing', affiliation_fee_existing),
+        affiliation_fee_new: nonNegMoney('affiliation_fee_new', affiliation_fee_new),
+        exam_fee_per_candidate: nonNegMoney('exam_fee_per_candidate', exam_fee_per_candidate),
       });
     } catch (e) {
       if (e.code === '23505') throw httpError(409, 'A session with this academic_year already exists');
@@ -284,10 +337,14 @@ class SessionService {
     return registrationService.finalizeCandidateNumbers(id, userId);
   }
 
-  async stats(id, _query) {
+  async _statsRaw(id) {
     await this.getById(id);
     let byStatus = {};
     let total = 0;
+    let institutionsCount = 0;
+    let subjectCombinationsCount = 0;
+    let withBio = 0;
+    let withoutBio = 0;
     try {
       const result = await pool.query(
         `SELECT status, COUNT(*)::int AS c
@@ -300,6 +357,32 @@ class SessionService {
         byStatus[r.status] = r.c;
         total += r.c;
       }
+      const distinctRows = await pool.query(
+        `SELECT
+           COUNT(DISTINCT university_id)::int AS institutions_count,
+           COUNT(DISTINCT subject_combination_id)::int AS subject_combinations_count
+         FROM jupeb_registrations
+         WHERE session_id = $1`,
+        [id]
+      );
+      institutionsCount = distinctRows.rows[0].institutions_count;
+      subjectCombinationsCount = distinctRows.rows[0].subject_combinations_count;
+      const bioRows = await pool.query(
+        `SELECT
+           SUM(CASE WHEN bio.cnt > 0 THEN 1 ELSE 0 END)::int AS with_bio,
+           SUM(CASE WHEN bio.cnt = 0 OR bio.cnt IS NULL THEN 1 ELSE 0 END)::int AS without_bio
+         FROM jupeb_registrations r
+         LEFT JOIN (
+           SELECT registration_id, COUNT(*)::int AS cnt
+           FROM jupeb_biometric_captures
+           WHERE replaced_at IS NULL
+           GROUP BY registration_id
+         ) bio ON bio.registration_id = r.id
+         WHERE r.session_id = $1`,
+        [id]
+      );
+      withBio = bioRows.rows[0].with_bio || 0;
+      withoutBio = bioRows.rows[0].without_bio || 0;
     } catch (e) {
       if (e.code !== '42P01') throw e;
       byStatus = {};
@@ -309,8 +392,82 @@ class SessionService {
       session_id: id,
       total_registrations: total,
       registrations_by_status: byStatus,
+      institutions_count: institutionsCount,
+      subject_combinations_count: subjectCombinationsCount,
+      candidates_with_biometrics: withBio,
+      candidates_without_biometrics: withoutBio,
     };
   }
+
+  async exportCsv() {
+    const rows = await sessionModel.findAll({ limit: 10000, offset: 0 });
+    const header = [
+      'id',
+      'academic_year',
+      'year_short',
+      'status',
+      'opens_at',
+      'closes_at',
+      'candidate_info_cutoff_at',
+      'profile_update_cutoff_at',
+      'ca_cutoff_at',
+      'max_ca_score',
+      'affiliation_fee_existing',
+      'affiliation_fee_new',
+      'exam_fee_per_candidate',
+      'registration_fee_amount',
+      'registration_fee_currency',
+      'created_at',
+    ];
+    const escape = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      lines.push(header.map((h) => escape(r[h])).join(','));
+    }
+    return lines.join('\n');
+  }
+
+  async stats(id, query) {
+    const current = await this._statsRaw(id);
+    const previousId = query && query.previous_session_id;
+    if (!previousId) return current;
+    const previous = await this._statsRaw(previousId);
+    const metrics = [
+      'total_registrations',
+      'institutions_count',
+      'subject_combinations_count',
+      'candidates_with_biometrics',
+      'candidates_without_biometrics',
+    ];
+    const deltas = {};
+    for (const m of metrics) {
+      deltas[m] = computeDelta(current[m], previous[m]);
+    }
+    return { ...current, previous_session_id: previousId, deltas };
+  }
+}
+
+function computeDelta(value, previous) {
+  const v = Number(value) || 0;
+  const p = Number(previous) || 0;
+  let pct = null;
+  let direction = 'flat';
+  if (p === 0 && v === 0) {
+    pct = 0;
+  } else if (p === 0) {
+    pct = null; // undefined growth from zero
+    direction = v > 0 ? 'up' : 'flat';
+  } else {
+    pct = ((v - p) / p) * 100;
+    if (Math.abs(pct) < 0.001) direction = 'flat';
+    else direction = pct > 0 ? 'up' : 'down';
+  }
+  return { value: v, previous: p, delta_pct: pct, direction };
 }
 
 module.exports = new SessionService();

@@ -1,13 +1,14 @@
 openapi: '3.0.0'
 info:
   title: Admin
-  version: '1.0.0'
+  version: '1.1.0'
   description: |
-    Admin-only endpoints for observability and platform configuration.
+    Admin-only endpoints for observability, platform configuration, and RBAC.
 
     - **Error / request logs** — browse slow requests and 4xx/5xx responses captured by the request-log middleware.
     - **Platform settings** — runtime key/value (JSONB) config. Use for feature flags, rate-limit overrides, API-docs password, etc.
     - **Audit log** — chronological record of admin actions (e.g. setting changes). Extend by calling `AdminAuditService.log()` from your own controllers.
+    - **RBAC** — full CRUD for `roles` + `permissions`, attaching permissions to roles, and assigning/unassigning roles to users.
 
     All endpoints require a role of `admin` or `super_admin`.
 
@@ -135,3 +136,254 @@ paths:
       responses:
         '200':
           description: Paginated audit log
+
+  /admin/roles:
+    get:
+      summary: List roles (paginated)
+      tags: [RBAC]
+      parameters:
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 50 } }
+      responses:
+        '200':
+          description: Paginated roles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        display_name: { type: string }
+                        description: { type: string, nullable: true }
+                        is_system: { type: boolean }
+                        created_at: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
+    post:
+      summary: Create a role
+      tags: [RBAC]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, display_name]
+              properties:
+                name:
+                  type: string
+                  description: 'Lowercase snake_case, 2-50 chars (e.g. `program_director`).'
+                display_name: { type: string }
+                description: { type: string }
+      responses:
+        '201': { description: Created role }
+        '409': { description: Role with this name already exists }
+        '422': { description: Validation error }
+
+  /admin/roles/{roleId}:
+    parameters:
+      - in: path
+        name: roleId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a role by id
+      tags: [RBAC]
+      responses:
+        '200': { description: Role }
+        '404': { description: Not found }
+    patch:
+      summary: Update a role
+      description: |
+        Non-system roles: any of `name`, `display_name`, `description` may be patched.
+        System roles: only `description` may be patched (rename/delete are blocked).
+      tags: [RBAC]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                display_name: { type: string }
+                description: { type: string, nullable: true }
+      responses:
+        '200': { description: Updated role }
+        '409': { description: Name conflict }
+        '422': { description: System role cannot have name changed }
+    delete:
+      summary: Delete a non-system role
+      tags: [RBAC]
+      responses:
+        '200': { description: Deleted }
+        '422': { description: System roles cannot be deleted }
+        '404': { description: Not found }
+
+  /admin/roles/{roleId}/permissions:
+    parameters:
+      - in: path
+        name: roleId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: List permissions attached to a role
+      tags: [RBAC]
+      responses:
+        '200':
+          description: Array of permissions
+
+  /admin/roles/{roleId}/permissions/{permissionId}:
+    parameters:
+      - in: path
+        name: roleId
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: permissionId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      summary: Attach a permission to a role
+      description: 'Idempotent. Returns `{ attached: false }` if already attached.'
+      tags: [RBAC]
+      responses:
+        '200': { description: Permission attached (or already attached) }
+        '404': { description: Role or permission not found }
+    delete:
+      summary: Detach a permission from a role
+      description: 'Idempotent. Returns `{ detached: false }` if it was not attached.'
+      tags: [RBAC]
+      responses:
+        '200': { description: Permission detached (or was not attached) }
+
+  /admin/permissions:
+    get:
+      summary: List permissions
+      description: |
+        Default mode is paginated. With `?group_by=role` the response is an array of
+        `{ role_id, role_name, display_name, permissions[] }` groups instead of a flat
+        list.
+      tags: [RBAC]
+      parameters:
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 100 } }
+        - { in: query, name: resource, schema: { type: string }, description: 'Filter by resource (flat mode only)' }
+        - { in: query, name: group_by, schema: { type: string, enum: [role] } }
+      responses:
+        '200':
+          description: Paginated list, or grouped array when `group_by=role`.
+
+    post:
+      summary: Create a permission
+      tags: [RBAC]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resource, action]
+              properties:
+                resource:
+                  type: string
+                  description: 'Lowercase snake_case (e.g. `users`, `jupeb_registration`)'
+                action:
+                  type: string
+                  description: 'Lowercase snake_case (e.g. `read`, `approve`)'
+                name:
+                  type: string
+                  description: |
+                    Optional fully-qualified permission name. Defaults to `resource:action`.
+                description: { type: string }
+      responses:
+        '201': { description: Created permission }
+        '409': { description: Duplicate name or resource+action }
+        '422': { description: Validation error }
+
+  /admin/permissions/{permissionId}:
+    parameters:
+      - in: path
+        name: permissionId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a permission by id
+      tags: [RBAC]
+      responses:
+        '200': { description: Permission }
+        '404': { description: Not found }
+    patch:
+      summary: Update a permission
+      tags: [RBAC]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                resource: { type: string }
+                action: { type: string }
+                description: { type: string, nullable: true }
+      responses:
+        '200': { description: Updated permission }
+        '409': { description: Conflict }
+    delete:
+      summary: Delete a permission
+      description: |
+        Cascades: removes the permission from any role that had it attached
+        (via `role_permissions` ON DELETE CASCADE).
+      tags: [RBAC]
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found }
+
+  /admin/users/{userId}/roles:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: List roles assigned to a user
+      tags: [RBAC]
+      responses:
+        '200':
+          description: Array of role rows (with `assigned_at`, `expires_at`).
+    patch:
+      summary: Assign / unassign roles for a user
+      description: |
+        Three mutually-compatible operations:
+
+        - `role_ids: [uuid, ...]` — **replace** the user's full role set with this list.
+        - `add: [uuid, ...]` — additively grant these roles (idempotent on duplicates).
+        - `remove: [uuid, ...]` — revoke these roles (idempotent if absent).
+
+        At least one of these must be provided. Each role id is validated to exist
+        before any write.
+      tags: [RBAC]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                add:
+                  type: array
+                  items: { type: string, format: uuid }
+                remove:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '200': { description: User's resulting active role list }
+        '404': { description: User or role not found }
+        '422': { description: No operation provided or invalid uuid }

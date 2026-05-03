@@ -4,8 +4,12 @@ const registrationModel = require('../models/registration.model');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const universityModel = require('../models/university.model');
 const sessionModel = require('../models/session.model');
+const ninVerificationModel = require('../models/nin-verification.model');
+const biometricCaptureModel = require('../models/biometric-capture.model');
+const registrationDocumentModel = require('../models/registration-document.model');
+const FileService = require('../../files/services/file.service');
 const { canTransition } = require('./registration-state.service');
-const { formatCandidateNumber } = require('../utils/registration-numbering');
+const { formatCandidateNumber, makeInstitutionCode } = require('../utils/registration-numbering');
 const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
 const {
   assertInstitutionUniversityAccess,
@@ -54,8 +58,8 @@ async function assertComboForUniversity(subjectCombinationId, universityId) {
 }
 
 async function generateUniqueInstitutionCode() {
-  for (let i = 0; i < 12; i += 1) {
-    const code = crypto.randomBytes(9).toString('hex').slice(0, 16).toUpperCase();
+  for (let i = 0; i < 24; i += 1) {
+    const code = makeInstitutionCode();
     const existing = await registrationModel.findByInstitutionCode(code);
     if (!existing) return code;
   }
@@ -71,6 +75,45 @@ function institutionCodeExpiresAt() {
 
 function buildProvisionalCandidateCode(yearShort, jupebPrefix, serial) {
   return formatCandidateNumber(yearShort, jupebPrefix, serial);
+}
+
+async function loadNinVerificationSummary(reg) {
+  if (!reg || !reg.nin_verification_id) return null;
+  const row = await ninVerificationModel.findById(reg.nin_verification_id);
+  if (!row) return null;
+  return { id: row.id, status: row.status };
+}
+
+async function loadDisplayObjects(reg) {
+  if (!reg) return {};
+  const [combo, university, session] = await Promise.all([
+    reg.subject_combination_id ? subjectCombinationModel.findById(reg.subject_combination_id) : null,
+    reg.university_id ? universityModel.findById(reg.university_id) : null,
+    reg.session_id ? sessionModel.findById(reg.session_id) : null,
+  ]);
+  return {
+    subject_combination: combo ? { id: combo.id, code: combo.code, title: combo.title } : null,
+    university: university ? { id: university.id, name: university.name, jupeb_prefix: university.jupeb_prefix } : null,
+    session: session ? { id: session.id, academic_year: session.academic_year, year_short: session.year_short } : null,
+  };
+}
+
+async function serializeRegistration(reg) {
+  if (!reg) return reg;
+  const [nin_verification, displays] = await Promise.all([
+    loadNinVerificationSummary(reg),
+    loadDisplayObjects(reg),
+  ]);
+  return { ...reg, nin_verification, ...displays };
+}
+
+async function assertNinVerified(reg) {
+  if (!reg.nin_verification_id) return;
+  const row = await ninVerificationModel.findById(reg.nin_verification_id);
+  if (!row) throw httpError(422, 'Linked NIN verification not found');
+  if (row.status !== 'verified') {
+    throw httpError(422, `Cannot approve while NIN verification is ${row.status}`);
+  }
 }
 
 async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) {
@@ -144,7 +187,7 @@ class RegistrationService {
         reason: null,
         changed_by: userId,
       });
-      return row;
+      return serializeRegistration(row);
     } catch (e) {
       if (e.code === '23505') {
         throw httpError(409, 'Duplicate NIN registration for this session and university');
@@ -207,6 +250,7 @@ class RegistrationService {
     if (!canTransition(reg.status, 'approved')) {
       throw httpError(422, 'Registration is not awaiting institution approval');
     }
+    await assertNinVerified(reg);
     const now = new Date().toISOString();
     const updated = await transitionStatus(reg, 'approved', {
       userId,
@@ -219,7 +263,7 @@ class RegistrationService {
       },
     });
     await emitRegistrationApproved(updated, userId);
-    return updated;
+    return serializeRegistration(updated);
   }
 
   async institutionReject(registrationId, body, userId) {
@@ -240,6 +284,38 @@ class RegistrationService {
     });
   }
 
+  async getCodeStatus(rawCode) {
+    const code = rawCode ? String(rawCode).trim() : '';
+    if (!code) {
+      return { valid: false, error_code: 'code_required' };
+    }
+    const reg = await registrationModel.findByInstitutionCode(code);
+    if (!reg) {
+      return { valid: false, error_code: 'code_not_found' };
+    }
+    if (reg.status !== 'code_issued' || reg.user_id) {
+      return { valid: false, error_code: 'code_already_used', expires_at: reg.institution_code_expires_at };
+    }
+    if (reg.institution_code_expires_at && new Date(reg.institution_code_expires_at).getTime() < Date.now()) {
+      return {
+        valid: false,
+        error_code: 'code_expired',
+        expires_at: reg.institution_code_expires_at,
+      };
+    }
+    let university = null;
+    if (reg.university_id) {
+      const u = await universityModel.findById(reg.university_id);
+      if (u) university = { id: u.id, name: u.name, jupeb_prefix: u.jupeb_prefix };
+    }
+    return {
+      valid: true,
+      expires_at: reg.institution_code_expires_at,
+      university_name: university ? university.name : null,
+      university,
+    };
+  }
+
   async claimCode(body, userId) {
     const code = body && body.institution_issued_code ? String(body.institution_issued_code).trim() : '';
     if (!code) throw httpError(422, 'institution_issued_code is required');
@@ -257,7 +333,12 @@ class RegistrationService {
       }
       if (reg.institution_code_expires_at && new Date(reg.institution_code_expires_at).getTime() < Date.now()) {
         await client.query('ROLLBACK');
-        throw httpError(410, 'This institution code has expired');
+        const err = httpError(410, 'This institution code has expired');
+        err.details = {
+          error_code: 'code_expired',
+          expires_at: reg.institution_code_expires_at,
+        };
+        throw err;
       }
       if (reg.status !== 'code_issued' || reg.user_id) {
         await client.query('ROLLBACK');
@@ -301,7 +382,143 @@ class RegistrationService {
     return this._publicRegistrationSummary(reg);
   }
 
-  _publicRegistrationSummary(reg) {
+  async updateAcademicIntake(userId, body) {
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+    const sittings = Number(body && body.sittings_count);
+    if (![1, 2].includes(sittings)) {
+      throw httpError(422, 'sittings_count must be 1 or 2');
+    }
+    const types = Array.isArray(body && body.result_types) ? body.result_types : [];
+    const allowedTypes = new Set(['waec', 'neco', 'gce', 'nabteb']);
+    const cleaned = [...new Set(types.map((t) => String(t).toLowerCase().trim()))]
+      .filter((t) => allowedTypes.has(t));
+    if (cleaned.length === 0) {
+      throw httpError(422, 'result_types must include at least one of: waec, neco, gce, nabteb');
+    }
+    return registrationModel.updateAcademicIntake(reg.id, {
+      sittings_count: sittings,
+      result_types: cleaned,
+    });
+  }
+
+  async getMeSubmissionPreview(userId) {
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+    const [profile, biometrics, documents] = await Promise.all([
+      this.getMeProfile(userId),
+      biometricCaptureModel.findByRegistrationId(reg.id),
+      registrationDocumentModel.findByRegistration(reg.id),
+    ]);
+    const docsWithUrls = await Promise.all(
+      documents.map(async (d) => {
+        let download_url = null;
+        if (d.file_id) {
+          try {
+            const file = await FileService.getFile(d.file_id, userId);
+            download_url = file ? file.file_url : null;
+          } catch {
+            download_url = null;
+          }
+        }
+        return {
+          id: d.id,
+          requirement_id: d.requirement_id,
+          status: d.status,
+          file_id: d.file_id,
+          download_url,
+          created_at: d.created_at,
+        };
+      })
+    );
+    const types = new Set(biometrics.map((b) => b.capture_type));
+    const biometric_status =
+      types.has('face') && types.has('fingerprint')
+        ? 'complete'
+        : types.size > 0
+        ? 'partial'
+        : 'none';
+    return {
+      candidate: profile.candidate,
+      basic_information: profile.basic_information,
+      contact_information: profile.contact_information,
+      next_of_kin: profile.next_of_kin,
+      subject_combination: profile.subject_combination,
+      university: profile.university,
+      session: profile.session,
+      nin_verification: profile.nin_verification,
+      documents: docsWithUrls,
+      biometrics: biometrics.map((b) => ({
+        id: b.id,
+        capture_type: b.capture_type,
+        quality_score: b.quality_score,
+        captured_at: b.captured_at,
+      })),
+      biometric_status,
+    };
+  }
+
+  async getMeProfile(userId) {
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+    const displays = await loadDisplayObjects(reg);
+    const nin_verification = await loadNinVerificationSummary(reg);
+    const userRow = await pool.query(
+      `SELECT u.email, u.phone, p.first_name, p.last_name, p.display_name,
+              p.date_of_birth, p.gender, p.profile_photo_url
+       FROM users u
+       LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE u.id = $1`,
+      [userId]
+    );
+    const u = userRow.rows[0] || {};
+    let ninPayload = {};
+    let intake = {};
+    if (reg.nin_verification_id) {
+      const ninRow = await ninVerificationModel.findById(reg.nin_verification_id);
+      if (ninRow) {
+        ninPayload = ninRow.response_payload || {};
+        intake = ninRow.intake_payload || {};
+      }
+    }
+    const fullName =
+      intake.name
+      || u.display_name
+      || [u.first_name, u.last_name].filter(Boolean).join(' ')
+      || [ninPayload.first_name, ninPayload.last_name].filter(Boolean).join(' ')
+      || null;
+    return {
+      candidate: {
+        id: reg.id,
+        full_name: fullName,
+        provisional_candidate_code: reg.provisional_candidate_code,
+        jupeb_candidate_number: reg.jupeb_candidate_number,
+        status: reg.status,
+        photo_url: ninPayload.photo_url || u.profile_photo_url || null,
+      },
+      basic_information: {
+        date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
+        gender: ninPayload.gender || u.gender || null,
+        residential_address: ninPayload.address || null,
+        state_of_origin: ninPayload.state_of_origin || null,
+        lga: ninPayload.lga || null,
+        place_of_birth: ninPayload.place_of_birth || null,
+      },
+      contact_information: {
+        email: intake.email || u.email || null,
+        phone: intake.phone || ninPayload.phone || u.phone || null,
+      },
+      next_of_kin: ninPayload.next_of_kin || null,
+      ...displays,
+      nin_verification,
+    };
+  }
+
+  async _publicRegistrationSummary(reg) {
+    const [nin_verification, displays] = await Promise.all([
+      loadNinVerificationSummary(reg),
+      loadDisplayObjects(reg),
+    ]);
     return {
       id: reg.id,
       session_id: reg.session_id,
@@ -316,6 +533,10 @@ class RegistrationService {
       approved_at: reg.approved_at,
       dashboard_unlocked_at: reg.dashboard_unlocked_at,
       payment_projection: reg.payment_projection,
+      sittings_count: reg.sittings_count,
+      result_types: reg.result_types,
+      nin_verification,
+      ...displays,
     };
   }
 

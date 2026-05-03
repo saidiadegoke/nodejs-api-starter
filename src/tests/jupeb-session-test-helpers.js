@@ -11,9 +11,11 @@ async function closeAllOpenJupebSessions(token) {
   }
 }
 
-/** `jupeb_prefix` is globally unique in DB (3 digits). Randomize to avoid collisions when many rows exist. */
+/** `jupeb_prefix` is globally unique in DB (3 digits). Counter-driven for cross-test stability. */
+let _prefixSeq = crypto.randomInt(0, 900);
 function nextJupebTestPrefix() {
-  return String(100 + crypto.randomInt(0, 900));
+  _prefixSeq = (_prefixSeq + 1) % 900;
+  return String(100 + _prefixSeq);
 }
 
 /** Alphanumeric university / catalog codes up to VARCHAR(20), unique across runs. */
@@ -24,10 +26,12 @@ function nextJupebTestUniversityCode(tag = 'U') {
 }
 
 let _sessionYearSeq = 0;
+// Wide random base (3000–8999) plus run-unique offset reduces collisions across test runs that
+// share a database. Rare clashes are still possible — callers should retry on 409 if necessary.
+const _sessionYearBase = 3000 + crypto.randomInt(0, 6000);
 function nextJupebAcademicSession() {
   _sessionYearSeq += 1;
-  const t = Date.now() + _sessionYearSeq;
-  const y1 = 2300 + (t % 2500) * 2 + (_sessionYearSeq % 23);
+  const y1 = _sessionYearBase + _sessionYearSeq * 7;
   return {
     y1,
     academicYear: `${y1}/${y1 + 1}`,

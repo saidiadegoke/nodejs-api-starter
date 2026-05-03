@@ -9,15 +9,29 @@ class IdentityController {
         {
           nin: req.body.nin,
           idempotency_key: req.body.idempotency_key,
+          intake_payload: req.body.intake_payload,
         },
         req.user.user_id
       );
-      return sendSuccess(
-        res,
-        data,
-        data.status === 'failed' ? 'NIN verification failed' : 'NIN verified',
-        200
+      let message = 'NIN verified';
+      if (data.status === 'failed') message = 'NIN verification failed';
+      else if (data.status === 'pending') message = 'NIN verification pending — provider unavailable';
+      return sendSuccess(res, data, message, 200);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async retryVerification(req, res) {
+    try {
+      const data = await identityService.retryVerification(
+        req.params.verificationId,
+        req.user.user_id
       );
+      let message = 'NIN verified';
+      if (data.status === 'failed') message = 'NIN verification failed';
+      else if (data.status === 'pending') message = 'NIN verification still pending';
+      return sendSuccess(res, data, message, 200);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
@@ -42,10 +56,48 @@ class IdentityController {
     }
   }
 
+  static async skipBiometric(req, res) {
+    try {
+      const data = await identityService.skipBiometric(
+        req.params.registrationId,
+        req.body,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Biometric capture skipped');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async listBiometrics(req, res) {
     try {
       const rows = await identityService.listBiometrics(req.params.registrationId, req.user.user_id);
       return sendSuccess(res, rows, 'Biometric captures retrieved');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async getRegistrationPhoto(req, res) {
+    try {
+      const data = await identityService.getRegistrationPhoto(
+        req.params.registrationId,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Registration photo URL');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async replaceBiometric(req, res) {
+    try {
+      const data = await identityService.replaceBiometric(
+        req.params.captureId,
+        req.body,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Biometric capture replaced');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

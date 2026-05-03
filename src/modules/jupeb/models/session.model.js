@@ -13,13 +13,23 @@ class SessionModel {
       created_by,
       registration_fee_amount,
       registration_fee_currency,
+      candidate_info_cutoff_at,
+      profile_update_cutoff_at,
+      ca_cutoff_at,
+      max_ca_score,
+      affiliation_fee_existing,
+      affiliation_fee_new,
+      exam_fee_per_candidate,
     } = data;
     const result = await pool.query(
       `INSERT INTO jupeb_registration_sessions (
         academic_year, year_short, opens_at, closes_at,
         student_submission_deadline, institution_approval_deadline, notes, created_by, updated_by,
-        registration_fee_amount, registration_fee_currency
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, COALESCE($10, 'NGN'))
+        registration_fee_amount, registration_fee_currency,
+        candidate_info_cutoff_at, profile_update_cutoff_at, ca_cutoff_at, max_ca_score,
+        affiliation_fee_existing, affiliation_fee_new, exam_fee_per_candidate
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, COALESCE($10, 'NGN'),
+                $11, $12, $13, $14, $15, $16, $17)
       RETURNING *`,
       [
         academic_year.trim(),
@@ -32,6 +42,13 @@ class SessionModel {
         created_by || null,
         registration_fee_amount != null ? registration_fee_amount : null,
         registration_fee_currency ? String(registration_fee_currency).trim().toUpperCase().slice(0, 3) : null,
+        candidate_info_cutoff_at || null,
+        profile_update_cutoff_at || null,
+        ca_cutoff_at || null,
+        max_ca_score != null ? max_ca_score : null,
+        affiliation_fee_existing != null ? affiliation_fee_existing : null,
+        affiliation_fee_new != null ? affiliation_fee_new : null,
+        exam_fee_per_candidate != null ? exam_fee_per_candidate : null,
       ]
     );
     return result.rows[0];
@@ -92,6 +109,13 @@ class SessionModel {
       'updated_by',
       'registration_fee_amount',
       'registration_fee_currency',
+      'candidate_info_cutoff_at',
+      'profile_update_cutoff_at',
+      'ca_cutoff_at',
+      'max_ca_score',
+      'affiliation_fee_existing',
+      'affiliation_fee_new',
+      'exam_fee_per_candidate',
     ];
     const sets = [];
     const values = [];
