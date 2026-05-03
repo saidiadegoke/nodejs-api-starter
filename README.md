@@ -94,7 +94,7 @@ npm run seed
 npm run dev
 ```
 
-The API will be available at `http://localhost:5000` (configurable via `PORT`).
+The API will be available at `http://localhost:5269` (configurable via `PORT` in `.env`).
 
 - API root: `GET /`
 - Health check: `GET /health`

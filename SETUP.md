@@ -108,7 +108,8 @@ npm run migrate && npm run seed
 ### Port already in use
 
 ```bash
-lsof -ti:5000 | xargs kill -9
+# Default deploy port is 5269 (configurable via PORT in .env).
+lsof -ti:5269 | xargs kill -9
 ```
 
 ### Migrations out of order

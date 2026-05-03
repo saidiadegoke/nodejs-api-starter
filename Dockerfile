@@ -12,8 +12,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM base AS runner
 WORKDIR /app
 
+# All runtime values come from .env (provided by docker-compose's env_file).
+# These ENV lines are fallback defaults only — every real value should live in .env.
 ENV NODE_ENV=production
-ENV PORT=5000
+ENV PORT=5269
 
 RUN apk add --no-cache curl
 
@@ -28,9 +30,10 @@ RUN mkdir -p uploads && \
 
 USER apiuser
 
-EXPOSE 5000
+EXPOSE 5269
 
+# Healthcheck reads $PORT so containers honour whatever value .env supplies.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5000/health || exit 1
+  CMD curl -f "http://localhost:${PORT}/health" || exit 1
 
 CMD ["npm", "start"]
