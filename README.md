@@ -6,8 +6,8 @@ Use this as a foundation for custom APIs — the modules included are intentiona
 
 ## Maintainer & repository
 
-- **Maintainer:** Saidi Adegoke — [rasheedsaidi@gmail.com](mailto:rasheedsaidi@gmail.com)  
-- **Source:** [github.com/saidiadegoke/nodejs-api-starter](https://github.com/saidiadegoke/nodejs-api-starter)  
+- **Maintainer:** Morgen Green  
+- **Source:** [https://gitlab.com/crp-backend/reg-portal-api](https://gitlab.com/crp-backend/reg-portal-api)  
 - **Security:** see [SECURITY.md](./SECURITY.md)
 
 ## What this project is (and is not)
