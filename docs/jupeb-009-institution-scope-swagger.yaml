@@ -1,0 +1,101 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 009 — Institution user scope (admin)'
+  version: '1.0.0'
+  description: |
+    Set **`profiles.jupeb_university_id`** for real institution users so JUPEB list/approve and related actions are scoped to one JUPEB university (replaces ad‑hoc SQL for the same field).
+
+    **Roles:** `admin`, `super_admin`, `registrar`. (No `/jupeb` prefix — routes are at the API root alongside other modules; this path is `/admin/users/...`.)
+
+    **Env (see `.env.example`):** `JUPEB_INSTITUTION_CODE_TTL_HOURS` (claim-code expiry, hours; empty/0 = no expiry), `JUPEB_STUDENT_ROUTES_STRICT` (when `true`, student JUPEB “me” routes allow only `student` + `user`).
+
+    The same binding is returned on **`GET /users/me`** as **`jupeb_university_id`** (see Users Swagger).
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    JupebUniversityScopeRow:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        jupeb_university_id:
+          type: string
+          format: uuid
+          nullable: true
+    PatchJupebUniversityBody:
+      type: object
+      required: [jupeb_university_id]
+      description: The property must be present; set to `null` to clear the binding.
+      properties:
+        jupeb_university_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Active JUPEB university id, or null to clear
+
+tags:
+  - name: JUPEB — institution scope (admin)
+
+paths:
+  /admin/users/{userId}/jupeb-university:
+    patch:
+      tags: [JUPEB — institution scope (admin)]
+      summary: Set or clear JUPEB university on a user profile
+      description: |
+        Updates `profiles.jupeb_university_id`. If the target has no profile row, one is inserted.
+        If a non-null id is given, the university must exist and be **active** (`404` otherwise).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchJupebUniversityBody'
+            examples:
+              set:
+                summary: Bind to a university
+                value:
+                  jupeb_university_id: "00000000-0000-4000-8000-000000000001"
+              clear:
+                summary: Clear binding
+                value:
+                  jupeb_university_id: null
+      responses:
+        '200':
+          description: Success — `data` is the profile row (user_id, jupeb_university_id)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "JUPEB institution scope updated" }
+                  data:
+                    $ref: '#/components/schemas/JupebUniversityScopeRow'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden — not admin, super_admin, or registrar
+        '404':
+          description: Target user not found, or JUPEB university missing/inactive
+        '422':
+          description: |
+            `jupeb_university_id` missing from body, or invalid UUID for path/body
+        '500':
+          description: Server error

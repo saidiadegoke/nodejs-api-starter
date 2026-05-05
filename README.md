@@ -1,93 +1,292 @@
-# Reg Portal API
+# Node.js API Template
 
+A generic Node.js + Express + PostgreSQL starter template with JWT auth, RBAC, file/asset storage, notifications, real-time WebSocket, and Swagger docs.
 
+Use this as a foundation for custom APIs — the modules included are intentionally domain-agnostic. Add your own business modules alongside the built-in ones.
 
-## Getting started
+## Maintainer & repository
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- **Maintainer:** Saidi Adegoke — [rasheedsaidi@gmail.com](mailto:rasheedsaidi@gmail.com)  
+- **Source:** [github.com/saidiadegoke/nodejs-api-starter](https://github.com/saidiadegoke/nodejs-api-starter)  
+- **Security:** see [SECURITY.md](./SECURITY.md)
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## What this project is (and is not)
 
-## Add your files
+**It is:** a batteries-included Express + PostgreSQL API starter with auth, RBAC, uploads, notifications, WebSockets, admin observability, API keys, webhooks, and OpenAPI docs—intended to be forked and extended for real products.
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+**It is not:** a managed SaaS, a compliance-certified stack, or a fully hardened production deployment. You are responsible for hosting, TLS, secrets rotation, dependency updates, abuse prevention, backups, and legal requirements for your jurisdiction.
+
+## Before you ship to production
+
+- Set strong, unique **`JWT_SECRET`** and **`JWT_REFRESH_SECRET`** (never use the dev defaults from `env.config.js`).
+- Set **`NODE_ENV=production`**, tighten **`CORS_ORIGIN`** to your real front-end origins only.
+- Protect **`/docs`** with **`API_DOCS_PASSWORD`** (or disable Swagger in production in your fork if you prefer).
+- Lock down **`/admin/*`** (super-admin only in seeds—change default passwords, restrict by network or VPN if needed).
+- Replace development-only auth flows: phone OTP (`123456` in dev), `SKIP_*` flags, and any mock providers are not acceptable for real users unless you redesign them.
+- Configure **`SMTP_*`** / **`FROM_EMAIL`** for real email, or disable features that send mail.
+- For S3-backed storage, set **`AWS_*`** and **`DEFAULT_FILE_PROVIDER=s3`** (see `.env.example`). For local-only dev, **`DEFAULT_FILE_PROVIDER=mock`** (default) avoids S3.
+- Leave OAuth client env vars **empty** for providers you do not use—Passport only registers strategies when both ID and secret are set.
+- Run **`npm audit`**, enable HTTPS at the edge (reverse proxy / load balancer), and add your own rate limiting and monitoring as needed (see note on `RATE_LIMIT_*` in `.env.example`).
+
+## Optional features (leave unset to skip)
+
+| Area | Env / behavior |
+|------|----------------|
+| OAuth (Google, Facebook, GitHub, Twitter) | Set both `*_CLIENT_ID` / secret (or `FACEBOOK_APP_*`, etc.). Empty = strategy not registered. |
+| S3 uploads | `AWS_*`, `AWS_S3_BUCKET_NAME` or `AWS_S3_BUCKET`, `DEFAULT_FILE_PROVIDER=s3` |
+| Transactional email | `SMTP_*`, `FROM_EMAIL` |
+| Swagger basic auth | `API_DOCS_PASSWORD` |
+| Storage quota | `STORAGE_LIMIT_MB` |
+| Payments (Paystack / Flutterwave / bank transfer) | Gateway keys on `payment_methods` rows; optional `PAYMENT_STATS_MONTHLY_GOAL`, `FLW_CHECKOUT_LOGO_URL` (see `.env.example` and **Payments module** below) |
+| Posts (rate limits, comment honeypot) | `POST_READ_RATE_LIMIT_MAX`, `POST_WRITE_RATE_LIMIT_MAX`, `POST_COMMENT_RATE_LIMIT_MAX`, `POST_LIKE_RATE_LIMIT_MAX`, `POST_RATE_LIMIT_WINDOW_MS`, optional `POST_COMMENT_HONEYPOT_FIELD`, `POST_COMMENT_MAX_DEPTH` (see `.env.example` and **Posts module** below) |
+
+## Generated & local files (do not commit)
+
+Keep secrets and machine-local output out of git. This repo’s `.gitignore` already excludes **`.env`**, **`coverage/`**, **`uploads/`**, **`logs/`**, and common IDE/OS junk. Run `git status` before every commit; never commit real API keys or database passwords.
+
+## Features
+
+- **Authentication** — JWT access + refresh tokens, phone OTP verification, password reset, OAuth (Google, Facebook, GitHub, Twitter)
+- **RBAC** — Multiple roles per user, role/user-level permissions, direct permission overrides
+- **Users** — Profiles, activity logs, addresses, KYC, notification settings
+- **Files** — Multi-provider uploads (local / S3), base64, batch, profile photos
+- **Assets** — Organized library with groups, tags, alt-text, storage-usage tracking
+- **Notifications** — User-scoped in-app notifications (unread counts, read/delete)
+- **WebSocket** — Socket.IO with JWT auth; per-user rooms for real-time events
+- **Admin observability** — `/admin/error-logs` (errors + slow requests with full bodies), `/admin/settings` (runtime key/value platform config + feature flags), `/admin/audit` (audit log)
+- **Request logging middleware** — hourly traffic counters on every request; full log entries persisted only for errors (4xx/5xx) and slow requests (>= 3s)
+- **API Keys** — user-scoped, SHA-256-hashed at rest; raw key only shown once; `apiKeyAuth` middleware supports `Bearer sk_...` alongside JWT
+- **Webhooks** — user-scoped subscriptions with HMAC-SHA256 signed payloads; fire-and-forget delivery via `WebhookService.fire(userId, event, payload)`
+- **Payments** — Paystack / Flutterwave checkouts, webhooks, optional direct bank transfer with receipt upload; admin CRUD for `payment_methods` and `bank_accounts`
+- **Posts** — CMS-style articles: drafts / publish / archive, per-user slugs, full-text search, RSS & sitemap, SEO fields + Open Graph, scheduled publish, gallery media (via `files` / assets), threaded comments with moderation, likes, in-app notifications, and env-tunable rate limits (see **Posts module** below)
+- **Swagger docs** — OpenAPI 3.0 specs served at `/docs`, auto-discoverable index
+- **Countries** — Seeded reference lookup
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL 13+
+- npm
+
+### Setup
+
+```bash
+# 1. Install deps
+npm install
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env — at minimum, set DB_*, JWT_SECRET, JWT_REFRESH_SECRET
+
+# 3. Create the database (match DB_NAME in .env)
+createdb your_app
+
+# 4. Run migrations and seed
+npm run migrate
+npm run seed
+
+# Default super-admin (from seed): admin@example.com / Admin@12 — change after first login.
+# Re-running seed does not update an existing admin row. Older DBs may still use password "password"; see src/db/seeds/001_seed_users.sql.
+
+# 5. Start the dev server
+npm run dev
+```
+
+The API will be available at `http://localhost:5269` (configurable via `PORT` in `.env`).
+
+- API root: `GET /`
+- Health check: `GET /health`
+- Swagger docs: `GET /docs`
+
+## Project Structure
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/crp-backend/reg-portal-api.git
-git branch -M main
-git push -uf origin main
+api-template/
+├── src/
+│   ├── app.js                    # Express app setup
+│   ├── server.js                 # HTTP server + WebSocket bootstrap
+│   ├── config/                   # env / db config
+│   ├── db/
+│   │   ├── migrations/           # SQL migrations
+│   │   ├── seeds/                # SQL seeds (admin user, RBAC)
+│   │   ├── migrate.js
+│   │   ├── seed.js
+│   │   └── pool.js               # pg Pool
+│   ├── modules/                  # Feature modules
+│   │   ├── auth/                 # JWT + OAuth
+│   │   ├── users/                # Profile, activity, addresses, KYC
+│   │   ├── files/                # File uploads
+│   │   ├── assets/               # Asset library + groups
+│   │   ├── notifications/        # In-app notifications
+│   │   ├── websocket/            # Socket.IO admin endpoints
+│   │   ├── admin/                # Error logs, platform settings, audit log
+│   │   ├── api-keys/             # User API key generation & auth
+│   │   ├── webhooks/             # User-scoped webhook subscriptions
+│   │   ├── payments/             # Gateways, bank transfer, receipts, admin tooling
+│   │   ├── posts/                # User posts (CMS-style)
+│   │   └── shared/               # Countries
+│   ├── shared/                   # Cross-cutting: middleware, emails, utils
+│   ├── routes/                   # Route aggregator + Swagger mount
+│   └── tests/                    # Jest integration tests
+├── docs/                         # OpenAPI YAML specs per module
+├── scripts/                      # RBAC management CLI scripts
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+├── jest.config.js
+└── package.json
 ```
 
-## Integrate with your tools
+## Database Schema
 
-* [Set up project integrations](https://gitlab.com/crp-backend/reg-portal-api/-/settings/integrations)
+PostgreSQL with UUID primary keys. Core tables:
 
-## Collaborate with your team
+**Auth & users**: `users`, `profiles`, `social_accounts`, `user_sessions`, `password_resets`, `verification_tokens`
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+**RBAC**: `roles`, `permissions`, `user_roles`, `role_permissions`, `user_permissions`
 
-## Test and Deploy
+**Files**: `files`, `asset_groups` (plus module-level `user_activities`, etc.)
 
-Use the built-in continuous integration in GitLab.
+**Reference**: `countries`
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+**Notifications**: `notifications` — `user_id`, `type`, `actor_id`, `message`, `metadata`, `read`.
 
-***
+**Payments**: `payment_methods`, `bank_accounts`, `payments` (optional opaque `campaign_id` / `subscription_id` UUID columns for your own correlations; no foreign keys in the template).
 
-# Editing this README
+**Posts**: `posts` — `user_id`, `title`, `slug` (unique per user), `body`, `excerpt`, `status`, `published_at`, `meta`, **`scheduled_publish_at`**, **SEO** (`seo_title`, `seo_description`, `og_image_file_id`, `twitter_card`, `canonical_url`, `robots_directive`), **`search_vector`** (GIN + trigger).
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+**Post comments**: `post_comments` — `post_id`, `user_id`, `parent_id` (self-FK for nesting), `body`, soft `deleted_at`, **`moderation_status`** / `moderated_at` / `moderated_by`.
 
-## Suggestions for a good README
+**Post engagement**: `post_media` (post ↔ `files`), `post_likes`, `post_comment_likes`.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+Migrations live in `src/db/migrations/` and run in filename order. The baseline is a single file, **`001_initial_schema.sql`**. If an older checkout already applied the former `001`–`007` files, reset the database or align `schema_migrations` before relying on the merged migration.
 
-## Name
-Choose a self-explaining name for your project.
+## Scripts
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```bash
+npm run dev              # nodemon
+npm start                # node src/server.js
+npm run migrate          # run all pending migrations
+npm run seed             # seed admin user + RBAC
+npm test                 # jest with coverage
+npm run test:auth        # auth suite only
+npm run test:rbac        # RBAC suite only
+npm run test:payments    # payments routes smoke (requires DB + migrations)
+npm run test:posts       # posts smoke (requires DB + migrations)
+npm test -- --testPathPattern=posts.media   # posts ↔ files + og_image + include=media
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+# RBAC CLI
+npm run rbac:setup
+npm run rbac:create-role
+npm run rbac:create-permission
+npm run rbac:add-permission-to-role
+npm run rbac:add-role-to-user
+npm run rbac:set-user-password
+npm run rbac:list-user-roles
+npm run rbac:list-role-permissions
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## API Documentation
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Swagger UI is mounted at `/docs`. Each module has its own spec:
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+- `/docs/auth` — Authentication & OAuth
+- `/docs/users` — User profile, activity, addresses, KYC
+- `/docs/files` — File uploads
+- `/docs/assets` — Asset library + groups
+- `/docs/notifications` — In-app notifications
+- `/docs/shared` — Countries reference
+- `/docs/websocket` — Socket.IO admin stats
+- `/docs/admin` — Error logs, platform settings, audit log
+- `/docs/api-keys` — API key CRUD
+- `/docs/webhooks` — Webhook subscriptions
+- `/docs/payments` — Payments, payment methods, bank accounts
+- `/docs/posts` — Posts (public + author + admin)
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Raw JSON: `/docs/{module}.json`. To password-protect `/docs`, set `API_DOCS_PASSWORD` in env (basic auth).
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## Environment variables
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Copy **`.env.example`** → **`.env`** and edit. It is kept in sync with variables read by the app (see comments inside the file for optional vs required).
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+**Always required for a running API:** `DB_*`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `API_BASE_URL` (used in links and OAuth callbacks), `CORS_ORIGIN` for browser clients.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+**Production:** see [Before you ship to production](#before-you-ship-to-production) above.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## Docker
+
+```bash
+# Build + run
+docker compose up -d --build
+
+# Run migrations inside the container
+docker compose exec api npm run migrate
+docker compose exec api npm run seed
+```
+
+## Posts module
+
+**Base path:** `/posts` · **OpenAPI:** `/docs/posts` · **Code:** `src/modules/posts/` (routes, controllers, services, models, rate-limit middleware).
+
+### Public (no auth unless noted)
+
+| Area | Endpoints / behavior |
+|------|----------------------|
+| List & read | **`GET /posts`** — published only, optional **`?page`**, **`?limit`**, **`?q`** (search when `q` is set). **`GET /posts/:postId`** — published public; send JWT with **`optionalAuth`** to read your own draft/archived. Query **`?include=likes`** and/or **`?include=media`** to embed engagement or media rows. |
+| Search | **`GET /posts/search?q=`** — required `q`; full-text rank + fallback match (returns **422** if `q` is missing). |
+| Feeds | **`GET /posts/feed.xml`** (RSS), **`GET /posts/sitemap.xml`**. |
+| SEO payload | **`GET /posts/:postId/seo`** — JSON bundle for OG/Twitter (uses **`og_image_file_id`** → **`files`** when set). |
+| Comments (read) | **`GET /posts/:postId/comments`** — **`layout=tree`** (default, nested **`replies`**) or **`layout=flat`** with **`page`**, **`limit`**. Visibility respects moderation (public sees **approved** only). |
+| Media (read) | **`GET /posts/:postId/media`** — file URLs joined from **`post_media`** + **`files`**. |
+
+### Author (JWT)
+
+- **`POST /posts`** — create (body: `title`, optional `slug`, `body`, `excerpt`, `status`, `meta`, SEO fields, **`scheduled_publish_at`**, **`og_image_file_id`**). **`og_image_file_id`** must be your own non-deleted file (same rule as media).
+- **`GET /posts/mine`** — paginate your posts across statuses.
+- **`PUT /posts/:postId`**, **`DELETE /posts/:postId`** — owner (or admin).
+- **`PUT /posts/:postId/media`** — replace gallery: **`{ "items": [ { "file_id", "role"?, "sort_order"? } ] }`** where **`role`** is **`featured`**, **`gallery`**, or **`inline`**. Use **`items: []`** to clear. Files must be **yours** unless caller is admin.
+- **`POST /posts/:postId/comments`**, **`PATCH` / `DELETE`** own comment — see Swagger for bodies.
+- **`POST/DELETE /posts/:postId/like`** and **`POST/DELETE .../comments/:commentId/like`**.
+
+### Admin (`admin` or `super_admin` role)
+
+- **`GET /posts/admin/all`** — list every post; filters for **`status`**, **`q`**.
+- **`GET /posts/admin/comments/pending`** — moderation queue.
+- **`PATCH /posts/:postId/comments/:commentId/moderate`** — body **`status`**: **`approved`**, **`rejected`**, or **`spam`**. Replies on published posts require an **approved** parent before threading.
+
+### Behavior notes
+
+- **Slugs:** normalized (lowercase, URL-safe); **unique per `user_id`** (conflict → **409**).
+- **Scheduled publish:** set **`scheduled_publish_at`** (ISO) on a **draft**; flips to **published** when **`applyScheduledPublishing()`** runs on post reads/lists (no separate cron—add a scheduler in production if you need exact-time publish without traffic).
+- **Notifications:** best-effort rows in **`notifications`** for comments, moderation, and likes (same table as the notifications module).
+- **Anti-abuse:** rate limits via **`POST_*_RATE_LIMIT_MAX`** and **`POST_RATE_LIMIT_WINDOW_MS`**; optional honeypot **`POST_COMMENT_HONEYPOT_FIELD`**; max reply depth **`POST_COMMENT_MAX_DEPTH`** (see **`.env.example`**).
+
+### Tests
+
+- **`npm run test:posts`** — public list, RSS, search, missing-post comments.
+- **`npm test -- --testPathPattern=posts.media`** — upload-style DB fixtures: attach/clear media, **`?include=media`**, **`og_image_file_id`** validation, cross-user file **403**.
+
+## Payments module
+
+- **Base path:** `/payments` (see `/docs/payments`).
+- **Gateways:** Keys and webhook secrets live on **`payment_methods`** rows (`/payments/payment-methods/admin/...`). The initial schema migration seeds placeholder gateway rows; activate and paste keys in admin or SQL.
+- **Webhooks:** `POST /payments/webhook/paystack` and `POST /payments/webhook/flutterwave` — point your provider dashboards at your public API URL + these paths.
+- **Direct transfer:** Configure at least one **`bank_accounts`** row and set it active (`/payments/bank-accounts/admin/...`). Customer instructions email uses **`SMTP_*`** / **`FROM_EMAIL`** when set.
+- **Public stats:** `GET /payments/stats` — optional denominator via **`PAYMENT_STATS_MONTHLY_GOAL`** in `.env`.
+- **Smoke tests:** `npm run test:payments` (expects migrated DB, same as full `npm test`).
+
+## Extending
+
+Add a new module under `src/modules/{your_module}/` with the same shape as the existing ones (`routes.js` + `controllers/` + `services/` + `models/`), then:
+
+1. Import and mount the router in `src/routes/index.js`
+2. Add an OpenAPI spec in `docs/{your_module}-swagger.yaml` and register it in the `swaggerDocs` map in `src/routes/index.js`
+3. Add a SQL migration in `src/db/migrations/` and any permissions to `src/db/seeds/002_seed_rbac.sql`
+
+See `CONTRIBUTING.md` for conventions.
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT — see [LICENSE](./LICENSE).

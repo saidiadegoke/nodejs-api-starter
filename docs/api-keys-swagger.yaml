@@ -1,0 +1,70 @@
+openapi: '3.0.0'
+info:
+  title: API Keys
+  version: '1.0.0'
+  description: |
+    User-scoped API keys for programmatic access. Keys are hashed (SHA-256) at rest; the
+    raw key is only returned at creation time.
+
+    To authenticate with an API key, send it as `Authorization: Bearer sk_live_...`.
+    The `apiKeyAuth` middleware (`src/shared/middleware/apiKeyAuth.middleware.js`) handles
+    authentication — mount it before `requireAuth` on routes that should accept both JWT
+    and API key auth.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api-keys:
+    get:
+      summary: List your API keys (hashes not returned)
+      tags: [API Keys]
+      responses:
+        '200':
+          description: Array of keys with name, key_prefix, status, last_used_at
+    post:
+      summary: Generate a new API key
+      tags: [API Keys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Human-readable label for the key
+                  example: Production server
+      responses:
+        '201':
+          description: |
+            Key created. The full `key` field is only returned in this response —
+            save it securely, it cannot be retrieved again.
+
+  /api-keys/{id}:
+    delete:
+      summary: Revoke an API key
+      tags: [API Keys]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Key revoked (status set to 'revoked'; not deleted)
+        '404':
+          description: Key not found

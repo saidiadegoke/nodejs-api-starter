@@ -1,0 +1,29 @@
+version: '3.8'
+
+# All values are sourced from .env via `env_file`. Compose also expands ${VAR}
+# substitutions from the same .env when interpolating this file (used by ports
+# and healthcheck below). Any variable absent from .env is treated as unset —
+# add it to .env rather than hard-coding values here.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-5269}:${PORT:-5269}"
+    volumes:
+      - api_uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${PORT:-5269}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  api_uploads:
+    driver: local

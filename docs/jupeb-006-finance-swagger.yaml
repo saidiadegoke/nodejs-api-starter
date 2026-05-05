@@ -1,0 +1,155 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 006 — Finance'
+  version: '1.0.0'
+  description: |
+    Links JUPEB registrations to `payments` and finance reporting (`docs/006-jupeb-finance-technical-design.md`).
+    Base path: **`/finance`**.
+
+    Core payments API remains under **`/payments`** (see Payments Swagger).
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+tags:
+  - name: Finance — student
+  - name: Finance — admin
+
+paths:
+  /finance/me/checkout:
+    post:
+      tags: [Finance — student]
+      summary: Create payment intent linked to current (claimed) registration
+      description: |
+        Uses `payments` with `registration_id` set. Blocks duplicate pending intents per registration.
+        Session must not be closed/archived.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: number
+                  exclusiveMinimum: 0
+                currency:
+                  type: string
+                  default: NGN
+                registration_id:
+                  type: string
+                  format: uuid
+                  description: Defaults to latest claimed registration for user
+                payment_method:
+                  type: string
+      responses:
+        '201': { description: Payment row in response data }
+        '409': { description: Unpaid intent already exists }
+        '422': { description: Session closed or validation error }
+
+  /finance/me/payments:
+    get:
+      tags: [Finance — student]
+      summary: List payments linked to my registrations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: Paginated; rows include jupeb_projection }
+
+  /finance/payments:
+    get:
+      tags: [Finance — admin]
+      summary: List payments that have `registration_id` (optional session filter)
+      description: Roles `financial_admin`, `registrar`, `admin`, `super_admin`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: Paginated }
+        '403': { description: Forbidden }
+
+  /finance/registrations/{registrationId}/payment-summary:
+    get:
+      tags: [Finance — admin]
+      summary: Per-registration payment aggregates
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200': { description: Payments list and totals aggregate }
+
+  /finance/registrations/{registrationId}/reconcile:
+    post:
+      tags: [Finance — admin]
+      summary: Record manual reconciliation audit row
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_id, status_snapshot, captured_amount, currency]
+              properties:
+                payment_id: { type: string, format: uuid }
+                status_snapshot:
+                  type: string
+                  enum: [pending, successful, failed, refunded]
+                captured_amount: { type: number }
+                currency: { type: string }
+                gateway_reference: { type: string }
+      responses:
+        '201': { description: Reconciliation row in response data }
+
+  /finance/reports/session/{sessionId}:
+    get:
+      tags: [Finance — admin]
+      summary: Session-level paid/unpaid style aggregates
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: Report object in response data }

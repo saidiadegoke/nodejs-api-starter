@@ -1,0 +1,115 @@
+openapi: '3.0.0'
+info:
+  title: Webhooks
+  version: '1.0.0'
+  description: |
+    User-scoped webhook subscriptions. Each webhook subscribes to one or more events; when
+    those events fire, the payload is POSTed to the webhook's `url` with an HMAC-SHA256
+    signature in the `X-Webhook-Signature` header.
+
+    **Delivery is fire-and-forget** — failures are swallowed silently. For production use,
+    wrap delivery in a queue with retries.
+
+    **Firing events** from your own code:
+
+    ```js
+    const WebhookService = require('./modules/webhooks/services/webhook.service');
+    WebhookService.fire(userId, 'order.created', { order_id: '...' });
+    ```
+
+    By default, any event name is accepted. To enforce a closed set of event names, edit
+    `VALID_EVENTS` in `src/modules/webhooks/services/webhook.service.js`.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /webhooks:
+    get:
+      summary: List your webhooks
+      tags: [Webhooks]
+      responses:
+        '200':
+          description: Array of webhooks
+    post:
+      summary: Create a webhook subscription
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                events:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+                is_active:
+                  type: boolean
+                  default: true
+            example:
+              url: https://example.com/webhooks/receive
+              events: [order.created, order.completed]
+              is_active: true
+      responses:
+        '201':
+          description: Webhook created (with generated `secret`)
+
+  /webhooks/{id}:
+    put:
+      summary: Update a webhook
+      tags: [Webhooks]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  format: uri
+                events:
+                  type: array
+                  items: { type: string }
+                is_active:
+                  type: boolean
+      responses:
+        '200':
+          description: Webhook updated
+        '404':
+          description: Not found
+    delete:
+      summary: Delete a webhook
+      tags: [Webhooks]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Webhook deleted
+        '404':
+          description: Not found

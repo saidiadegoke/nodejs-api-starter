@@ -1,0 +1,309 @@
+openapi: '3.0.0'
+info:
+  title: Authentication
+  version: '1.0.0'
+  description: Registration, login, token refresh, password reset, phone verification, and OAuth social login.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      summary: Register a new user
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+            example:
+              email: jane@example.com
+              phone: '+2348012345678'
+              password: SecurePass123!
+              first_name: Jane
+              last_name: Doe
+      responses:
+        '201':
+          description: Registration successful
+        '400':
+          description: Validation error
+        '409':
+          description: User already exists
+
+  /auth/login:
+    post:
+      summary: Log in with email/phone and password
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier:
+                  type: string
+                  description: Email or phone number
+                password:
+                  type: string
+            example:
+              identifier: jane@example.com
+              password: SecurePass123!
+      responses:
+        '200':
+          description: Login successful — returns access/refresh tokens
+        '401':
+          description: Invalid credentials
+
+  /auth/refresh-token:
+    post:
+      summary: Exchange a refresh token for a new access token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: New access token issued
+        '401':
+          description: Invalid or expired refresh token
+
+  /auth/logout:
+    post:
+      summary: Log out the current session
+      tags: [Auth]
+      responses:
+        '200':
+          description: Logged out
+        '401':
+          description: Unauthorized
+
+  /auth/verify-phone:
+    post:
+      summary: Verify phone number with OTP
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, otp]
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+      responses:
+        '200':
+          description: Phone verified
+        '400':
+          description: Invalid or expired OTP
+
+  /auth/resend-otp:
+    post:
+      summary: Resend a verification OTP
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: OTP resent
+
+  /auth/forgot-password:
+    post:
+      summary: Request a password reset link
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: If the account exists, a reset link has been sent
+
+  /auth/reset-password:
+    post:
+      summary: Reset password with a token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password reset successful
+        '400':
+          description: Invalid or expired token
+
+  /auth/change-password:
+    post:
+      summary: Change password for the current user
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password changed
+        '401':
+          description: Current password incorrect
+
+  /auth/google:
+    get:
+      summary: Start Google OAuth flow
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to Google
+
+  /auth/google/callback:
+    get:
+      summary: Google OAuth callback
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to frontend with session tokens
+
+  /auth/facebook:
+    get:
+      summary: Start Facebook OAuth flow
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to Facebook
+
+  /auth/facebook/callback:
+    get:
+      summary: Facebook OAuth callback
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to frontend
+
+  /auth/github:
+    get:
+      summary: Start GitHub OAuth flow
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to GitHub
+
+  /auth/github/callback:
+    get:
+      summary: GitHub OAuth callback
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to frontend
+
+  /auth/twitter:
+    get:
+      summary: Start Twitter OAuth flow
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to Twitter
+
+  /auth/twitter/callback:
+    get:
+      summary: Twitter OAuth callback
+      tags: [OAuth]
+      security: []
+      responses:
+        '302':
+          description: Redirect to frontend
+
+  /auth/oauth/failure:
+    get:
+      summary: OAuth failure landing endpoint
+      tags: [OAuth]
+      security: []
+      responses:
+        '401':
+          description: OAuth authentication failed
