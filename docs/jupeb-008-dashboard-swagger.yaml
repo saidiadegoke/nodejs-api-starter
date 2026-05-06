@@ -1,0 +1,392 @@
+openapi: 3.0.0
+info:
+  title: 'JUPEB 008 — Registrar dashboard'
+  version: '1.0.0'
+  description: |
+    Per-section analytics for the registrar dashboard. Each card / chart / table on the dashboard
+    has its own endpoint so the UI can refresh sections independently.
+
+    **Base path:** `/dashboard`.
+
+    **Roles:** `admin`, `super_admin`, `registrar`, `program_director`, `institution_admin`.
+
+    **Institution scope:**
+    - Federal `admin` / `super_admin` / `registrar`: `university_id` is optional. Omit to aggregate across all institutions; pass to scope to one.
+    - `program_director` / `institution_admin`: forced to `profiles.jupeb_university_id`. Passing a different `university_id` returns `403`. Users without a binding get `403`.
+
+    **Active session:** when `session_id` is omitted, endpoints that need a session resolve it as the most recent `status='open'` row, falling back to the latest session by `opens_at`.
+
+    **Status bucketing:** the DB has 9 registration statuses; the dashboard collapses them into three buckets used by `students-status` and `recent-registrations.status`:
+    - `approved` ← `approved`
+    - `rejected` ← `rejected`
+    - `pending`  ← `provisional`, `code_issued`, `claimed`, `pending_student_confirm`, `pending_documents`, `pending_institution_review`
+    - `withdrawn` rows are excluded from totals everywhere.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UniversityIdQuery:
+      name: university_id
+      in: query
+      required: false
+      description: Scope to one institution. Required-effective for institution roles (forced from profile).
+      schema: { type: string, format: uuid }
+    SessionIdQuery:
+      name: session_id
+      in: query
+      required: false
+      description: Scope to a registration session. Defaults to the active session when omitted.
+      schema: { type: string, format: uuid }
+    YearQuery:
+      name: year
+      in: query
+      required: false
+      description: Calendar year for the trend series. Defaults to the current UTC year.
+      schema: { type: integer, example: 2026 }
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer }
+  schemas:
+    UniversitySummary:
+      type: object
+      nullable: true
+      properties:
+        id:     { type: string, format: uuid }
+        name:   { type: string, example: 'University of Lagos' }
+        code:   { type: string, example: 'UNILAG' }
+        status: { type: string, enum: [active, inactive] }
+    SessionSummary:
+      type: object
+      nullable: true
+      properties:
+        id:     { type: string, format: uuid }
+        label:  { type: string, example: '2026/2027', description: 'jupeb_registration_sessions.academic_year' }
+        status: { type: string, enum: [draft, open, closed, archived] }
+    StatCard:
+      type: object
+      properties:
+        value:
+          type: integer
+          example: 2318
+        delta_pct:
+          type: number
+          nullable: true
+          description: |
+            Percent change vs the chronologically-prior session. `null` when there is no prior session
+            or the prior count was zero (and current is non-zero).
+          example: 6.08
+    TrendPoint:
+      type: object
+      properties:
+        month: { type: integer, minimum: 1, maximum: 12 }
+        count: { type: integer }
+    TrendSeries:
+      type: object
+      properties:
+        key:   { type: string, enum: [current, previous] }
+        year:  { type: integer }
+        points:
+          type: array
+          minItems: 12
+          maxItems: 12
+          items: { $ref: '#/components/schemas/TrendPoint' }
+    SubjectEnrollmentRow:
+      type: object
+      properties:
+        subject_combination_id: { type: string, format: uuid }
+        code:  { type: string, example: 'JUPEB SC-001' }
+        label: { type: string, example: 'Sciences A' }
+        count: { type: integer }
+    SubjectCombinationRef:
+      type: object
+      nullable: true
+      properties:
+        id:   { type: string, format: uuid }
+        code: { type: string, example: 'JUPEB SC-001' }
+    RecentRegistrationRow:
+      type: object
+      properties:
+        registration_id:    { type: string, format: uuid }
+        candidate_id:
+          type: string
+          nullable: true
+          description: 'Institution-issued code if available, else the provisional candidate code.'
+          example: '001/001'
+        name:               { type: string, nullable: true }
+        email:              { type: string, nullable: true }
+        avatar_url:         { type: string, nullable: true }
+        subject_combination: { $ref: '#/components/schemas/SubjectCombinationRef' }
+        biometric_captured:
+          type: boolean
+          description: 'True if at least one non-replaced row in `jupeb_biometric_captures` exists for this registration.'
+        status:
+          type: string
+          enum: [approved, pending, rejected, withdrawn]
+          description: 'Bucketed status (see top of doc).'
+        raw_status:
+          type: string
+          enum:
+            - provisional
+            - code_issued
+            - claimed
+            - pending_student_confirm
+            - pending_documents
+            - pending_institution_review
+            - approved
+            - rejected
+            - withdrawn
+        submitted_at: { type: string, format: date-time, nullable: true }
+        created_at:   { type: string, format: date-time }
+    SuccessEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string }
+        data:    {}
+
+tags:
+  - name: JUPEB — dashboard
+
+paths:
+  /dashboard/scope:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Resolve dashboard scope (institution + active session)
+      description: |
+        Header pills on the dashboard. Returns the resolved university (when scoped or supplied)
+        and the resolved session (active by default).
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+        - $ref: '#/components/parameters/SessionIdQuery'
+      responses:
+        '200':
+          description: Resolved scope
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          university: { $ref: '#/components/schemas/UniversitySummary' }
+                          session:    { $ref: '#/components/schemas/SessionSummary' }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden — role or institution scope }
+        '404': { description: session_id not found }
+        '422': { description: Invalid UUID }
+
+  /dashboard/stat-cards:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Top KPI cards (with deltas vs prior session)
+      description: |
+        Counts are scoped to the resolved (or supplied) session and institution. Deltas compare
+        against the chronologically-prior session by `opens_at`.
+
+        - `total_registered` excludes `withdrawn`.
+        - `pending` rolls up the six pending-bucket statuses (see top of doc).
+        - `with_biometrics` counts non-withdrawn registrations that have at least one non-replaced
+          biometric capture.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+        - $ref: '#/components/parameters/SessionIdQuery'
+      responses:
+        '200':
+          description: KPI card values + deltas
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          total_registered: { $ref: '#/components/schemas/StatCard' }
+                          approved:         { $ref: '#/components/schemas/StatCard' }
+                          pending:          { $ref: '#/components/schemas/StatCard' }
+                          with_biometrics:  { $ref: '#/components/schemas/StatCard' }
+                          compared_to:
+                            type: object
+                            nullable: true
+                            description: 'Prior session used for delta calculation, or null if none exists.'
+                            properties:
+                              session_id: { type: string, format: uuid }
+                              label:      { type: string }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid UUID }
+
+  /dashboard/quick-stats:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Sidebar quick stats (lifetime totals + active session label)
+      description: |
+        `total_students` is a lifetime distinct-`user_id` count across all sessions (excludes withdrawn,
+        excludes rows with no `user_id`). `active_session` is the resolved active session (no override).
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+      responses:
+        '200':
+          description: Sidebar quick stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          total_students: { type: integer, example: 12456 }
+                          active_session: { $ref: '#/components/schemas/SessionSummary' }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid UUID }
+
+  /dashboard/students-status:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Students status breakdown (approved / pending / rejected)
+      description: |
+        Same status bucketing as the recent-registrations table. Defaults to all sessions when
+        `session_id` is not supplied — pass it to scope to one session.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+        - $ref: '#/components/parameters/SessionIdQuery'
+      responses:
+        '200':
+          description: Status counts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          approved: { type: integer }
+                          pending:  { type: integer }
+                          rejected: { type: integer }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid UUID }
+
+  /dashboard/registration-trends:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Monthly registration counts for current + previous year
+      description: |
+        Returns two 12-point series (Jan–Dec) keyed `current` / `previous`. Counts use
+        `created_at` (UTC) and exclude withdrawn rows. Months with no registrations
+        appear as `count: 0`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+        - $ref: '#/components/parameters/YearQuery'
+      responses:
+        '200':
+          description: Trend series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          year: { type: integer, example: 2026 }
+                          series:
+                            type: array
+                            items: { $ref: '#/components/schemas/TrendSeries' }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid UUID }
+
+  /dashboard/subject-enrollment:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Top-N subject combinations by registration count
+      description: |
+        Ordered by count desc, then `code` asc. `limit` defaults to 6 and is clamped to `[1, 20]`.
+        Excludes withdrawn rows.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+        - $ref: '#/components/parameters/SessionIdQuery'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 20, default: 6 }
+      responses:
+        '200':
+          description: Top subject combinations
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/SubjectEnrollmentRow' }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid UUID }
+
+  /dashboard/recent-registrations:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Recent registrations table (newest first)
+      description: |
+        Newest rows by `created_at`. `limit` defaults to 5 and is clamped to `[1, 50]`.
+        Excludes withdrawn rows. Joins user/profile/subject-combination so the UI can render
+        the table without a follow-up fetch.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UniversityIdQuery'
+        - $ref: '#/components/parameters/SessionIdQuery'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 5 }
+      responses:
+        '200':
+          description: Recent registration rows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/RecentRegistrationRow' }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid UUID }
