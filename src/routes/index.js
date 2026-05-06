@@ -61,6 +61,7 @@ router.get('/', (req, res) => {
       jupeb005Registration: '/docs/jupeb-005-registration',
       jupeb006Finance: '/docs/jupeb-006-finance',
       jupeb007Academic: '/docs/jupeb-007-academic',
+      jupeb008Dashboard: '/docs/jupeb-008-dashboard',
       jupeb009InstitutionScope: '/docs/jupeb-009-institution-scope'
     },
     endpoints: {
@@ -158,6 +159,7 @@ const swaggerDocs = {
   'jupeb-005-registration': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-005-registration-swagger.yaml'), 'utf8')),
   'jupeb-006-finance': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-006-finance-swagger.yaml'), 'utf8')),
   'jupeb-007-academic': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-007-academic-swagger.yaml'), 'utf8')),
+  'jupeb-008-dashboard': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-008-dashboard-swagger.yaml'), 'utf8')),
   'jupeb-009-institution-scope': YAML.load(
     fs.readFileSync(path.join(docsDir, 'jupeb-009-institution-scope-swagger.yaml'), 'utf8')
   )

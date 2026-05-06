@@ -7,6 +7,7 @@ const submissionRoutes = require('./routes/submission.routes');
 const registrationRoutes = require('./routes/registration.routes');
 const financeRoutes = require('./routes/finance.routes');
 const academicRoutes = require('./routes/academic.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
 
 router.use('/', institutionScopeRoutes);
 router.use('/catalog', catalogRoutes);
@@ -16,5 +17,6 @@ router.use('/submission', submissionRoutes);
 router.use('/registration', registrationRoutes);
 router.use('/finance', financeRoutes);
 router.use('/academic', academicRoutes);
+router.use('/dashboard', dashboardRoutes);
 
 module.exports = router;
