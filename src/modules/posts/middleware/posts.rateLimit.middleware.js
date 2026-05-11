@@ -1,7 +1,12 @@
-const { rateLimit } = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
+// express-rate-limit v8 requires custom keyGenerators that fall back to the
+// request IP to route IP-derived keys through `ipKeyGenerator` so IPv6 keys
+// are masked to a /64 prefix (otherwise an attacker can rotate the suffix
+// and bypass per-IP limits). Authenticated requests still key on user_id.
 function key(req) {
-  return req.user?.user_id || req.ip || 'unknown';
+  if (req.user?.user_id) return req.user.user_id;
+  return req.ip ? ipKeyGenerator(req.ip) : 'unknown';
 }
 
 const windowMs = parseInt(process.env.POST_RATE_LIMIT_WINDOW_MS || '60000', 10);

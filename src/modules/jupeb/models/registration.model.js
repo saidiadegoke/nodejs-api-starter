@@ -135,46 +135,185 @@ class RegistrationModel {
     return result.rows[0];
   }
 
-  async listInstitution({ university_id, session_id, status, limit, offset }) {
+  /**
+   * E.1 + E.2 + E.3 — institution list with candidate identity join, search,
+   * bucket filter, and computed biometric_status.
+   *
+   * Returns `enriched` rows: each row carries the registration columns plus
+   *   - candidate: { id, name, email, candidate_id }
+   *   - biometric_status: 'yes' | 'partial' | 'no'
+   *   - university: { id, name, short_name }
+   *
+   * Filters:
+   *   - university_id, session_id, status (legacy)
+   *   - bucket: 'approved' | 'pending' | 'rejected' (server-side mapping)
+   *   - q: fuzzy ILIKE on full name, email, provisional_candidate_code,
+   *     jupeb_candidate_number, institution_issued_code
+   */
+  _buildInstitutionWhere({ university_id, session_id, status, bucket, q }) {
+    const where = ['1=1'];
     const values = [];
     let idx = 1;
-    let q = `SELECT * FROM jupeb_registrations WHERE 1=1`;
     if (university_id) {
-      q += ` AND university_id = $${idx++}`;
+      where.push(`r.university_id = $${idx++}`);
       values.push(university_id);
     }
     if (session_id) {
-      q += ` AND session_id = $${idx++}`;
+      where.push(`r.session_id = $${idx++}`);
       values.push(session_id);
     }
     if (status) {
-      q += ` AND status = $${idx++}`;
+      where.push(`r.status = $${idx++}`);
       values.push(status);
     }
-    q += ` ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
-    values.push(limit, offset);
-    const result = await pool.query(q, values);
+    if (bucket) {
+      const map = {
+        approved: ['approved'],
+        rejected: ['rejected'],
+        pending: [
+          'code_issued',
+          'claimed',
+          'pending_student_confirm',
+          'pending_documents',
+          'pending_institution_review',
+        ],
+      };
+      const list = map[bucket];
+      if (list && list.length) {
+        where.push(`r.status = ANY($${idx++}::varchar[])`);
+        values.push(list);
+      }
+    }
+    if (q) {
+      const term = `%${String(q).trim()}%`;
+      where.push(
+        `(
+          COALESCE(p.display_name, '') ILIKE $${idx} OR
+          COALESCE(p.first_name, '')   ILIKE $${idx} OR
+          COALESCE(p.last_name, '')    ILIKE $${idx} OR
+          COALESCE(u.email, '')        ILIKE $${idx} OR
+          COALESCE(r.provisional_candidate_code, '') ILIKE $${idx} OR
+          COALESCE(r.jupeb_candidate_number, '')      ILIKE $${idx} OR
+          COALESCE(r.institution_issued_code, '')     ILIKE $${idx}
+        )`
+      );
+      values.push(term);
+      idx += 1;
+    }
+    return { whereSql: where.join(' AND '), values, nextIdx: idx };
+  }
+
+  async listInstitution({ university_id, session_id, status, bucket, q, limit, offset }) {
+    const { whereSql, values, nextIdx } = this._buildInstitutionWhere({
+      university_id, session_id, status, bucket, q,
+    });
+    const sql = `
+      SELECT
+        r.*,
+        u.email AS user_email,
+        p.first_name,
+        p.last_name,
+        p.display_name,
+        uni.id   AS uni_id,
+        uni.name AS uni_name,
+        uni.short_name AS uni_short_name,
+        COALESCE(b.has_face, false)        AS has_face,
+        COALESCE(b.has_fingerprint, false) AS has_fingerprint
+      FROM jupeb_registrations r
+      LEFT JOIN users u ON u.id = r.user_id
+      LEFT JOIN profiles p ON p.user_id = u.id
+      LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
+      LEFT JOIN (
+        SELECT registration_id,
+               BOOL_OR(capture_type = 'face')        AS has_face,
+               BOOL_OR(capture_type = 'fingerprint') AS has_fingerprint
+        FROM jupeb_biometric_captures
+        GROUP BY registration_id
+      ) b ON b.registration_id = r.id
+      WHERE ${whereSql}
+      ORDER BY r.created_at DESC
+      LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
+    const result = await pool.query(sql, [...values, limit, offset]);
     return result.rows;
   }
 
-  async countInstitution({ university_id, session_id, status }) {
+  async countInstitution({ university_id, session_id, status, bucket, q }) {
+    const { whereSql, values } = this._buildInstitutionWhere({
+      university_id, session_id, status, bucket, q,
+    });
+    const sql = `
+      SELECT COUNT(*)::int AS c
+      FROM jupeb_registrations r
+      LEFT JOIN users u ON u.id = r.user_id
+      LEFT JOIN profiles p ON p.user_id = u.id
+      LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
+      WHERE ${whereSql}`;
+    const result = await pool.query(sql, values);
+    return result.rows[0].c;
+  }
+
+  /**
+   * E.4 — bucket counts scoped to (university_id?, session_id?).
+   * Returns { total, approved, pending, rejected, with_biometrics }.
+   */
+  async statsInstitution({ university_id, session_id }) {
     const values = [];
+    const where = ['1=1'];
     let idx = 1;
-    let q = `SELECT COUNT(*)::int AS c FROM jupeb_registrations WHERE 1=1`;
     if (university_id) {
-      q += ` AND university_id = $${idx++}`;
+      where.push(`r.university_id = $${idx++}`);
       values.push(university_id);
     }
     if (session_id) {
-      q += ` AND session_id = $${idx++}`;
+      where.push(`r.session_id = $${idx++}`);
       values.push(session_id);
     }
-    if (status) {
-      q += ` AND status = $${idx++}`;
-      values.push(status);
+    const sql = `
+      SELECT
+        COUNT(*)::int                                                  AS total,
+        COUNT(*) FILTER (WHERE r.status = 'approved')::int             AS approved,
+        COUNT(*) FILTER (WHERE r.status = 'rejected')::int             AS rejected,
+        COUNT(*) FILTER (WHERE r.status IN (
+          'code_issued','claimed','pending_student_confirm',
+          'pending_documents','pending_institution_review'
+        ))::int                                                         AS pending,
+        COUNT(DISTINCT r.id) FILTER (WHERE b.registration_id IS NOT NULL)::int AS with_biometrics
+      FROM jupeb_registrations r
+      LEFT JOIN jupeb_biometric_captures b ON b.registration_id = r.id
+      WHERE ${where.join(' AND ')}`;
+    const result = await pool.query(sql, values);
+    return result.rows[0];
+  }
+
+  /**
+   * E.5 — registrations grouped by university (for the bar chart).
+   */
+  async byUniversity({ session_id, university_id, limit = 12 }) {
+    const values = [];
+    const where = ['1=1'];
+    let idx = 1;
+    if (session_id) {
+      where.push(`r.session_id = $${idx++}`);
+      values.push(session_id);
     }
-    const result = await pool.query(q, values);
-    return result.rows[0].c;
+    if (university_id) {
+      where.push(`r.university_id = $${idx++}`);
+      values.push(university_id);
+    }
+    values.push(limit);
+    const sql = `
+      SELECT uni.id   AS university_id,
+             uni.name AS university_name,
+             uni.short_name AS short_name,
+             COUNT(r.id)::int AS registered_count
+      FROM jupeb_registrations r
+      JOIN jupeb_universities uni ON uni.id = r.university_id
+      WHERE ${where.join(' AND ')}
+      GROUP BY uni.id, uni.name, uni.short_name
+      ORDER BY registered_count DESC, uni.name ASC
+      LIMIT $${idx}`;
+    const result = await pool.query(sql, values);
+    return result.rows;
   }
 
   async findApprovedWithoutCandidateNumber(sessionId) {

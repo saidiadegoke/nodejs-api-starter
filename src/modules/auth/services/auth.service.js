@@ -119,6 +119,254 @@ class AuthService {
   }
 
   /**
+   * Register a new student using an institution-issued registration code.
+   *
+   * Single-shot signup for figma `log in 11`. Creates the user, assigns the
+   * `student` role, claims the registration code, and links the registration
+   * to the new user — all in a single DB transaction.
+   *
+   * Body: { code, password, first_name?, last_name?, email?, phone? }
+   *  - email/phone default to whatever was carried on the registration's NIN
+   *    intake when not provided.
+   */
+  static async registerWithCode(body) {
+    const pool = require('../../../db/pool');
+    const bcryptLib = require('bcryptjs');
+    const jwtSign = jwt;
+
+    if (!body || typeof body !== 'object') {
+      const err = new Error('Body is required');
+      err.status = 422;
+      throw err;
+    }
+    const code = body.code ? String(body.code).trim() : '';
+    const password = body.password ? String(body.password) : '';
+    if (!code) {
+      const err = new Error('code is required');
+      err.status = 422;
+      err.error_code = 'code_required';
+      throw err;
+    }
+    if (!password || password.length < 8) {
+      const err = new Error('Password must be at least 8 characters');
+      err.status = 422;
+      err.error_code = 'weak_password';
+      throw err;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Lock the registration row by code so two concurrent claims can't race.
+      const lock = await client.query(
+        `SELECT * FROM jupeb_registrations WHERE institution_issued_code = $1 FOR UPDATE`,
+        [code]
+      );
+      const reg = lock.rows[0];
+      if (!reg) {
+        await client.query('ROLLBACK');
+        const err = new Error('Registration code not found');
+        err.status = 404;
+        err.error_code = 'code_not_found';
+        throw err;
+      }
+      if (
+        reg.institution_code_expires_at &&
+        new Date(reg.institution_code_expires_at).getTime() < Date.now()
+      ) {
+        await client.query('ROLLBACK');
+        const err = new Error('This institution code has expired');
+        err.status = 410;
+        err.error_code = 'code_expired';
+        err.details = { expires_at: reg.institution_code_expires_at };
+        throw err;
+      }
+      if (reg.status !== 'code_issued' || reg.user_id) {
+        await client.query('ROLLBACK');
+        const err = new Error('This code is no longer available');
+        err.status = 409;
+        err.error_code = reg.user_id ? 'code_already_claimed' : 'code_unavailable';
+        throw err;
+      }
+
+      // 2. Resolve email/phone/name. Prefer body, fall back to NIN intake/payload.
+      let intakePayload = {};
+      let ninResponse = {};
+      if (reg.nin_verification_id) {
+        const ninRes = await client.query(
+          `SELECT response_payload, intake_payload FROM jupeb_nin_verifications WHERE id = $1`,
+          [reg.nin_verification_id]
+        );
+        if (ninRes.rows[0]) {
+          intakePayload = ninRes.rows[0].intake_payload || {};
+          ninResponse = ninRes.rows[0].response_payload || {};
+        }
+      }
+
+      const email = (body.email && String(body.email).trim().toLowerCase())
+        || (intakePayload.email && String(intakePayload.email).trim().toLowerCase())
+        || null;
+      const phone = (body.phone && String(body.phone).trim())
+        || (intakePayload.phone && String(intakePayload.phone).trim())
+        || (ninResponse.phone && String(ninResponse.phone).trim())
+        || null;
+
+      if (!email && !phone) {
+        await client.query('ROLLBACK');
+        const err = new Error('email or phone is required');
+        err.status = 422;
+        err.error_code = 'identifier_required';
+        throw err;
+      }
+
+      const fullName = (intakePayload.name && String(intakePayload.name).trim())
+        || [ninResponse.first_name, ninResponse.last_name].filter(Boolean).join(' ').trim()
+        || null;
+      const [first_name, ...rest] = (body.first_name
+        ? [String(body.first_name).trim(), String(body.last_name || '').trim()]
+        : (fullName ? fullName.split(/\s+/) : ['Candidate', '']));
+      const last_name = body.last_name ? String(body.last_name).trim() : rest.join(' ').trim() || '';
+
+      // 3. Reject duplicate identifier early.
+      if (email) {
+        const dup = await client.query(
+          `SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL LIMIT 1`,
+          [email]
+        );
+        if (dup.rows.length) {
+          await client.query('ROLLBACK');
+          const err = new Error('Email already in use');
+          err.status = 409;
+          err.error_code = 'email_in_use';
+          throw err;
+        }
+      }
+      if (phone) {
+        const dup = await client.query(
+          `SELECT id FROM users WHERE phone = $1 AND deleted_at IS NULL LIMIT 1`,
+          [phone]
+        );
+        if (dup.rows.length) {
+          await client.query('ROLLBACK');
+          const err = new Error('Phone already in use');
+          err.status = 409;
+          err.error_code = 'phone_in_use';
+          throw err;
+        }
+      }
+
+      // 4. Create the user, profile, and assign the student role.
+      const passwordHash = await bcryptLib.hash(password, 10);
+      const userInsert = await client.query(
+        `INSERT INTO users (email, phone, password_hash, status)
+         VALUES ($1, $2, $3, 'active')
+         RETURNING id, email, phone, status, created_at`,
+        [email, phone, passwordHash]
+      );
+      const user = userInsert.rows[0];
+
+      const displayName = [first_name, last_name].filter(Boolean).join(' ').trim() || null;
+      await client.query(
+        `INSERT INTO profiles (user_id, first_name, last_name, display_name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [user.id, first_name || null, last_name || null, displayName]
+      );
+
+      // Prefer 'student' role; fall back to 'user' if 'student' isn't seeded.
+      const roleResult = await client.query(
+        `INSERT INTO user_roles (user_id, role_id)
+         SELECT $1, id FROM roles WHERE name = ANY($2::varchar[])
+         ORDER BY array_position($2::varchar[], name)
+         LIMIT 1
+         ON CONFLICT (user_id, role_id) DO NOTHING
+         RETURNING role_id`,
+        [user.id, ['student', 'user']]
+      );
+      if (!roleResult.rows.length) {
+        // Neither role exists yet — fall back to inserting any base role
+        await client.query(
+          `INSERT INTO user_roles (user_id, role_id)
+           SELECT $1, id FROM roles WHERE name = 'user'
+           ON CONFLICT (user_id, role_id) DO NOTHING`,
+          [user.id]
+        );
+      }
+
+      // 5. Atomically claim the registration.
+      const upd = await client.query(
+        `UPDATE jupeb_registrations
+            SET user_id = $2,
+                claimed_at = CURRENT_TIMESTAMP,
+                status = 'claimed',
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1 AND status = 'code_issued' AND user_id IS NULL
+         RETURNING *`,
+        [reg.id, user.id]
+      );
+      if (!upd.rows[0]) {
+        await client.query('ROLLBACK');
+        const err = new Error('This code is no longer available');
+        err.status = 409;
+        err.error_code = 'code_already_claimed';
+        throw err;
+      }
+      await client.query(
+        `INSERT INTO jupeb_registration_status_history (registration_id, from_status, to_status, reason, changed_by)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [reg.id, 'code_issued', 'claimed', 'register-with-code', user.id]
+      );
+
+      await client.query('COMMIT');
+
+      // 6. Issue tokens (outside the txn — no DB writes other than the session).
+      const rolesRes = await pool.query(
+        `SELECT r.name FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+          WHERE ur.user_id = $1`,
+        [user.id]
+      );
+      const roleNames = rolesRes.rows.map((r) => r.name);
+      const accessToken = AuthService.generateAccessToken(user.id, roleNames);
+      const refreshToken = AuthService.generateRefreshToken(user.id);
+      const refreshHash = await bcryptLib.hash(refreshToken, 10);
+      await AuthModel.createSession(user.id, refreshHash, {
+        source: 'register-with-code',
+        user_agent: 'web'
+      });
+
+      const claimedReg = upd.rows[0];
+      return {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        user: {
+          user_id: user.id,
+          email: user.email,
+          phone: user.phone,
+          first_name,
+          last_name,
+          role: roleNames[0] || 'student',
+          roles: roleNames
+        },
+        registration: {
+          id: claimedReg.id,
+          status: claimedReg.status,
+          provisional_candidate_code: claimedReg.provisional_candidate_code,
+          claimed_at: claimedReg.claimed_at
+        }
+      };
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Login user
    */
   static async login(identifier, password, deviceInfo = {}) {

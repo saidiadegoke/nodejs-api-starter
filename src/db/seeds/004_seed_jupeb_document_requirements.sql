@@ -1,0 +1,46 @@
+-- M.5: canonical document requirements for the JUPEB submission flow.
+-- See docs-impl/016-student-registration-end-to-end.md.
+-- Idempotent: ON CONFLICT (LOWER(key)) DO NOTHING via a NOT EXISTS guard
+-- (jupeb_document_requirements has a partial UNIQUE INDEX on LOWER(key),
+--  so we can't just use ON CONFLICT on the column directly).
+
+INSERT INTO jupeb_document_requirements
+  (key, title, description, is_mandatory, allowed_mime_types, max_file_size_mb, status)
+SELECT v.key, v.title, v.description, v.is_mandatory,
+       v.allowed_mime_types::jsonb, v.max_file_size_mb, 'active'
+FROM (VALUES
+  ('waec_result',
+   'WAEC SSCE result',
+   'West African Senior School Certificate Examination result. Acceptable as the primary or secondary sitting.',
+   true,
+   '["application/pdf","image/png","image/jpeg","image/jpg"]',
+   5),
+  ('neco_result',
+   'NECO SSCE result',
+   'National Examinations Council Senior School Certificate result. Optional unless required to combine with WAEC across two sittings.',
+   false,
+   '["application/pdf","image/png","image/jpeg","image/jpg"]',
+   5),
+  ('nabteb_result',
+   'NABTEB result',
+   'National Business and Technical Examinations Board result. Optional.',
+   false,
+   '["application/pdf","image/png","image/jpeg","image/jpg"]',
+   5),
+  ('gce_result',
+   'GCE / A-Level result',
+   'General Certificate of Education or Cambridge A-Level result. Optional.',
+   false,
+   '["application/pdf","image/png","image/jpeg","image/jpg"]',
+   5),
+  ('signed_registration_form',
+   'Signed registration form',
+   'Printed and signed copy of the system-generated registration form. Required at submission time.',
+   true,
+   '["application/pdf","image/png","image/jpeg","image/jpg"]',
+   5)
+) AS v(key, title, description, is_mandatory, allowed_mime_types, max_file_size_mb)
+WHERE NOT EXISTS (
+  SELECT 1 FROM jupeb_document_requirements d
+  WHERE LOWER(d.key) = LOWER(v.key)
+);

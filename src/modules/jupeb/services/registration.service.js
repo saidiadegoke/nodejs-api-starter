@@ -57,6 +57,59 @@ async function assertComboForUniversity(subjectCombinationId, universityId) {
   throw httpError(422, 'Subject combination is not available for this university');
 }
 
+/**
+ * Shape an enriched institution-list row for the dashboard. Joins are done
+ * in the model query; here we just project to a compact response shape.
+ */
+function enrichListRow(row) {
+  if (!row) return row;
+  const fullName =
+    row.display_name ||
+    [row.first_name, row.last_name].filter(Boolean).join(' ') ||
+    null;
+  const biometric_status =
+    row.has_face && row.has_fingerprint
+      ? 'yes'
+      : row.has_face || row.has_fingerprint
+      ? 'partial'
+      : 'no';
+  const candidate = {
+    id: row.user_id || null,
+    name: fullName,
+    email: row.user_email || null,
+    candidate_id:
+      row.jupeb_candidate_number ||
+      row.provisional_candidate_code ||
+      row.institution_issued_code ||
+      null,
+  };
+  const university = row.uni_id
+    ? { id: row.uni_id, name: row.uni_name, short_name: row.uni_short_name }
+    : null;
+
+  return {
+    id: row.id,
+    session_id: row.session_id,
+    university_id: row.university_id,
+    subject_combination_id: row.subject_combination_id,
+    nin_verification_id: row.nin_verification_id,
+    institution_issued_code: row.institution_issued_code,
+    provisional_candidate_code: row.provisional_candidate_code,
+    jupeb_candidate_number: row.jupeb_candidate_number,
+    status: row.status,
+    sittings_count: row.sittings_count,
+    result_types: row.result_types,
+    claimed_at: row.claimed_at,
+    submitted_at: row.submitted_at,
+    approved_at: row.approved_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    candidate,
+    university,
+    biometric_status,
+  };
+}
+
 async function generateUniqueInstitutionCode() {
   for (let i = 0; i < 24; i += 1) {
     const code = makeInstitutionCode();
@@ -116,6 +169,32 @@ async function assertNinVerified(reg) {
   }
 }
 
+/**
+ * Best-effort mapping of generic httpError instances to a stable
+ * `error_code` string for batch-action responses. Errors that already carry
+ * `details.error_code` use that directly upstream; this is the fallback.
+ */
+function mapErrorCode(err) {
+  if (!err) return 'unknown';
+  const status = err.status || 500;
+  if (status === 404) return 'not_found';
+  if (status === 403) return 'forbidden';
+  if (status === 422) {
+    const m = err.message || '';
+    if (/cannot transition/i.test(m)) return 'invalid_transition';
+    if (/awaiting institution approval/i.test(m)) return 'invalid_transition';
+    if (/cannot be rejected/i.test(m)) return 'invalid_transition';
+    if (/cannot be withdrawn/i.test(m)) return 'invalid_transition';
+    if (/nin/i.test(m) && /verified/i.test(m)) return 'nin_not_verified';
+    if (/reason is required/i.test(m)) return 'reason_required';
+    return 'unprocessable';
+  }
+  if (status === 409) return 'conflict';
+  return `http_${status}`;
+}
+
+const TERMINAL_STATUSES = new Set(['approved', 'rejected', 'withdrawn']);
+
 async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) {
   if (!canTransition(reg.status, toStatus)) {
     throw httpError(422, `Cannot transition registration from ${reg.status} to ${toStatus}`);
@@ -132,6 +211,22 @@ async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) 
     reason: reason || null,
     changed_by: userId,
   });
+
+  // Terminal status → purge the cached NIN profile (PII no longer needed)
+  // and invalidate the cache so any subsequent verifyNin call for the same
+  // NIN goes to the provider fresh. Best-effort: a clear failure must not
+  // block the status transition itself.
+  if (TERMINAL_STATUSES.has(toStatus) && reg.nin_verification_id) {
+    try {
+      await ninVerificationModel.clearById(reg.nin_verification_id);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[transitionStatus] NIN cache clear failed for verification',
+        reg.nin_verification_id, err && err.message
+      );
+    }
+  }
   return updated;
 }
 
@@ -187,6 +282,26 @@ class RegistrationService {
         reason: null,
         changed_by: userId,
       });
+
+      // M.12 — write NIN payload through to NoK + profile address (best-effort).
+      if (row.nin_verification_id) {
+        try {
+          const ninRow = await ninVerificationModel.findById(row.nin_verification_id);
+          if (ninRow && ninRow.status === 'verified') {
+            // eslint-disable-next-line global-require
+            const { applyNinPayloadToRegistration } = require('./nin-write-through.service');
+            await applyNinPayloadToRegistration({
+              registrationId: row.id,
+              ninPayload: ninRow.response_payload || {},
+              userId,
+            });
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('[institutionCreate] NIN write-through failed for', row.id, err && err.message);
+        }
+      }
+
       return serializeRegistration(row);
     } catch (e) {
       if (e.code === '23505') {
@@ -222,23 +337,142 @@ class RegistrationService {
     const safePage = Math.max(1, parseInt(query.page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
-    const { university_id, session_id, status } = query;
+    const { university_id, session_id, status, bucket, q } = query;
     if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
+    if (bucket && !['approved', 'pending', 'rejected'].includes(bucket)) {
+      throw httpError(422, 'bucket must be one of approved, pending, rejected');
+    }
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
-    const rows = await registrationModel.listInstitution({
+    const filters = {
       university_id: scopedUniversityId,
       session_id: session_id || null,
       status: status || null,
+      bucket: bucket || null,
+      q: q || null,
+    };
+    const rows = await registrationModel.listInstitution({
+      ...filters,
       limit: safeLimit,
       offset,
     });
-    const total = await registrationModel.countInstitution({
+    const total = await registrationModel.countInstitution(filters);
+    return {
+      rows: rows.map(enrichListRow),
+      page: safePage,
+      limit: safeLimit,
+      total,
+    };
+  }
+
+  /**
+   * E.4 — KPI counts for the figma "Total Registered / Pending / Approved /
+   * Rejected / With biometrics" cards. Scoped to the caller's institution.
+   */
+  async institutionStats(query, userId) {
+    await assertInstitutionRegistration(userId);
+    const { university_id, session_id } = query || {};
+    if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
+    if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
+    const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
+    return registrationModel.statsInstitution({
+      university_id: scopedUniversityId,
+      session_id: session_id || null,
+    });
+  }
+
+  /**
+   * E.5 — top-N institutions bar chart. Defaults to top 12 (figma uses 12 bars).
+   */
+  async institutionByUniversity(query, userId) {
+    await assertInstitutionRegistration(userId);
+    const { session_id, university_id, limit } = query || {};
+    if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
+    if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
+    const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
+    const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 12));
+    return registrationModel.byUniversity({
+      session_id: session_id || null,
+      university_id: scopedUniversityId,
+      limit: safeLimit,
+    });
+  }
+
+  /**
+   * E.6 — CSV export. Returns the full CSV body as a string. The result set
+   * is capped at 10k rows to keep memory bounded; client should narrow the
+   * filters for larger exports.
+   */
+  async institutionExportCsv(query, userId) {
+    await assertInstitutionRegistration(userId);
+    const { university_id, session_id, status, bucket, q } = query || {};
+    if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
+    if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
+    if (bucket && !['approved', 'pending', 'rejected'].includes(bucket)) {
+      throw httpError(422, 'bucket must be one of approved, pending, rejected');
+    }
+    const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
+    const filters = {
       university_id: scopedUniversityId,
       session_id: session_id || null,
       status: status || null,
+      bucket: bucket || null,
+      q: q || null,
+    };
+    const rows = await registrationModel.listInstitution({
+      ...filters,
+      limit: 10000,
+      offset: 0,
     });
-    return { rows, page: safePage, limit: safeLimit, total };
+
+    const headers = [
+      'candidate_id',
+      'name',
+      'email',
+      'university',
+      'subject_combination',
+      'sittings_count',
+      'status',
+      'biometric_status',
+      'institution_issued_code',
+      'jupeb_candidate_number',
+      'provisional_candidate_code',
+      'created_at',
+      'submitted_at',
+      'approved_at',
+    ];
+
+    const csvEscape = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+
+    const lines = [headers.join(',')];
+    for (const row of rows) {
+      const enriched = enrichListRow(row);
+      const candidate = enriched.candidate || {};
+      lines.push([
+        candidate.candidate_id,
+        candidate.name,
+        candidate.email,
+        enriched.university && enriched.university.name,
+        '', // subject_combination title not joined here; could enhance via display_name
+        row.sittings_count,
+        row.status,
+        enriched.biometric_status,
+        row.institution_issued_code,
+        row.jupeb_candidate_number,
+        row.provisional_candidate_code,
+        row.created_at && row.created_at.toISOString && row.created_at.toISOString(),
+        row.submitted_at && row.submitted_at.toISOString && row.submitted_at.toISOString(),
+        row.approved_at && row.approved_at.toISOString && row.approved_at.toISOString(),
+      ].map(csvEscape).join(','));
+    }
+    return lines.join('\n') + '\n';
   }
 
   async institutionApprove(registrationId, userId) {
@@ -282,6 +516,87 @@ class RegistrationService {
       reason,
       extraFields: { status_reason: reason },
     });
+  }
+
+  /**
+   * E.8 — withdraw a registration. Allowed from any non-terminal state per the
+   * registration-state machine.
+   */
+  async institutionWithdraw(registrationId, body, userId) {
+    await assertInstitutionRegistration(userId);
+    if (!isUuid(registrationId)) throw httpError(422, 'Invalid registration id');
+    const reason = body && body.reason ? String(body.reason).trim() : '';
+    const reg = await registrationModel.findById(registrationId);
+    if (!reg) throw httpError(404, 'Registration not found');
+    await assertInstitutionUniversityAccess(userId, reg.university_id);
+    if (!canTransition(reg.status, 'withdrawn')) {
+      throw httpError(422, `Registration cannot be withdrawn from status ${reg.status}`);
+    }
+    return transitionStatus(reg, 'withdrawn', {
+      userId,
+      reason: reason || null,
+      extraFields: { status_reason: reason || null },
+    });
+  }
+
+  /**
+   * E.7 — batch approve / reject / withdraw. Loops over rows and applies the
+   * per-row guards from the existing single-row endpoints. Never short-circuits
+   * on first failure: every id gets a verdict, returned as
+   *   { accepted: [{ id, status }], rejected: [{ id, error_code, message }] }.
+   *
+   * Body: { ids: [uuid, ...], action: 'approve'|'reject'|'withdraw', reason?: string }
+   *   - approve: no reason required.
+   *   - reject:  reason required.
+   *   - withdraw: reason optional.
+   */
+  async institutionBatchAction(body, userId) {
+    await assertInstitutionRegistration(userId);
+    const ids = Array.isArray(body && body.ids) ? body.ids : [];
+    const action = body && body.action ? String(body.action).toLowerCase().trim() : '';
+    const reason = body && body.reason ? String(body.reason).trim() : '';
+
+    if (!ids.length) {
+      throw httpError(422, 'ids[] is required');
+    }
+    if (ids.length > 100) {
+      throw httpError(422, 'ids[] cannot exceed 100 entries per request');
+    }
+    if (!['approve', 'reject', 'withdraw'].includes(action)) {
+      throw httpError(422, 'action must be one of approve, reject, withdraw');
+    }
+    if (action === 'reject' && !reason) {
+      throw httpError(422, 'reason is required when action is reject');
+    }
+    for (const id of ids) {
+      if (!isUuid(id)) throw httpError(422, `Invalid registration id in ids[]: ${id}`);
+    }
+
+    const accepted = [];
+    const rejected = [];
+
+    for (const id of ids) {
+      try {
+        let updated;
+        if (action === 'approve') {
+          updated = await this.institutionApprove(id, userId);
+        } else if (action === 'reject') {
+          updated = await this.institutionReject(id, { reason }, userId);
+        } else {
+          updated = await this.institutionWithdraw(id, { reason }, userId);
+        }
+        accepted.push({ id, status: updated && updated.status });
+      } catch (err) {
+        rejected.push({
+          id,
+          error_code: (err.details && err.details.error_code) || mapErrorCode(err),
+          message: err.message,
+          status: err.status || 500,
+        });
+      }
+    }
+
+    return { accepted, rejected, action };
   }
 
   async getCodeStatus(rawCode) {
@@ -402,13 +717,31 @@ class RegistrationService {
     });
   }
 
+  /**
+   * M.10 — Companion to `getMeSubmissionPreview` that also returns the
+   * underlying registration row so the controller can check `status`
+   * before rendering the PDF.
+   */
+  async getMeRegistrationFormPayload(userId) {
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.user_id !== userId) {
+      throw httpError(404, 'No registration found for current user');
+    }
+    const preview = await this.getMeSubmissionPreview(userId);
+    return { registration: reg, preview };
+  }
+
   async getMeSubmissionPreview(userId) {
     const reg = await registrationModel.findLatestForUser(userId);
     if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
-    const [profile, biometrics, documents] = await Promise.all([
+    // M.8d — pull result entries (parsed grades) alongside docs/biometrics
+    // eslint-disable-next-line global-require
+    const resultEntriesModel = require('../models/result-entries.model');
+    const [profile, biometrics, documents, resultEntries] = await Promise.all([
       this.getMeProfile(userId),
       biometricCaptureModel.findByRegistrationId(reg.id),
       registrationDocumentModel.findByRegistration(reg.id),
+      resultEntriesModel.findByRegistration(reg.id).catch(() => []),
     ]);
     const docsWithUrls = await Promise.all(
       documents.map(async (d) => {
@@ -438,6 +771,37 @@ class RegistrationService {
         : types.size > 0
         ? 'partial'
         : 'none';
+    // Group result entries by (source, sitting) for the figma `log in 18`
+    // grouped subject/grade tables.
+    const groupedAcademic = {};
+    for (const entry of resultEntries) {
+      const key = `${entry.source}-${entry.sitting}`;
+      if (!groupedAcademic[key]) {
+        groupedAcademic[key] = {
+          source: entry.source,
+          sitting: entry.sitting,
+          origins: new Set(),
+          rows: [],
+        };
+      }
+      groupedAcademic[key].origins.add(entry.origin);
+      groupedAcademic[key].rows.push({
+        id: entry.id,
+        serial: entry.serial,
+        subject: entry.subject,
+        grade: entry.grade,
+        grade_normalized: entry.grade_normalized,
+        score: entry.score,
+        origin: entry.origin,
+      });
+    }
+    const academic_details = Object.values(groupedAcademic).map((g) => ({
+      source: g.source,
+      sitting: g.sitting,
+      origins: Array.from(g.origins),
+      subjects: g.rows.sort((a, b) => a.serial - b.serial),
+    }));
+
     return {
       candidate: profile.candidate,
       basic_information: profile.basic_information,
@@ -448,6 +812,7 @@ class RegistrationService {
       session: profile.session,
       nin_verification: profile.nin_verification,
       documents: docsWithUrls,
+      academic_details,
       biometrics: biometrics.map((b) => ({
         id: b.id,
         capture_type: b.capture_type,
@@ -465,7 +830,8 @@ class RegistrationService {
     const nin_verification = await loadNinVerificationSummary(reg);
     const userRow = await pool.query(
       `SELECT u.email, u.phone, p.first_name, p.last_name, p.display_name,
-              p.date_of_birth, p.gender, p.profile_photo_url
+              p.date_of_birth, p.gender, p.profile_photo_url,
+              p.residential_address, p.state_of_origin, p.lga, p.place_of_birth
        FROM users u
        LEFT JOIN profiles p ON p.user_id = u.id
        WHERE u.id = $1`,
@@ -487,6 +853,14 @@ class RegistrationService {
       || [u.first_name, u.last_name].filter(Boolean).join(' ')
       || [ninPayload.first_name, ninPayload.last_name].filter(Boolean).join(' ')
       || null;
+    // M.2: prefer student-edited profile values; fall back to NIN payload.
+    let nokRow = null;
+    try {
+      const nokModel = require('../models/next-of-kin.model');
+      nokRow = await nokModel.findActiveByRegistration(reg.id);
+    } catch (e) {
+      nokRow = null;
+    }
     return {
       candidate: {
         id: reg.id,
@@ -499,19 +873,142 @@ class RegistrationService {
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
         gender: ninPayload.gender || u.gender || null,
-        residential_address: ninPayload.address || null,
-        state_of_origin: ninPayload.state_of_origin || null,
-        lga: ninPayload.lga || null,
-        place_of_birth: ninPayload.place_of_birth || null,
+        residential_address: u.residential_address || ninPayload.address || null,
+        state_of_origin: u.state_of_origin || ninPayload.state_of_origin || null,
+        lga: u.lga || ninPayload.lga || null,
+        place_of_birth: u.place_of_birth || ninPayload.place_of_birth || null,
       },
       contact_information: {
-        email: intake.email || u.email || null,
-        phone: intake.phone || ninPayload.phone || u.phone || null,
+        email: u.email || intake.email || null,
+        phone: u.phone || intake.phone || ninPayload.phone || null,
       },
-      next_of_kin: ninPayload.next_of_kin || null,
+      next_of_kin: nokRow
+        ? {
+            name: nokRow.name,
+            relationship: nokRow.relationship,
+            phone: nokRow.phone,
+            email: nokRow.email,
+            address: nokRow.address,
+            source: nokRow.source,
+          }
+        : ninPayload.next_of_kin || null,
       ...displays,
       nin_verification,
     };
+  }
+
+  /**
+   * M.2 — Patch the editable subset of the candidate profile.
+   * NIN-derived fields (name, date_of_birth, gender) are immutable when a
+   * verified NIN payload is present.
+   */
+  async updateMeProfile(userId, body) {
+    if (!body || typeof body !== 'object') throw httpError(422, 'Body is required');
+
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+
+    let ninPayload = {};
+    if (reg.nin_verification_id) {
+      const ninRow = await ninVerificationModel.findById(reg.nin_verification_id);
+      if (ninRow && ninRow.status === 'verified') {
+        ninPayload = ninRow.response_payload || {};
+      }
+    }
+
+    const errors = [];
+
+    // Reject NIN-immutable fields when present in the body.
+    const NIN_IMMUTABLE = ['date_of_birth', 'gender', 'first_name', 'last_name', 'name', 'middle_name'];
+    for (const field of NIN_IMMUTABLE) {
+      if (body[field] !== undefined && ninPayload && Object.prototype.hasOwnProperty.call(ninPayload, field)) {
+        const incoming = String(body[field] || '').toLowerCase().trim();
+        const onFile = String(ninPayload[field] || '').toLowerCase().trim();
+        if (incoming && incoming !== onFile) {
+          errors.push({ field, error_code: 'nin_field_immutable' });
+        }
+      }
+    }
+
+    const editable = {
+      residential_address:
+        body.residential_address !== undefined ? String(body.residential_address || '').trim() : undefined,
+      state_of_origin:
+        body.state_of_origin !== undefined ? String(body.state_of_origin || '').trim() : undefined,
+      lga: body.lga !== undefined ? String(body.lga || '').trim() : undefined,
+      place_of_birth:
+        body.place_of_birth !== undefined ? String(body.place_of_birth || '').trim() : undefined,
+    };
+    const phone = body.phone !== undefined ? String(body.phone || '').trim() : undefined;
+    const email = body.email !== undefined ? String(body.email || '').trim() : undefined;
+
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      errors.push({ field: 'email', error_code: 'invalid_email' });
+    }
+    if (phone && phone.length < 6) {
+      errors.push({ field: 'phone', error_code: 'phone_too_short' });
+    }
+
+    if (errors.length) {
+      const err = httpError(422, 'Profile update rejected');
+      err.details = { errors };
+      throw err;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Upsert profile row (legacy users may not have one yet)
+      const profileFields = Object.entries(editable).filter(([, v]) => v !== undefined);
+      if (profileFields.length) {
+        // Make sure a profile row exists
+        await client.query(
+          `INSERT INTO profiles (user_id) VALUES ($1)
+           ON CONFLICT (user_id) DO NOTHING`,
+          [userId]
+        );
+        const setSql = profileFields
+          .map(([k], idx) => `${k} = $${idx + 2}`)
+          .join(', ');
+        const values = profileFields.map(([, v]) => (v === '' ? null : v));
+        await client.query(
+          `UPDATE profiles
+              SET ${setSql}, updated_at = NOW()
+            WHERE user_id = $1`,
+          [userId, ...values]
+        );
+      }
+
+      if (phone !== undefined) {
+        await client.query(
+          `UPDATE users SET phone = $2, updated_at = NOW() WHERE id = $1`,
+          [userId, phone === '' ? null : phone]
+        );
+      }
+      if (email !== undefined && email) {
+        const dup = await client.query(
+          `SELECT id FROM users WHERE email = $1 AND id <> $2 LIMIT 1`,
+          [email, userId]
+        );
+        if (dup.rows.length) {
+          throw httpError(409, 'Email already in use');
+        }
+        await client.query(
+          `UPDATE users SET email = $2, updated_at = NOW() WHERE id = $1`,
+          [userId, email]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return this.getMeProfile(userId);
   }
 
   async _publicRegistrationSummary(reg) {

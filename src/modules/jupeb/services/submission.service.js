@@ -27,6 +27,107 @@ const ROLE_INST_REVIEW = new Set([
   'institution_admin',
 ]);
 
+// M.4: requirement keys whose attachments must carry (source, sitting).
+// Match either `<src>_result` or `<src>` so we tolerate either seed style.
+const RESULT_REQUIREMENT_PATTERN = /^(waec|neco|nabteb|gce|jamb)(_result)?$/i;
+const ALLOWED_SOURCES = new Set(['waec', 'neco', 'nabteb', 'gce', 'jamb', 'other']);
+
+function isResultRequirementKey(key) {
+  return typeof key === 'string' && RESULT_REQUIREMENT_PATTERN.test(key);
+}
+
+function inferSourceFromRequirementKey(key) {
+  if (!key) return null;
+  const m = String(key).toLowerCase().match(/^(waec|neco|nabteb|gce|jamb)/);
+  return m ? m[1] : null;
+}
+
+function isOcrEnabled() {
+  // Default: enabled. Set FEATURE_OCR_ENABLED=false to disable.
+  return String(process.env.FEATURE_OCR_ENABLED || 'true').toLowerCase() !== 'false';
+}
+
+/**
+ * Best-effort OCR dispatch for result-type document uploads.
+ * Returns the queued ocr_job (or null if skipped / failed). Never throws —
+ * upload must always succeed even if OCR is unavailable.
+ */
+async function dispatchOcrForDocument({ document, requirement, userId, registrationId }) {
+  if (!isOcrEnabled()) return null;
+  if (!document || !document.source || !document.sitting) return null;
+  if (!requirement || !RESULT_REQUIREMENT_PATTERN.test(requirement.key)) return null;
+
+  try {
+    // Lazy require so a missing OCR module / config can't crash the submission path.
+    // eslint-disable-next-line global-require
+    const OcrService = require('../../ocr/services/ocr.service');
+    const { job } = await OcrService.createJob({
+      userId,
+      fileId: document.file_id,
+      examType: document.source && ['waec', 'neco', 'nabteb', 'gce'].includes(document.source)
+        ? document.source
+        : 'auto',
+      context: 'submission',
+      metadata: {
+        registration_id: registrationId,
+        requirement_id: document.requirement_id,
+        document_id: document.id,
+        source: document.source,
+        sitting: document.sitting
+      }
+    });
+    return job ? { id: job.id, status: job.status } : null;
+  } catch (err) {
+    // Log + swallow. Common reasons: OCR module unavailable, mime not allowed
+    // by OCR validator, file_id not found by the OCR side, etc.
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[submission] OCR auto-dispatch failed for document',
+      document && document.id,
+      err && (err.code || err.message)
+    );
+    return null;
+  }
+}
+
+function validateSourceSitting({ requirementKey, source, sitting }) {
+  const isResult = isResultRequirementKey(requirementKey);
+  const errors = [];
+
+  let normalizedSource = source ? String(source).toLowerCase().trim() : null;
+  let normalizedSitting = sitting !== undefined && sitting !== null ? Number(sitting) : null;
+
+  if (isResult) {
+    if (!normalizedSource) {
+      // Fall back to inferring from the requirement key.
+      normalizedSource = inferSourceFromRequirementKey(requirementKey);
+    }
+    if (!normalizedSource) {
+      errors.push({ field: 'source', error_code: 'source_required' });
+    } else if (!ALLOWED_SOURCES.has(normalizedSource)) {
+      errors.push({ field: 'source', error_code: 'source_invalid' });
+    }
+    if (normalizedSitting === null || Number.isNaN(normalizedSitting)) {
+      errors.push({ field: 'sitting', error_code: 'sitting_required' });
+    } else if (![1, 2].includes(normalizedSitting)) {
+      errors.push({ field: 'sitting', error_code: 'sitting_invalid' });
+    }
+  } else {
+    // For non-result requirements, source/sitting are ignored if supplied —
+    // they only apply to certificate uploads. Don't accidentally persist them.
+    normalizedSource = null;
+    normalizedSitting = null;
+  }
+
+  if (errors.length) {
+    const err = httpError(422, 'Document metadata invalid');
+    err.details = { errors };
+    throw err;
+  }
+
+  return { source: normalizedSource, sitting: normalizedSitting };
+}
+
 async function hasRoleIn(userId, set) {
   const roles = await getUserRoles(userId);
   return roles.some((r) => set.has(r));
@@ -135,6 +236,57 @@ class SubmissionService {
     return registrationDocumentModel.findByRegistration(reg.id);
   }
 
+  /**
+   * M.11 — Issue a short-lived download URL for a document the candidate owns.
+   * Lifetime defaults to 5 minutes (configurable via OCR-friendly env). Staff
+   * with `ROLE_INST_REVIEW` can also fetch URLs for any document.
+   */
+  async downloadUrlMine(userId, documentId) {
+    if (!isUuid(documentId)) throw httpError(422, 'Invalid document id');
+    const row = await registrationDocumentModel.findById(documentId);
+    if (!row) throw httpError(404, 'Document not found');
+
+    const owns = row.registration_user_id === userId;
+    if (!owns) {
+      const ok = await hasRoleIn(userId, ROLE_INST_REVIEW);
+      if (!ok) throw httpError(403, 'Forbidden');
+    }
+    if (!row.file_id) throw httpError(404, 'Document has no file');
+
+    // eslint-disable-next-line global-require
+    const FileModel = require('../../files/models/file.model');
+    // eslint-disable-next-line global-require
+    const FileService = require('../../files/services/file.service');
+    const file = await FileModel.findById(row.file_id);
+    if (!file) throw httpError(404, 'File record not found');
+
+    const expiresInSec = parseInt(process.env.JUPEB_DOC_DOWNLOAD_TTL_SEC || '300', 10);
+    let url = null;
+    if (file.provider === 's3' && file.provider_path) {
+      try {
+        url = await FileService.getSignedUrl(file.provider_path, expiresInSec);
+      } catch (err) {
+        // Fall back to the stored URL if signing fails (e.g. dev/mock buckets).
+        url = file.file_url || null;
+      }
+    } else {
+      url = file.file_url || null;
+    }
+    if (!url) throw httpError(500, 'Could not produce a download URL');
+
+    return {
+      document_id: row.id,
+      file_id: file.id,
+      file_name:
+        (file.metadata && file.metadata.original_name) ||
+        file.provider_path ||
+        null,
+      file_type: file.file_type,
+      url,
+      expires_at: new Date(Date.now() + expiresInSec * 1000).toISOString(),
+    };
+  }
+
   async attachMeDocument(userId, body) {
     const { requirement_id, file_id, registration_id } = body;
     if (!requirement_id || !file_id) {
@@ -143,16 +295,58 @@ class SubmissionService {
     if (!isUuid(requirement_id)) throw httpError(422, 'Invalid requirement_id');
     const reg = await this.resolveRegistrationForStudent(userId, registration_id || null);
     await this.assertRequirementAndFile(requirement_id, file_id, userId);
-    const existing = await registrationDocumentModel.findCurrentSubmittedOrAccepted(reg.id, requirement_id);
-    if (existing) {
-      await registrationDocumentModel.markReplaced(existing.id);
+
+    // M.4 — pull the requirement so we can decide if (source, sitting) are needed.
+    const requirement = await documentRequirementModel.findById(requirement_id);
+    if (!requirement) throw httpError(404, 'Requirement not found');
+
+    const { source, sitting } = validateSourceSitting({
+      requirementKey: requirement.key,
+      source: body.source,
+      sitting: body.sitting
+    });
+
+    // For result-type uploads, two distinct sittings are valid concurrently.
+    // We only mark the prior row replaced if it shares the same (source, sitting).
+    if (source && sitting) {
+      const sameTuple = await registrationDocumentModel.findCurrentBySourceSitting(
+        reg.id,
+        source,
+        sitting
+      );
+      if (sameTuple) {
+        const err = httpError(409, 'Result already uploaded for this source and sitting. PATCH /me/documents/:id to replace.');
+        err.details = {
+          error_code: 'duplicate_source_sitting',
+          existing_document_id: sameTuple.id
+        };
+        throw err;
+      }
+    } else {
+      const existing = await registrationDocumentModel.findCurrentSubmittedOrAccepted(reg.id, requirement_id);
+      if (existing) {
+        await registrationDocumentModel.markReplaced(existing.id);
+      }
     }
-    return registrationDocumentModel.create({
+
+    const document = await registrationDocumentModel.create({
       registration_id: reg.id,
       requirement_id,
       file_id,
       status: 'submitted',
+      source,
+      sitting
     });
+
+    // M.6 — auto-trigger OCR for result-type uploads (best effort).
+    const ocr_job = await dispatchOcrForDocument({
+      document,
+      requirement,
+      userId,
+      registrationId: reg.id
+    });
+
+    return ocr_job ? { ...document, ocr_job } : document;
   }
 
   async patchMeDocument(userId, documentId, body) {
@@ -169,13 +363,35 @@ class SubmissionService {
     }
     if (!body.file_id) throw httpError(422, 'file_id is required');
     await this.assertRequirementAndFile(row.requirement_id, body.file_id, userId);
+
+    // M.4 — carry source/sitting forward from the prior row unless the caller
+    // explicitly overrides. Re-validate either way.
+    const requirement = await documentRequirementModel.findById(row.requirement_id);
+    const { source, sitting } = validateSourceSitting({
+      requirementKey: requirement ? requirement.key : null,
+      source: body.source !== undefined ? body.source : row.source,
+      sitting: body.sitting !== undefined ? body.sitting : row.sitting
+    });
+
     await registrationDocumentModel.markReplaced(row.id);
-    return registrationDocumentModel.create({
+    const document = await registrationDocumentModel.create({
       registration_id: row.registration_id,
       requirement_id: row.requirement_id,
       file_id: body.file_id,
       status: 'submitted',
+      source,
+      sitting
     });
+
+    // M.6 — re-trigger OCR on replace.
+    const ocr_job = await dispatchOcrForDocument({
+      document,
+      requirement,
+      userId,
+      registrationId: row.registration_id
+    });
+
+    return ocr_job ? { ...document, ocr_job } : document;
   }
 
   async validateCompleteness(userId, registrationIdOpt) {

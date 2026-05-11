@@ -1,3 +1,4 @@
+const pool = require('../../../db/pool');
 const ninVerificationModel = require('../models/nin-verification.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationModel = require('../models/registration.model');
@@ -115,6 +116,16 @@ class IdentityService {
       }
     }
 
+    // Cache: while an earlier verified row exists for this NIN and its
+    // linked registration hasn't reached a terminal status (i.e.
+    // cleared_at is still null), reuse it instead of paying another
+    // provider call. The cache is cleared when the registration reaches
+    // approved/rejected/withdrawn (see RegistrationService transitionStatus).
+    const cached = await ninVerificationModel.findActiveCacheByNinHash(ninHash);
+    if (cached) {
+      return publicVerifyResponse(cached);
+    }
+
     const provider = ninAdapter.getProvider();
     const adapterResult = await ninAdapter.verifyNin(normalized);
 
@@ -192,6 +203,32 @@ class IdentityService {
         provider_reference: adapterResult.provider_reference || existing.provider_reference,
       });
       await emitNinResolved(verificationId, 'verified');
+
+      // M.12 — best-effort write-through to any registration linked to this verification.
+      try {
+        const linked = await pool.query(
+          `SELECT id FROM jupeb_registrations WHERE nin_verification_id = $1`,
+          [verificationId]
+        );
+        if (linked.rows.length) {
+          // eslint-disable-next-line global-require
+          const { applyNinPayloadToRegistration } = require('./nin-write-through.service');
+          for (const reg of linked.rows) {
+            await applyNinPayloadToRegistration({
+              registrationId: reg.id,
+              ninPayload: row.response_payload || {},
+              userId,
+            }).catch((e) => {
+              // eslint-disable-next-line no-console
+              console.warn('[markVerified] write-through failed for registration', reg.id, e && e.message);
+            });
+          }
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[markVerified] write-through query failed:', err && err.message);
+      }
+
       return publicVerifyResponse(row);
     }
     if (adapterResult.outcome === 'failed') {
@@ -252,7 +289,16 @@ class IdentityService {
       const minQuality = Number(process.env.JUPEB_FACE_MIN_QUALITY);
       const score = Number(body.quality_score);
       if (Number.isFinite(minQuality) && minQuality > 0 && Number.isFinite(score) && score < minQuality) {
-        throw httpError(422, `Face capture quality_score ${score} is below threshold ${minQuality}`);
+        const err = httpError(
+          422,
+          `Face capture quality_score ${score} is below threshold ${minQuality}`
+        );
+        err.details = {
+          error_code: 'quality_too_low',
+          quality_score: score,
+          minimum: minQuality,
+        };
+        throw err;
       }
     }
     const capturedAt = body.captured_at ? new Date(body.captured_at) : new Date();

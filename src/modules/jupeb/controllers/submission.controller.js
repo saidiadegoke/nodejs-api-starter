@@ -76,7 +76,7 @@ class SubmissionController {
       const row = await submissionService.attachMeDocument(req.user.user_id, req.body);
       return sendSuccess(res, row, 'Document attached', CREATED);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -85,7 +85,19 @@ class SubmissionController {
       const row = await submissionService.patchMeDocument(req.user.user_id, req.params.documentId, req.body);
       return sendSuccess(res, row, 'Document replaced');
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
+  static async downloadUrlMine(req, res) {
+    try {
+      const data = await submissionService.downloadUrlMine(
+        req.user.user_id,
+        req.params.documentId
+      );
+      return sendSuccess(res, data);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 

@@ -139,13 +139,17 @@ describe('GET /registration/me/profile', () => {
 
     process.env.JUPEB_NIN_FORCE_UNAVAILABLE = '1';
     const nin = `9${String(Date.now()).slice(-10)}`;
+    // register-with-code copies intake_payload.phone onto users.phone,
+    // which is uniquely constrained. Use a per-run value so reruns against
+    // the same DB don't collide.
+    const intakePhone = `+234800${String(Date.now()).slice(-7)}`;
     const verifyRes = await request(app)
       .post('/identity/nin/verify')
       .set('Authorization', `Bearer ${token}`)
       .send({
         nin,
         idempotency_key: `idem-profile-pending-${Date.now()}`,
-        intake_payload: { name: 'Adebayo Salami', phone: '+2348000000001' },
+        intake_payload: { name: 'Adebayo Salami', phone: intakePhone },
       });
     delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
     const ninVerificationId = verifyRes.body.data.verification_id;
@@ -159,17 +163,25 @@ describe('GET /registration/me/profile', () => {
         subject_combination_id: subjectCombinationId,
         nin_verification_id: ninVerificationId,
       });
-    await request(app)
-      .post('/registration/me/claim-code')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ institution_issued_code: createReg.body.data.institution_issued_code });
+    // Claim as a fresh student via register-with-code so the user is born
+    // out of the NIN intake (no admin phone leaking into contact_information).
+    const stamp = Date.now() + Math.floor(Math.random() * 1000);
+    const reg = await request(app)
+      .post('/auth/register-with-code')
+      .send({
+        code: createReg.body.data.institution_issued_code,
+        password: 'Strong@Password1',
+        email: `prp-pending-${stamp}@example.com`,
+      });
+    expect(reg.status).toBe(201);
+    const studentToken = reg.body.data.access_token;
 
     const res = await request(app)
       .get('/registration/me/profile')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${studentToken}`);
     expect(res.status).toBe(200);
     expect(res.body.data.nin_verification.status).toBe('pending');
-    expect(res.body.data.contact_information.phone).toBe('+2348000000001');
+    expect(res.body.data.contact_information.phone).toBe(intakePhone);
     expect(res.body.data.candidate.full_name).toMatch(/Adebayo Salami/);
   });
 });

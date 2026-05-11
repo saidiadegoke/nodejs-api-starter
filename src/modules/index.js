@@ -13,4 +13,5 @@ module.exports = {
   admin: require('./admin/routes'),
   'api-keys': require('./api-keys/routes'),
   webhooks: require('./webhooks/routes'),
+  ocr: require('./ocr/routes'),
 };

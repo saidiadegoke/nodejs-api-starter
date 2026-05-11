@@ -18,6 +18,7 @@ const webhooksRoutes = require('../modules/webhooks/routes');
 const paymentsRoutes = require('../modules/payments/routes');
 const postsRoutes = require('../modules/posts/routes');
 const jupebRoutes = require('../modules/jupeb/routes');
+const ocrRoutes = require('../modules/ocr/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -62,7 +63,8 @@ router.get('/', (req, res) => {
       jupeb006Finance: '/docs/jupeb-006-finance',
       jupeb007Academic: '/docs/jupeb-007-academic',
       jupeb008Dashboard: '/docs/jupeb-008-dashboard',
-      jupeb009InstitutionScope: '/docs/jupeb-009-institution-scope'
+      jupeb009InstitutionScope: '/docs/jupeb-009-institution-scope',
+      ocr: '/docs/ocr'
     },
     endpoints: {
       auth: '/auth',
@@ -77,6 +79,7 @@ router.get('/', (req, res) => {
       webhooks: '/webhooks',
       payments: '/payments',
       posts: '/posts',
+      ocr: '/ocr',
       catalog: '/catalog',
       sessions: '/sessions',
       identity: '/identity',
@@ -115,6 +118,7 @@ router.use('/api-keys', apiKeysRoutes);
 router.use('/webhooks', webhooksRoutes);
 router.use('/payments', paymentsRoutes);
 router.use('/posts', postsRoutes);
+router.use('/ocr', ocrRoutes);
 
 /**
  * Swagger API Documentation
@@ -162,7 +166,8 @@ const swaggerDocs = {
   'jupeb-008-dashboard': YAML.load(fs.readFileSync(path.join(docsDir, 'jupeb-008-dashboard-swagger.yaml'), 'utf8')),
   'jupeb-009-institution-scope': YAML.load(
     fs.readFileSync(path.join(docsDir, 'jupeb-009-institution-scope-swagger.yaml'), 'utf8')
-  )
+  ),
+  ocr: YAML.load(fs.readFileSync(path.join(docsDir, 'ocr-swagger.yaml'), 'utf8'))
 };
 
 Object.keys(swaggerDocs).forEach((key) => {
