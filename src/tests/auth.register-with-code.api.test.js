@@ -30,8 +30,10 @@ describe('POST /auth/register-with-code (M.3)', () => {
 
   function fresh(tag) {
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
+    // Emails are lowercased by registerWithCode before storage; build the
+    // helper output already-lowercased so equality assertions hold.
     return {
-      email: `rwc-${tag}-${stamp}@example.com`,
+      email: `rwc-${String(tag).toLowerCase()}-${stamp}@example.com`,
       phone: `+234801${String(stamp).slice(-7)}`,
     };
   }

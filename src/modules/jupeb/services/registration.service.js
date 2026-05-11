@@ -16,6 +16,7 @@ const {
   effectiveInstitutionListUniversityId,
 } = require('../utils/institution-scope');
 const { emitRegistrationApproved } = require('./registration-events.service');
+const jupebMailer = require('./jupeb-mailer.service');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -227,6 +228,17 @@ async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) 
       );
     }
   }
+
+  // Fire lifecycle emails for rejected / withdrawn here. Approved is
+  // handled separately in emitRegistrationApproved (which also writes
+  // an in-app notification + webhook). All sends are best-effort and
+  // deferred via setImmediate so the DB lookups in the mailer never
+  // share the request-handler's microtask tail.
+  if (toStatus === 'rejected') {
+    setImmediate(() => { jupebMailer.sendRegistrationRejected(reg.id, reason); });
+  } else if (toStatus === 'withdrawn') {
+    setImmediate(() => { jupebMailer.sendRegistrationWithdrawn(reg.id, reason); });
+  }
   return updated;
 }
 
@@ -301,6 +313,14 @@ class RegistrationService {
           console.warn('[institutionCreate] NIN write-through failed for', row.id, err && err.message);
         }
       }
+
+      // Send the candidate the registration code via email if we know
+      // their intake email. Fire-and-forget — no-ops silently when SMTP
+      // isn't configured or no email is on the verification's intake.
+      // Deferred via setImmediate so the unawaited promise's DB queries
+      // don't share the express response's microtask tail (which
+      // measurably delays response in async-hooks-instrumented stacks).
+      setImmediate(() => { jupebMailer.sendCodeIssued(row.id); });
 
       return serializeRegistration(row);
     } catch (e) {

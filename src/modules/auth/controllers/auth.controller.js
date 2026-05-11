@@ -185,59 +185,139 @@ class AuthController {
   }
 
   /**
-   * Verify phone number
+   * Verify a 6-digit OTP (email or SMS — both flow through the same
+   * code path). Accepts the identifier on either `identifier`, `email`,
+   * or `phone` for backward compatibility with the legacy `verify-phone`
+   * payload. Returns 200 + { verified: true, user_id, channel }.
    */
   static async verifyPhone(req, res) {
     try {
-      const pool = require('../../../db/pool');
-      const { phone, otp } = req.body;
-      
-      if (!phone || !otp) {
-        return sendError(res, 'Phone and OTP are required', BAD_REQUEST);
+      const identifier = AuthController._otpIdentifier(req.body);
+      if (!identifier) {
+        return sendError(res, 'identifier (email or phone) is required', BAD_REQUEST);
       }
-      
-      // In production, verify OTP from SMS service or database
-      // For testing/development, accept '123456' as valid OTP
-      if (otp === '123456') {
-        // Mark phone as verified
-        const result = await pool.query(
-          `UPDATE users SET phone_verified = true, updated_at = NOW() WHERE phone = $1 RETURNING id`,
-          [phone]
-        );
-        
-        if (result.rows.length > 0) {
-          sendSuccess(res, { 
-            verified: true, 
-            user_id: result.rows[0].id 
-          }, 'Phone number verified successfully', OK);
-        } else {
-          sendError(res, 'User not found', BAD_REQUEST);
-        }
-      } else {
-        sendError(res, 'Invalid OTP', BAD_REQUEST);
+      const { otp } = req.body;
+      if (!otp) {
+        return sendError(res, 'OTP is required', BAD_REQUEST);
       }
+      const AuthModel = require('../models/auth.model');
+      const user = await AuthModel.findByIdentifier(identifier);
+      if (!user) {
+        // Don't leak existence — mirror an invalid-OTP response.
+        return sendError(res, 'Invalid verification code', BAD_REQUEST);
+      }
+      const otpService = require('../services/otp.service');
+      const result = await otpService.verifyOtp(user.id, otp);
+      return sendSuccess(
+        res,
+        { verified: true, user_id: user.id, channel: result.channel },
+        'Verification successful',
+        OK
+      );
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
   }
 
   /**
-   * Resend OTP
+   * Issue a fresh 6-digit OTP for the user and dispatch it via the
+   * configured channel(s). Channel selection (in priority order):
+   *   1. request body `channel: 'email' | 'sms' | 'both'`
+   *   2. env `OTP_CHANNEL`
+   *   3. default `'email'`
+   *
+   * Response shape:
+   *   { sent, channels: ['email'?, 'sms'?], expires_at, masked_recipient }
+   *
+   * Never leaks whether the user exists — when no account matches, the
+   * handler still returns 200 with a fake-mask response so an attacker
+   * can't enumerate registered accounts.
    */
   static async resendOtp(req, res) {
     try {
-      const { phone } = req.body;
-      
-      // Mock implementation - would send actual SMS
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-      
-      sendSuccess(res, { 
-        sent: true, 
-        expires_at: expiresAt.toISOString() 
-      }, 'OTP sent successfully', OK);
+      const identifier = AuthController._otpIdentifier(req.body);
+      if (!identifier) {
+        return sendError(res, 'identifier (email or phone) is required', BAD_REQUEST);
+      }
+      const requestedChannel = req.body && req.body.channel;
+      const AuthModel = require('../models/auth.model');
+      const user = await AuthModel.findByIdentifier(identifier);
+
+      // Account-enumeration guard: same response shape whether the user
+      // exists or not. We still do the lookup but bail with a fake mask.
+      if (!user) {
+        const ttlMs = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
+        return sendSuccess(
+          res,
+          {
+            sent: true,
+            channels: [(requestedChannel || process.env.OTP_CHANNEL || 'email')],
+            expires_at: new Date(Date.now() + ttlMs).toISOString(),
+            masked_recipient: AuthController._maskRecipient(identifier),
+          },
+          'Verification code sent',
+          OK
+        );
+      }
+
+      const otpService = require('../services/otp.service');
+      const issued = await otpService.issueOtp(user.id, {
+        channel: requestedChannel,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      return sendSuccess(
+        res,
+        {
+          sent: true,
+          channels: issued.channels,
+          expires_at: issued.expires_at,
+          masked_recipient: AuthController._maskRecipient(
+            issued.channels.includes('email') ? user.email : user.phone
+          ),
+          // Dispatch outcomes per channel — useful for debugging in dev,
+          // never reveals account existence. In test mode, the raw code
+          // is surfaced too (otp.service guards on NODE_ENV).
+          dispatches: issued.dispatches,
+          ...(issued.code ? { code: issued.code } : {}),
+        },
+        'Verification code sent',
+        OK
+      );
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
+  }
+
+  /**
+   * Pull the OTP identifier (email or phone) from a request body that
+   * may carry it under `identifier`, `email`, or the legacy `phone`.
+   */
+  static _otpIdentifier(body) {
+    if (!body || typeof body !== 'object') return null;
+    const raw = body.identifier || body.email || body.phone;
+    return raw ? String(raw).trim() : null;
+  }
+
+  /**
+   * Mask an email or phone for safe response logging. Email: keep first
+   * 2 + last 1 of local part. Phone: keep first 4 + last 2.
+   */
+  static _maskRecipient(value) {
+    if (!value) return '***';
+    const s = String(value);
+    if (s.includes('@')) {
+      return s.replace(/^(.{1,2})[^@]*(@.*)$/, '$1***$2');
+    }
+    if (s.length > 6) {
+      return `${s.slice(0, 4)}***${s.slice(-2)}`;
+    }
+    return '***';
   }
 
   /**

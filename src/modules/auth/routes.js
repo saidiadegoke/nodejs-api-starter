@@ -122,12 +122,12 @@ router.post('/logout', requireAuth, AuthController.logout);
 router.post(
   '/verify-phone',
   [
-    body('phone')
-      .notEmpty()
-      .withMessage('Phone number is required')
-      .matches(/^(\+)?\d{8,20}$/)
-      .withMessage('Valid phone number format required (8-20 digits, optional + prefix)'),
-    body('otp').notEmpty().withMessage('OTP is required'),
+    // Either an `identifier` (email | phone), or the legacy `phone`
+    // field, must be present. Validate inside the handler so we can
+    // accept either shape without a brittle express-validator OR chain.
+    body('otp')
+      .notEmpty().withMessage('OTP is required')
+      .matches(/^\d{6}$/).withMessage('OTP must be 6 digits'),
     validate,
   ],
   AuthController.verifyPhone
@@ -135,17 +135,15 @@ router.post(
 
 /**
  * @route   POST /api/auth/resend-otp
- * @desc    Resend OTP
+ * @desc    Issue a fresh 6-digit OTP and dispatch it via the configured
+ *          channel (email | sms | both — see OTP_CHANNEL). Accepts either
+ *          `identifier` (email or phone), or the legacy `phone` field.
  * @access  Public
  */
 router.post(
   '/resend-otp',
   [
-    body('phone')
-      .notEmpty()
-      .withMessage('Phone number is required')
-      .matches(/^(\+)?\d{8,20}$/)
-      .withMessage('Valid phone number format required (8-20 digits, optional + prefix)'),
+    // Identifier validated in the handler (see verify-phone note above).
     validate,
   ],
   AuthController.resendOtp

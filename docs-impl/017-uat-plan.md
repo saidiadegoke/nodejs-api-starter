@@ -82,6 +82,27 @@ JUPEB_NIN_PROVIDER=mock
 # SPEEDYSMS_API_KEY=sk_live_your_key
 # SPEEDYSMS_API_BASE_URL=https://api.speedysms.com.ng
 # SPEEDYSMS_NIN_TIMEOUT_MS=15000
+
+# SMTP — drives every email send. sendEmail() short-circuits to a no-op
+# when SMTP_HOST or SMTP_USER is unset (so dev / CI without creds is
+# silent), AND when NODE_ENV=test (override with JUPEB_EMAIL_FORCE=1).
+SMTP_HOST=smtp.example.com
+SMTP_PORT=465                # 465 → secure:true; 587 → STARTTLS
+SMTP_USER=notify@example.com
+SMTP_PASSWORD=<smtp_password>
+FROM_EMAIL=notify@example.com
+APP_NAME=Registration Portal # shows up in subjects and template headers
+
+# OTP — short numeric codes used by /auth/resend-otp + /auth/verify-phone.
+# Channel resolves from (body.channel) → OTP_CHANNEL → 'email'.
+# OTP_CHANNEL=email                          # email | sms | both
+# OTP_TTL_MINUTES=10
+# OTP_SMS_PROVIDER=mock                      # mock | speedysms
+# SPEEDYSMS_SENDER_ID=OTP                    # 11-char max sender id
+# SPEEDYSMS_SMS_TIMEOUT_MS=15000
+
+# Email verification — TTL for the link emitted by /auth/send-verification.
+# EMAIL_VERIFICATION_TTL_HOURS=24
 ```
 
 For convenience, define a shell alias so the SQL snippets in this doc
@@ -98,12 +119,19 @@ npm run migrate
 npm run seed
 ```
 
-This applies migrations `001..009` and seed files `001..005`. Migrations
-`008_jupeb_nin_cache_cleared_at.sql` (NIN cache invalidation) and
-`009_jupeb_registration_documents_multi_sitting.sql` (relaxes the active
-document uniqueness to allow sitting=1 and sitting=2 to coexist) were
-added with the NIN-flow + multi-sitting work. The demo seed
-(`005_seed_jupeb_demo_data.sql`) creates:
+This applies migrations `001..011` and seed files `001..005`. Recent
+migrations added with the NIN / auth work:
+
+- `008_jupeb_nin_cache_cleared_at.sql` — NIN cache invalidation (PII
+  purge on terminal registration status).
+- `009_jupeb_registration_documents_multi_sitting.sql` — relaxes the
+  one-active-document index so sitting=1 and sitting=2 can coexist.
+- `010_users_email_verification.sql` — `email_verification_token_hash`,
+  `email_verification_expires_at`, `email_verified_at` on `users`.
+- `011_otp_codes.sql` — dedicated `otp_codes` table (parallel to
+  `password_resets`) for the new 6-digit OTP flow.
+
+The demo seed (`005_seed_jupeb_demo_data.sql`) creates:
 
 - 2 sessions (`2024/2025` closed, `2025/2026` open)
 - 12 universities (UNILAG, OAU, UI, FUTMINNA, FUTA, UNILORIN, OOU, CU,
@@ -1167,7 +1195,257 @@ documented in `jupeb-student.middleware.js`.)
 
 ---
 
-## 16. Test matrix at a glance
+## 16. OTP — resend + verify (`/auth/resend-otp` + `/auth/verify-phone`)
+
+These endpoints now issue real codes (no more hard-coded `123456`):
+
+- `POST /auth/resend-otp` generates a cryptographically strong 6-digit
+  code (`crypto.randomInt`), stores **only** its sha256 hash in the
+  `otp_codes` table, and dispatches via the resolved channel.
+- `POST /auth/verify-phone` validates the supplied code against the
+  stored hash, increments `attempt_count` on misses, flips
+  `users.email_verified` and/or `users.phone_verified` on success.
+
+**Channel resolution priority:** request body `channel` → env
+`OTP_CHANNEL` → default `'email'`. Allowed values: `email`, `sms`, `both`.
+
+**Test-mode passthrough.** When `NODE_ENV=test`, the resend response
+includes the raw `code` in its body so integration tests can assert
+the verify-side mechanics. Outside of test mode that field is absent.
+For UAT (production-like dev), inspect the user's inbox / SMS gateway
+logs to retrieve the code.
+
+### TC-16.1 — Seed a fresh student for OTP testing
+
+```bash
+# Re-use $STUDENT from §3 if their email_verified is still false. Else
+# spin up a fresh one via /auth/register-with-code (§3.1).
+EMAIL=$(curl -s -H "Authorization: Bearer $STUDENT" \
+  $BASE/users/me | jq -r '.data.email')
+echo "student email = $EMAIL"
+```
+
+### TC-16.2 — Default channel (email) issues a code
+
+```bash
+ISSUE=$(curl -s -X POST $BASE/auth/resend-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'"}')
+echo $ISSUE | jq '.data | {sent, channels, expires_at, masked_recipient}'
+```
+
+**Expected:**
+- `sent: true`
+- `channels: ["email"]`
+- `expires_at` is ~10 minutes from now
+- `masked_recipient` matches the `xx***@domain` pattern
+
+The actual code arrives in the student's inbox (subject:
+`<APP_NAME> — your verification code: <CODE>`). The email body shows
+the code prominently with the TTL.
+
+### TC-16.3 — Verify the issued code
+
+```bash
+# Replace 123456 with the actual code from the email
+curl -s -X POST $BASE/auth/verify-phone \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","otp":"<6-digit-code>"}' \
+  | jq '.data | {verified, channel}'
+# Expected: { "verified": true, "channel": "email" }
+
+# Confirm the flag flipped:
+uatpsql -c "SELECT email_verified, email_verified_at FROM users WHERE email = '$EMAIL'"
+# Expected: email_verified=t, email_verified_at NOT NULL
+```
+
+### TC-16.4 — `body.channel` overrides env
+
+```bash
+# Force SMS even if OTP_CHANNEL=email. The mock SMS provider logs to
+# the server console; with OTP_SMS_PROVIDER=speedysms the code goes
+# out as an actual text message.
+curl -s -X POST $BASE/auth/resend-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","channel":"sms"}' \
+  | jq '.data | {channels, dispatches: .dispatches[0] | {channel, outcome, provider}}'
+# Expected: channels=["sms"], dispatches.outcome="sent" (mock provider)
+```
+
+### TC-16.5 — `channel: "both"` fans out
+
+```bash
+curl -s -X POST $BASE/auth/resend-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","channel":"both"}' \
+  | jq '.data | {channels, n_dispatches: (.dispatches | length)}'
+# Expected: channels=["email","sms"], n_dispatches=2
+```
+
+### TC-16.6 — Resend invalidates the prior code
+
+```bash
+# Issue twice in a row, then check only one row is active
+curl -s -X POST $BASE/auth/resend-otp -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'"}' > /dev/null
+curl -s -X POST $BASE/auth/resend-otp -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'"}' > /dev/null
+
+uatpsql -c "SELECT COUNT(*) FROM otp_codes
+            WHERE email = '$EMAIL' AND verified_at IS NULL"
+# Expected: 1 (resend purges older active rows for the same user)
+```
+
+### TC-16.7 — Account-enumeration safety
+
+```bash
+# Unknown identifier returns the SAME shape as a real one — no 404 leak.
+curl -s -X POST $BASE/auth/resend-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"definitely-not-a-user@example.com"}' \
+  | jq '.data | {sent, channels, masked_recipient}'
+# Expected: sent=true, channels=["email"], masked_recipient="de***@example.com"
+# (No otp_codes row is actually written.)
+```
+
+### TC-16.8 — Wrong code returns 400 + increments attempt_count
+
+```bash
+curl -s -i -X POST $BASE/auth/verify-phone \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","otp":"000000"}' | head -1
+# Expected: HTTP/1.1 400
+# Body details.error_code === 'invalid_otp'
+
+uatpsql -c "SELECT attempt_count FROM otp_codes
+            WHERE email = '$EMAIL' AND verified_at IS NULL
+            ORDER BY created_at DESC LIMIT 1"
+# Expected: attempt_count = 1
+```
+
+### TC-16.9 — Expired code returns 410
+
+```bash
+# Force expiry via SQL on the latest active row
+uatpsql -c "UPDATE otp_codes SET expires_at = NOW() - INTERVAL '1 minute'
+            WHERE email = '$EMAIL' AND verified_at IS NULL"
+
+curl -s -i -X POST $BASE/auth/verify-phone \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","otp":"123456"}' | head -1
+# Expected: HTTP/1.1 410
+# Body details.error_code === 'otp_expired'
+```
+
+### TC-16.10 — Verify with no active OTP returns 410
+
+```bash
+# After §16.9 the row is past expiry but still present; mark it
+# verified so the verify endpoint sees no active row:
+uatpsql -c "UPDATE otp_codes SET verified_at = NOW()
+            WHERE email = '$EMAIL'"
+
+curl -s -i -X POST $BASE/auth/verify-phone \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","otp":"123456"}' | head -1
+# Expected: HTTP/1.1 410
+# Body details.error_code === 'otp_expired_or_missing'
+```
+
+### TC-16.11 — 5 wrong attempts triggers the cap
+
+```bash
+# Re-issue and burn 5 wrong attempts
+curl -s -X POST $BASE/auth/resend-otp -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'"}' > /dev/null
+for i in 1 2 3 4 5; do
+  curl -s -X POST $BASE/auth/verify-phone -H 'Content-Type: application/json' \
+    -d '{"identifier":"'"$EMAIL"'","otp":"000000"}' > /dev/null
+done
+# 6th attempt should be capped:
+curl -s -i -X POST $BASE/auth/verify-phone -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$EMAIL"'","otp":"000000"}' | head -1
+# Expected: HTTP/1.1 429
+# Body details.error_code === 'too_many_attempts'
+```
+
+**Pass criteria for §16:** TC-16.2 issues a row, TC-16.3 verifies +
+flips `email_verified`, TC-16.4/16.5 honor explicit channel selection,
+TC-16.6 keeps exactly one active row, TC-16.7 doesn't leak existence,
+TC-16.8 increments attempt_count, TC-16.9 returns 410 on expiry,
+TC-16.10 returns 410 when none active, TC-16.11 caps at 5 wrong tries.
+
+---
+
+## 17. Email delivery — lifecycle send-site smoke
+
+Every email send goes through `src/shared/utils/sendEmail.js`, which
+short-circuits to a no-op when SMTP isn't configured or when
+`NODE_ENV=test`. With SMTP set (§0.2) and `NODE_ENV=development`, each
+trigger below puts a real message in the recipient's inbox.
+
+| Trigger | Template | Recipient | Verify by |
+|---|---|---|---|
+| `POST /auth/register-with-code` (§3.1) | `jupeb-welcome-student.html` | new student `users.email` | inbox: subject `Welcome to <APP_NAME>` |
+| `POST /registration/institution/registrations` (§2.2) | `jupeb-code-issued.html` | NIN intake email | inbox: subject `… your JUPEB registration code` |
+| `POST /…/registrations/:id/approve` (§12.1) | `jupeb-registration-approved.html` | student | inbox: subject `… your JUPEB registration was approved` |
+| `POST /…/registrations/:id/reject` (§12-style reject) | `jupeb-registration-rejected.html` | student | inbox: subject `… was not approved`, body includes the rejection reason |
+| `POST /…/registrations/:id/withdraw` (§12.2) | `jupeb-registration-withdrawn.html` | student | inbox: subject `… was withdrawn`, body includes the withdrawal reason (if supplied) |
+| `POST /auth/forgot-password` | `forgot-password.html` | identified user | inbox: subject `Reset Your <APP_NAME> Password` |
+| `POST /auth/reset-password` (on success) | `password-reset-success.html` | identified user | inbox: subject `Password Reset Successful - <APP_NAME>` |
+| `POST /auth/resend-otp` (channel=email|both) | `otp-code.html` | identified user | inbox: subject `… your verification code: <code>` |
+| (orphan, not yet wired) | `email-verification.html` | — | `/auth/send-verification` flow lands when wired |
+| (orphan, not yet wired) | `resend-verification.html` | — | `/auth/resend-verification` flow lands when wired |
+
+### TC-17.1 — Each lifecycle trigger drops one mail
+
+Walk a single registration through code-issued → claim → approve and
+confirm the candidate's inbox has 3 messages (code-issued + welcome +
+approved):
+
+```bash
+# 1. Code issued — TC-2.2 already creates this (intake_payload.email
+#    needs to be set on the NIN verification for the mail to land).
+# 2. Welcome — TC-3.1 already creates this.
+# 3. Approved — TC-12.1 already creates this.
+
+# After all three, the candidate's inbox should hold 3 messages from
+# notify@<your-smtp>. Open each and confirm subject + body match the
+# table above.
+```
+
+### TC-17.2 — `SMTP_HOST=""` silently skips (no worker spawn)
+
+```bash
+# Stop the server, unset SMTP_HOST, restart, then trigger any send:
+curl -s -X POST $BASE/auth/forgot-password \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"admin@example.com"}'
+# Expected: 200 with the usual masked response.
+# Server logs: NO worker errors, NO connect attempts.
+# Restore SMTP_HOST when done.
+```
+
+### TC-17.3 — Port-derived `secure` (regression check)
+
+```bash
+# Confirm src/shared/utils/emailWorker.js picks secure from the port:
+grep -n "secure:" src/shared/utils/emailWorker.js
+# Expected match: `secure: SMTP_PORT === 465`
+```
+
+Manually flip `SMTP_PORT` between 465 and 587 (with matching server
+config) and re-send a forgot-password mail to confirm both ports
+deliver. Pre-fix, port 587 failed at the TLS handshake.
+
+**Pass criteria for §17:** TC-17.1 produces three correctly-templated
+messages, TC-17.2 confirms the no-SMTP short-circuit works without
+log spam, TC-17.3 confirms the port-derived `secure` flag is in
+place.
+
+---
+
+## 18. Test matrix at a glance
 
 | # | Module | Endpoint(s) | Personas | Expected outcome |
 |---|---|---|---|---|
@@ -1186,8 +1464,10 @@ documented in `jupeb-student.middleware.js`.)
 | §13 | Demo | (above) | All | Seed dataset is queryable |
 | §14 | Notifications | `/notifications/unread-count` | Any auth user | Count returned |
 | §15 | RBAC | many | Anonymous + Student | 401 / 403 enforcement |
+| §16 | OTP | `/auth/resend-otp`, `/auth/verify-phone` | Any user | 6-digit code issued via email / sms / both; hashed in DB; verify flips `email_verified`/`phone_verified`; expiry, retry-cap, account-enumeration safety |
+| §17 | Email delivery | `sendEmail` callers | All | Each lifecycle trigger drops the correct template; SMTP-unset silently skips; port-derived `secure:` |
 
-## 17. Sign-off checklist
+## 19. Sign-off checklist
 
 - [ ] §0 environment up; migrations + seeds run
 - [ ] §1 catalog smoke
@@ -1205,6 +1485,8 @@ documented in `jupeb-student.middleware.js`.)
 - [ ] §13 demo data smoke
 - [ ] §14 notifications unread-count
 - [ ] §15 401 + 403 sweep
+- [ ] §16 OTP — resend (email/sms/both) + verify + retry-cap + expiry
+- [ ] §17 Email delivery — all 3 lifecycle templates land in candidate's inbox
 
 When every box is checked, the registration end-to-end can be
 considered ready for stakeholder demo.
@@ -1254,6 +1536,20 @@ SELECT v.id, v.status, v.provider, v.cleared_at,
 SELECT id, provider, status, provider_reference, verified_at, cleared_at
   FROM jupeb_nin_verifications
  WHERE id = '<verification-id>';
+
+-- Latest active OTP for a given email (raw code is never stored —
+-- only the sha256 hash; rows with verified_at NULL and expires_at in
+-- the future are still active)
+SELECT id, channel, expires_at, attempt_count, verified_at, created_at
+  FROM otp_codes
+ WHERE email = '<email>'
+ ORDER BY created_at DESC LIMIT 5;
+
+-- User-side verification flags
+SELECT id, email, email_verified, email_verified_at,
+       phone_verified
+  FROM users
+ WHERE email = '<email>' OR phone = '<phone>';
 ```
 
 ## Appendix B — quick reset between runs
