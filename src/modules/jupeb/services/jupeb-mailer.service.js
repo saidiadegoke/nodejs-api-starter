@@ -232,10 +232,38 @@ async function sendRegistrationWithdrawn(registrationId, reason) {
   );
 }
 
+/**
+ * Sent when the registrar finalizes a session and a matric number is
+ * assigned to the student's registration. From this point on, the
+ * student's only valid login identifier is the matric number.
+ */
+async function sendMatricAssigned(registrationId) {
+  const recipient = await loadRecipient(registrationId);
+  if (!recipient || !recipient.candidateNumber) return;
+  return fireAndForget(
+    sendEmail({
+      to: recipient.email,
+      subject: `${appName()} — your JUPEB candidate number is ${recipient.candidateNumber}`,
+      templateFile: 'jupeb-matric-assigned.html',
+      placeholders: {
+        appName: appName(),
+        firstName: recipient.firstName,
+        universityName: recipient.universityName,
+        candidateNumber: recipient.candidateNumber,
+        dashboardUrl: dashboardUrl(),
+        email: recipient.email,
+        year: year(),
+      },
+    }),
+    'matric-assigned'
+  );
+}
+
 module.exports = {
   sendCodeIssued,
   sendWelcomeStudent,
   sendRegistrationApproved,
   sendRegistrationRejected,
   sendRegistrationWithdrawn,
+  sendMatricAssigned,
 };

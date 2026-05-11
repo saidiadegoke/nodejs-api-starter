@@ -75,7 +75,34 @@ class AuthController {
   }
 
   /**
-   * M.9 — Public code-status lookup (no auth) for figma `log in 11` pre-validation
+   * Public code-status lookup (M.9 — figma `log in 11` pre-validation).
+   *
+   * Tells the mobile / web app, given a code typed by the student:
+   *   1. Is the code valid and still claimable? → show "create account"
+   *   2. Has it already been used to create an account? → show "log in"
+   *      (with the account's masked email/phone so the client can
+   *      prefill the identifier field)
+   *   3. Is it expired / unknown? → show error
+   *
+   * Response shape:
+   *   {
+   *     valid: boolean,         // can this code still be used to claim?
+   *     error_code?: string,    // present when valid === false
+   *     expires_at?: ISO,
+   *     university?: { id, name, short_name },
+   *     account?: {             // present when error_code === 'code_already_claimed'
+   *       exists: true,
+   *       active: boolean,      // users.status === 'active'
+   *       email_masked: string|null,
+   *       phone_masked: string|null,
+   *       email_verified: boolean,
+   *       phone_verified: boolean,
+   *       can_login: boolean,   // true ⇔ active === true
+   *     }
+   *   }
+   *
+   * Public endpoint — no auth required. Account identifiers are masked
+   * so the response can't be used for enumeration.
    */
   static async codeStatus(req, res) {
     try {
@@ -86,11 +113,19 @@ class AuthController {
         });
       }
       const pool = require('../../../db/pool');
+      // JOIN users too so a single round-trip carries everything we need
+      // to decide between "claim" and "log in" UIs on the client.
       const result = await pool.query(
         `SELECT r.id, r.status, r.user_id, r.institution_code_expires_at,
-                u.id AS university_id, u.name AS university_name, u.short_name
+                u.id AS university_id, u.name AS university_name, u.short_name,
+                acc.email AS account_email,
+                acc.phone AS account_phone,
+                acc.status AS account_status,
+                acc.email_verified AS account_email_verified,
+                acc.phone_verified AS account_phone_verified
          FROM jupeb_registrations r
-         JOIN jupeb_universities u ON u.id = r.university_id
+         JOIN jupeb_universities u  ON u.id = r.university_id
+         LEFT JOIN users acc        ON acc.id = r.user_id
          WHERE r.institution_issued_code = $1
          LIMIT 1`,
         [code]
@@ -99,6 +134,13 @@ class AuthController {
       if (!row) {
         return sendSuccess(res, { valid: false, error_code: 'code_not_found' });
       }
+
+      const university = {
+        id: row.university_id,
+        name: row.university_name,
+        short_name: row.short_name,
+      };
+
       if (
         row.institution_code_expires_at &&
         new Date(row.institution_code_expires_at).getTime() < Date.now()
@@ -106,23 +148,41 @@ class AuthController {
         return sendSuccess(res, {
           valid: false,
           error_code: 'code_expired',
-          expires_at: row.institution_code_expires_at
+          expires_at: row.institution_code_expires_at,
+          university,
         });
       }
+
+      // Code has been used (user_id set ⇒ account exists; status≠code_issued
+      // without a user means something moved the row administratively).
       if (row.status !== 'code_issued' || row.user_id) {
-        return sendSuccess(res, {
+        const claimed = !!row.user_id;
+        const out = {
           valid: false,
-          error_code: row.user_id ? 'code_already_claimed' : 'code_unavailable'
-        });
+          error_code: claimed ? 'code_already_claimed' : 'code_unavailable',
+          expires_at: row.institution_code_expires_at,
+          university,
+        };
+        if (claimed) {
+          const active = row.account_status === 'active';
+          out.account = {
+            exists: true,
+            active,
+            email_masked: AuthController._maskRecipient(row.account_email),
+            phone_masked: AuthController._maskRecipient(row.account_phone),
+            email_verified: !!row.account_email_verified,
+            phone_verified: !!row.account_phone_verified,
+            can_login: active,
+          };
+        }
+        return sendSuccess(res, out);
       }
+
+      // Claimable.
       return sendSuccess(res, {
         valid: true,
         expires_at: row.institution_code_expires_at,
-        university: {
-          id: row.university_id,
-          name: row.university_name,
-          short_name: row.short_name
-        }
+        university,
       });
     } catch (err) {
       return sendError(res, err.message, 500);
@@ -292,6 +352,59 @@ class AuthController {
       const status = error.status || BAD_REQUEST;
       const details = error.error_code ? { error_code: error.error_code } : null;
       return sendError(res, error.message, status, details);
+    }
+  }
+
+  // ── Email verification (token-link flow) ───────────────────────────────
+  //
+  // Three routes:
+  //   POST /auth/send-verification    (authenticated)
+  //   POST /auth/resend-verification  (authenticated; same effect, alt template)
+  //   GET  /auth/verify-email?token=  (public — the link target)
+  //
+  // Service methods (sendVerificationEmail, resendVerificationEmail,
+  // verifyEmailToken) already exist on AuthService; these are just the
+  // HTTP entry points.
+
+  static async sendVerification(req, res) {
+    try {
+      const userId = req.user && req.user.user_id;
+      if (!userId) return sendError(res, 'Unauthorized', UNAUTHORIZED);
+      const result = await AuthService.sendVerificationEmail(userId);
+      // Never expose the raw token outside test mode; the service only
+      // returns it for assertion convenience.
+      const safe = { sent: true, expires_at: result.expiresAt };
+      if (process.env.NODE_ENV === 'test') safe.token = result.token;
+      return sendSuccess(res, safe, 'Verification email queued', OK);
+    } catch (err) {
+      const details = err.error_code ? { error_code: err.error_code } : null;
+      return sendError(res, err.message, err.status || BAD_REQUEST, details);
+    }
+  }
+
+  static async resendVerification(req, res) {
+    try {
+      const userId = req.user && req.user.user_id;
+      if (!userId) return sendError(res, 'Unauthorized', UNAUTHORIZED);
+      const result = await AuthService.resendVerificationEmail(userId);
+      const safe = { sent: true, expires_at: result.expiresAt };
+      if (process.env.NODE_ENV === 'test') safe.token = result.token;
+      return sendSuccess(res, safe, 'Verification email queued', OK);
+    } catch (err) {
+      const details = err.error_code ? { error_code: err.error_code } : null;
+      return sendError(res, err.message, err.status || BAD_REQUEST, details);
+    }
+  }
+
+  static async verifyEmail(req, res) {
+    try {
+      // Accept the token from query (link click) or body (POST variant).
+      const token = (req.query && req.query.token) || (req.body && req.body.token);
+      const result = await AuthService.verifyEmailToken(token);
+      return sendSuccess(res, result, 'Email verified', OK);
+    } catch (err) {
+      const details = err.error_code ? { error_code: err.error_code } : null;
+      return sendError(res, err.message, err.status || BAD_REQUEST, details);
     }
   }
 

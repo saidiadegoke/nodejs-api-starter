@@ -10,6 +10,11 @@ router.get('/', sessionRead, SessionController.list);
 router.get('/export', sessionWrite, SessionController.exportCsv);
 router.post('/', sessionWrite, SessionController.create);
 
+// Bulk finalize across every closed session — declared BEFORE the
+// `:sessionId/...` block so Express doesn't capture
+// `finalize-all-closed` as a session id.
+router.post('/finalize-all-closed', sessionWrite, SessionController.finalizeAllClosed);
+
 router.get('/:sessionId/stats', sessionRead, SessionController.stats);
 router.post('/:sessionId/open', sessionWrite, SessionController.open);
 router.post('/:sessionId/close', sessionWrite, SessionController.close);

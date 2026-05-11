@@ -434,6 +434,36 @@ class AuthService {
       [user.id]
     );
     
+    // Embed the latest JUPEB registration so mobile clients can route
+    // immediately on app boot without a follow-up /me/current call.
+    // Best-effort: silent if the jupeb tables aren't migrated.
+    let registration = null;
+    try {
+      const regRes = await pool.query(
+        `SELECT id, status, provisional_candidate_code, jupeb_candidate_number,
+                claimed_at, submitted_at, approved_at, dashboard_unlocked_at
+           FROM jupeb_registrations
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [user.id]
+      );
+      if (regRes.rows[0]) {
+        const r = regRes.rows[0];
+        registration = {
+          id: r.id,
+          status: r.status,
+          provisional_candidate_code: r.provisional_candidate_code,
+          jupeb_candidate_number: r.jupeb_candidate_number,
+          claimed_at: r.claimed_at,
+          submitted_at: r.submitted_at,
+          approved_at: r.approved_at,
+          dashboard_unlocked: Boolean(r.dashboard_unlocked_at),
+          next_step: AuthService._nextStepForRegistration(r.status),
+        };
+      }
+    } catch { /* jupeb tables absent — non-fatal */ }
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -451,8 +481,27 @@ class AuthService {
         rating: null,
         verified: user.email_verified && user.phone_verified,
         created_at: user.created_at
-      }
+      },
+      registration,
     };
+  }
+
+  /**
+   * Maps a registration status to the next action the mobile / web app
+   * should send the user to. Kept in sync with registration-state.service.
+   */
+  static _nextStepForRegistration(status) {
+    switch (status) {
+      case 'code_issued':                 return 'claim_code';
+      case 'claimed':                     return 'confirm_subjects';
+      case 'pending_student_confirm':     return 'confirm_subjects';
+      case 'pending_documents':           return 'upload_documents';
+      case 'pending_institution_review':  return 'await_review';
+      case 'approved':                    return 'view_dashboard';
+      case 'rejected':                    return 'view_rejection';
+      case 'withdrawn':                   return 'restart';
+      default:                            return null;
+    }
   }
 
   /**

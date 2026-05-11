@@ -149,4 +149,61 @@ describe('GET /auth/code-status (M.9 — public, no auth)', () => {
     expect(res.body.data.valid).toBe(false);
     expect(res.body.data.error_code).toBe('code_already_claimed');
   });
+
+  it('returns an `account` block with masked identifiers when the code has been claimed via register-with-code', async () => {
+    if (!registrationMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const { code } = await makeIssuedCode(token, 'ACC');
+
+    // Spin up a fresh student account via the public single-shot signup
+    // — this is the realistic flow the mobile app will exercise.
+    const stamp = Date.now() + Math.floor(Math.random() * 1000);
+    const email = `accblock-${stamp}@example.com`;
+    const reg = await request(app)
+      .post('/auth/register-with-code')
+      .send({ code, password: 'Strong@Password1', email });
+    expect(reg.status).toBe(201);
+
+    const res = await request(app).get(`/auth/code-status?code=${encodeURIComponent(code)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.valid).toBe(false);
+    expect(res.body.data.error_code).toBe('code_already_claimed');
+    expect(res.body.data.university).toBeDefined();
+    // Account block — the load-bearing addition for the mobile login flow.
+    expect(res.body.data.account).toBeDefined();
+    expect(res.body.data.account.exists).toBe(true);
+    expect(res.body.data.account.active).toBe(true);
+    expect(res.body.data.account.can_login).toBe(true);
+    expect(res.body.data.account.email_masked).toMatch(/^\w{1,2}\*\*\*@/);
+    // Raw email must never leak.
+    expect(res.body.data.account.email_masked).not.toBe(email);
+    expect(JSON.stringify(res.body.data)).not.toContain(email);
+  });
+
+  it('account.can_login flips to false when the account is suspended', async () => {
+    if (!registrationMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const { code } = await makeIssuedCode(token, 'SUS');
+
+    const stamp = Date.now() + Math.floor(Math.random() * 1000);
+    const email = `suspended-${stamp}@example.com`;
+    const reg = await request(app)
+      .post('/auth/register-with-code')
+      .send({ code, password: 'Strong@Password1', email });
+    expect(reg.status).toBe(201);
+
+    // Suspend the new user
+    const pool = require('../db/pool');
+    await pool.query(
+      `UPDATE users SET status = 'suspended' WHERE LOWER(email) = LOWER($1)`,
+      [email]
+    );
+
+    const res = await request(app).get(`/auth/code-status?code=${encodeURIComponent(code)}`);
+    expect(res.body.data.account.exists).toBe(true);
+    expect(res.body.data.account.active).toBe(false);
+    expect(res.body.data.account.can_login).toBe(false);
+  });
 });

@@ -112,6 +112,16 @@ class SessionController {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
   }
+
+  // Sweep finalize over every closed session in one call.
+  static async finalizeAllClosed(req, res) {
+    try {
+      const data = await sessionService.finalizeAllClosed(req.user.user_id);
+      return sendSuccess(res, data, 'Bulk finalization complete');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
 }
 
 module.exports = SessionController;

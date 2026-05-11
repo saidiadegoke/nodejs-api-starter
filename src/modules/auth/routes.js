@@ -115,6 +115,32 @@ router.post(
 router.post('/logout', requireAuth, AuthController.logout);
 
 /**
+ * @route   POST /api/auth/send-verification
+ * @desc    Issue (or re-issue) an email-verification link to the
+ *          authenticated user. Idempotent — invalidates any prior link.
+ * @access  Authenticated
+ */
+router.post('/send-verification', requireAuth, AuthController.sendVerification);
+
+/**
+ * @route   POST /api/auth/resend-verification
+ * @desc    Same as /send-verification but uses the resend-* template.
+ * @access  Authenticated
+ */
+router.post('/resend-verification', requireAuth, AuthController.resendVerification);
+
+/**
+ * @route   GET  /api/auth/verify-email?token=...
+ * @route   POST /api/auth/verify-email   (body: { token })
+ * @desc    Mark email_verified=true for whoever owns the supplied token.
+ *          The query-string form is intentional — that's the URL the
+ *          email link points at. POST is also accepted for SPA flows.
+ * @access  Public
+ */
+router.get('/verify-email', AuthController.verifyEmail);
+router.post('/verify-email', AuthController.verifyEmail);
+
+/**
  * @route   POST /api/auth/verify-phone
  * @desc    Verify phone number with OTP
  * @access  Public

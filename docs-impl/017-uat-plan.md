@@ -119,7 +119,7 @@ npm run migrate
 npm run seed
 ```
 
-This applies migrations `001..011` and seed files `001..005`. Recent
+This applies migrations `001..012` and seed files `001..005`. Recent
 migrations added with the NIN / auth work:
 
 - `008_jupeb_nin_cache_cleared_at.sql` — NIN cache invalidation (PII
@@ -130,6 +130,10 @@ migrations added with the NIN / auth work:
   `email_verification_expires_at`, `email_verified_at` on `users`.
 - `011_otp_codes.sql` — dedicated `otp_codes` table (parallel to
   `password_resets`) for the new 6-digit OTP flow.
+- `012_jupeb_candidate_number_format.sql` — relaxes the matric format
+  check from all-numeric (`^[0-9]{9,}$`) to alphanumeric +
+  `-`/`/`/`_` (`^[A-Za-z0-9/_-]{4,}$`) so real-world matric shapes
+  (`UI/2024/12345`, `PG21-3-CHM-0123`) are accepted.
 
 The demo seed (`005_seed_jupeb_demo_data.sql`) creates:
 
@@ -1445,7 +1449,389 @@ place.
 
 ---
 
-## 18. Test matrix at a glance
+## 18. Matric / candidate-number lifecycle
+
+A student can log in with any of four identifier shapes on
+`POST /auth/login`:
+
+| Shape | Example | Resolves via |
+|---|---|---|
+| Email (case-insensitive) | `ada@example.com` | `users.email` |
+| Phone | `+2348012345678` | `users.phone` |
+| Provisional reg number (9 digits) | `261010001` | `jupeb_registrations.provisional_candidate_code` |
+| Final matric (alphanumeric / `-` / `/`) | `UI/2024/12345` | `jupeb_registrations.jupeb_candidate_number` |
+
+**Matric lockdown rule.** Once the registrar finalizes the session and a
+matric is written onto a registration row, **email / phone / provisional
+reg-code stop resolving** to that student — only the matric works.
+Admins / registrars / institution-admins bypass the lockdown (they're
+never candidates).
+
+### TC-18.1 — Login by reg number before finalize
+
+Right after `/auth/register-with-code`, the student can log in with
+their email, phone, OR `provisional_candidate_code`:
+
+```bash
+# Pull the student's provisional code from their login response
+LOGIN=$(curl -s -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$STUDENT_EMAIL"'","password":"Strong@Password1"}')
+PROVCODE=$(echo $LOGIN | jq -r '.data.registration.provisional_candidate_code')
+echo "provisional code = $PROVCODE"
+
+# Log in by reg number
+curl -s -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$PROVCODE"'","password":"Strong@Password1"}' \
+  | jq '.data | {access_token: (.access_token | length > 0), email: .user.email}'
+# Expected: access_token=true, email=$STUDENT_EMAIL
+```
+
+### TC-18.2 — Numbering preview before finalize
+
+```bash
+# Pre-condition: registration is at `approved` and the session is `closed`.
+uatpsql -c "UPDATE jupeb_registrations SET status='approved' WHERE id='$REG_ID'"
+curl -s -X POST $BASE/sessions/$SESSION_ID/close \
+  -H "Authorization: Bearer $ADMIN"
+
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/sessions/$SESSION_ID/numbering-preview" \
+  | jq '.data.proposed[] | {registration_id, proposed_jupeb_candidate_number}'
+# Expected: each row carries proposed_jupeb_candidate_number =
+# yearShort + jupeb_prefix + serial (9 digits), zero-padded.
+```
+
+### TC-18.3 — Finalize writes the matric
+
+```bash
+curl -s -X POST $BASE/sessions/$SESSION_ID/finalize-candidate-numbers \
+  -H "Authorization: Bearer $ADMIN" \
+  | jq '.data | {assigned, skipped, sample_number: .numbers[0]}'
+# Expected: assigned ≥ 1, sample_number carries jupeb_candidate_number
+
+uatpsql -c "SELECT jupeb_candidate_number FROM jupeb_registrations WHERE id='$REG_ID'"
+# Expected: a non-null 9-digit number matching the preview
+```
+
+### TC-18.4 — Login by matric works
+
+```bash
+MATRIC=$(uatpsql -At -c "SELECT jupeb_candidate_number FROM jupeb_registrations WHERE id='$REG_ID'")
+curl -s -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$MATRIC"'","password":"Strong@Password1"}' \
+  | jq '.data | {ok: (.access_token | length > 0), matric: .registration.jupeb_candidate_number}'
+# Expected: ok=true, matric=$MATRIC
+```
+
+### TC-18.5 — Matric lockdown — email login is BLOCKED post-finalize
+
+```bash
+curl -s -i -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$STUDENT_EMAIL"'","password":"Strong@Password1"}' | head -1
+# Expected: HTTP/1.1 400 or 401 (same "invalid credentials" response —
+# the model returns undefined for non-matric identifiers on a matric-
+# locked account, so no signal that the email exists)
+```
+
+### TC-18.6 — Matric lockdown — phone login is BLOCKED post-finalize
+
+```bash
+curl -s -i -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$STUDENT_PHONE"'","password":"Strong@Password1"}' | head -1
+# Expected: same as TC-18.5 — not 200
+```
+
+### TC-18.7 — Matric lockdown — provisional reg-code is BLOCKED post-finalize
+
+```bash
+curl -s -i -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$PROVCODE"'","password":"Strong@Password1"}' | head -1
+# Expected: not 200
+```
+
+### TC-18.8 — Alphanumeric matric formats accepted
+
+```bash
+# Set a slash-separated matric directly (real Nigerian institution shape)
+uatpsql -c "UPDATE jupeb_registrations SET jupeb_candidate_number='UI/2024/12345' WHERE id='$REG_ID'"
+
+curl -s -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"UI/2024/12345","password":"Strong@Password1"}' \
+  | jq '.data.user.email'
+# Expected: $STUDENT_EMAIL (matric matches case-insensitively)
+```
+
+### TC-18.9 — Finalize is idempotent
+
+```bash
+# Re-run finalize — assigned should be 0 for the already-numbered row
+curl -s -X POST $BASE/sessions/$SESSION_ID/finalize-candidate-numbers \
+  -H "Authorization: Bearer $ADMIN" \
+  | jq '.data | {assigned, skipped}'
+# Expected: assigned=0 (or excludes our row from the numbers[] array)
+```
+
+**Pass criteria for §18:** TC-18.1 reg-code login works, TC-18.2 preview
+surfaces formula-derived matric, TC-18.3 finalize persists it, TC-18.4
+matric login works, TC-18.5–18.7 prove the lockdown blocks email /
+phone / reg-code, TC-18.8 confirms alphanumeric matrics work, TC-18.9
+confirms re-running finalize is a no-op.
+
+---
+
+## 19. Auth response shapes for client routing
+
+Two recent enhancements give the mobile / web client enough state to
+route the user without follow-up API calls.
+
+### TC-19.1 — Login response embeds `registration`
+
+```bash
+curl -s -X POST $BASE/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"'"$STUDENT_EMAIL"'","password":"Strong@Password1"}' \
+  | jq '.data | {access_token: (.access_token | length > 0), registration}'
+```
+
+**Expected** (when the user has a registration):
+
+```jsonc
+{
+  "access_token": true,
+  "registration": {
+    "id": "...",
+    "status": "claimed",
+    "provisional_candidate_code": "261010001",
+    "jupeb_candidate_number": null,
+    "claimed_at": "...",
+    "submitted_at": null,
+    "approved_at": null,
+    "dashboard_unlocked": false,
+    "next_step": "confirm_subjects"
+  }
+}
+```
+
+`next_step` maps status → route hint:
+
+| Status | `next_step` |
+|---|---|
+| `code_issued` | `claim_code` |
+| `claimed` / `pending_student_confirm` | `confirm_subjects` |
+| `pending_documents` | `upload_documents` |
+| `pending_institution_review` | `await_review` |
+| `approved` | `view_dashboard` |
+| `rejected` | `view_rejection` |
+| `withdrawn` | `restart` |
+
+For users without a JUPEB registration (admins, registrars), the field
+is `null` — but it's always present on the response.
+
+### TC-19.2 — `/auth/code-status` carries `account` block once claimed
+
+```bash
+# Run TC-2.3 (valid code), then TC-3.1 (claim it). Then re-query:
+curl -s "$BASE/auth/code-status?code=$CODE" | jq
+```
+
+**Expected** (post-claim):
+
+```jsonc
+{
+  "data": {
+    "valid": false,
+    "error_code": "code_already_claimed",
+    "university": { ... },
+    "account": {
+      "exists": true,
+      "active": true,
+      "email_masked": "uat***@example.com",
+      "phone_masked": null,
+      "email_verified": false,
+      "phone_verified": false,
+      "can_login": true
+    }
+  }
+}
+```
+
+The client uses this to decide between "Create account" and "Log in"
+UIs. `can_login` flips to `false` when `users.status !== 'active'`.
+
+Raw email/phone never leak — the masking helper is the same one used
+by `/auth/resend-otp`.
+
+**Pass criteria for §19:** TC-19.1 shows the `registration` field
+present (even when null), TC-19.2 shows the `account` block with masked
+identifiers + `can_login`.
+
+---
+
+## 20. Institution candidate detail — `GET /institution/registrations/:id`
+
+Single-call endpoint for the institution dashboard's candidate detail
+page. Composes registration + candidate user + documents + result
+entries + biometrics + NoK + status history into one response.
+
+### TC-20.1 — Returns the full detail shape
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations/$REG_ID" \
+  | jq '.data | keys'
+```
+
+**Expected keys** (alphabetical):
+
+```
+approved_at, approved_by, biometric_skips, biometric_status,
+biometrics, candidate, claimed_at, created_at, dashboard_unlocked_at,
+documents, id, institution_code_expires_at, institution_issued_code,
+jupeb_candidate_number, next_of_kin, nin_verification,
+nin_verification_id, provisional_candidate_code, result_entries,
+session, status, status_history, status_reason, subject_combination,
+submitted_at, university, updated_at
+```
+
+Per-section spot-checks:
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations/$REG_ID" \
+  | jq '.data | {
+      candidate: (.candidate | {email, display_name, email_verified}),
+      university: .university.name,
+      biometric_status,
+      docs_count: (.documents | length),
+      results_count: (.result_entries | length),
+      history_count: (.status_history | length)
+    }'
+```
+
+### TC-20.2 — 404 for unknown id
+
+```bash
+curl -s -i -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations/00000000-0000-1000-8000-000000000000" | head -1
+# Expected: HTTP/1.1 404
+```
+
+### TC-20.3 — 422 for malformed id
+
+```bash
+curl -s -i -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations/not-a-uuid" | head -1
+# Expected: HTTP/1.1 422
+```
+
+### TC-20.4 — Route ordering: `/export` doesn't get captured
+
+```bash
+# The literal /export route must match BEFORE :registrationId. Hit both
+# and confirm /export returns CSV, not "registration not found".
+curl -s -D - -o /tmp/r.csv -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations/export?university_id=$UNIVERSITY_ID&session_id=$SESSION_ID" | head -3
+# Expected: Content-Type: text/csv ...
+```
+
+**Pass criteria for §20:** TC-20.1 returns all documented keys, TC-20.2
+returns 404, TC-20.3 returns 422, TC-20.4 confirms `/export` still
+returns CSV.
+
+---
+
+## 21. Email verification link flow (`/auth/send-verification`)
+
+Three routes back this flow, all backed by `AuthService.{sendVerificationEmail,
+resendVerificationEmail, verifyEmailToken}`:
+
+| Route | Auth | Template |
+|---|---|---|
+| `POST /auth/send-verification` | Authenticated | `email-verification.html` |
+| `POST /auth/resend-verification` | Authenticated | `resend-verification.html` |
+| `GET  /auth/verify-email?token=…` | Public | (link target — no body) |
+| `POST /auth/verify-email` body `{token}` | Public | (SPA-friendly variant) |
+
+Tokens are sha256-hashed on `users.email_verification_token_hash`; raw
+tokens live only in the recipient's email. Resend invalidates the
+prior token. Default TTL: 24h (`EMAIL_VERIFICATION_TTL_HOURS`).
+
+### TC-21.1 — Send issues a token (auth required)
+
+```bash
+curl -s -X POST $BASE/auth/send-verification \
+  -H "Authorization: Bearer $STUDENT" \
+  | jq '.data | {sent, expires_at}'
+# Expected: { "sent": true, "expires_at": "<~24h from now>" }
+```
+
+The verification email lands in the student's inbox. Subject:
+`Verify your email — <APP_NAME>`. Body has a clickable "Verify Email
+Address" button + a copy-paste link.
+
+### TC-21.2 — Verify with a valid token flips `email_verified`
+
+```bash
+# (Run TC-21.1 first, copy the token out of the email link.)
+TOKEN="<paste the token query-param value here>"
+
+curl -s "$BASE/auth/verify-email?token=$TOKEN" \
+  | jq '.data | {id, email, email_verified}'
+# Expected: { "id": "...", "email": "...", "email_verified": true }
+
+uatpsql -c "SELECT email_verified, email_verified_at FROM users WHERE email='$STUDENT_EMAIL'"
+# Expected: email_verified=t, email_verified_at NOT NULL
+```
+
+### TC-21.3 — Invalid token returns 400
+
+```bash
+curl -s -i "$BASE/auth/verify-email?token=not-a-real-token" | head -1
+# Expected: HTTP/1.1 400; body details.error_code === 'invalid_token'
+```
+
+### TC-21.4 — Expired token returns 410
+
+```bash
+# Force expiry on the active token
+uatpsql -c "UPDATE users SET email_verification_expires_at = NOW() - INTERVAL '1 minute'
+            WHERE email='$STUDENT_EMAIL'"
+
+curl -s -i "$BASE/auth/verify-email?token=$TOKEN" | head -1
+# Expected: HTTP/1.1 410; body details.error_code === 'token_expired'
+```
+
+### TC-21.5 — Send-verification requires auth
+
+```bash
+curl -s -i -X POST $BASE/auth/send-verification | head -1
+# Expected: HTTP/1.1 401
+```
+
+### TC-21.6 — Resend uses the alt template
+
+```bash
+curl -s -X POST $BASE/auth/resend-verification \
+  -H "Authorization: Bearer $STUDENT" \
+  | jq '.data'
+# Expected: { "sent": true, "expires_at": "..." }
+# Inbox: second email uses the `resend-verification.html` styling.
+```
+
+**Pass criteria for §21:** TC-21.1 emits a token-bearing email, TC-21.2
+flips `email_verified` + clears the token, TC-21.3 / TC-21.4 / TC-21.5
+return the expected error shapes, TC-21.6 produces the resend variant.
+
+---
+
+## 22. Test matrix at a glance
 
 | # | Module | Endpoint(s) | Personas | Expected outcome |
 |---|---|---|---|---|
@@ -1466,8 +1852,12 @@ place.
 | §15 | RBAC | many | Anonymous + Student | 401 / 403 enforcement |
 | §16 | OTP | `/auth/resend-otp`, `/auth/verify-phone` | Any user | 6-digit code issued via email / sms / both; hashed in DB; verify flips `email_verified`/`phone_verified`; expiry, retry-cap, account-enumeration safety |
 | §17 | Email delivery | `sendEmail` callers | All | Each lifecycle trigger drops the correct template; SMTP-unset silently skips; port-derived `secure:` |
+| §18 | Matric lifecycle | `/sessions/:id/finalize-candidate-numbers`, `/auth/login` | Registrar + Student | Reg-number login; finalize writes matric (formula yearShort+prefix+serial); idempotent; matric lockdown blocks email/phone/reg-code once matric is set; alphanumeric matric formats |
+| §19 | Mobile routing hints | `/auth/login`, `/auth/code-status` | All | Login response embeds `registration` + `next_step`; code-status carries `account` block (masked email/phone, `can_login`) once claimed |
+| §20 | Institution candidate detail | `GET /registration/institution/registrations/:id` | Registrar | Single-call detail composes registration + candidate user + docs + result entries + biometrics + NoK + history |
+| §21 | Email verification link | `/auth/send-verification`, `/auth/verify-email` | Authenticated + public link | Token-bearing email lands; verify flips `email_verified`; expiry + invalid-token error paths |
 
-## 19. Sign-off checklist
+## 23. Sign-off checklist
 
 - [ ] §0 environment up; migrations + seeds run
 - [ ] §1 catalog smoke
@@ -1487,6 +1877,10 @@ place.
 - [ ] §15 401 + 403 sweep
 - [ ] §16 OTP — resend (email/sms/both) + verify + retry-cap + expiry
 - [ ] §17 Email delivery — all 3 lifecycle templates land in candidate's inbox
+- [ ] §18 Matric lifecycle — finalize writes matric + lockdown blocks other identifiers
+- [ ] §19 Mobile routing hints — login.registration + code-status.account present
+- [ ] §20 Institution candidate detail — single-call shape returns full keys
+- [ ] §21 Email verification — send → verify → email_verified=true round-trip
 
 When every box is checked, the registration end-to-end can be
 considered ready for stakeholder demo.
@@ -1550,6 +1944,41 @@ SELECT id, email, email_verified, email_verified_at,
        phone_verified
   FROM users
  WHERE email = '<email>' OR phone = '<phone>';
+
+-- Matric assignment state for a registration
+SELECT id, status, provisional_candidate_code, jupeb_candidate_number,
+       claimed_at, approved_at, submitted_at
+  FROM jupeb_registrations
+ WHERE id = '<reg-id>';
+
+-- Approved rows still awaiting finalization for a session
+SELECT r.id, r.provisional_candidate_code, u.jupeb_prefix
+  FROM jupeb_registrations r
+  JOIN jupeb_universities u ON u.id = r.university_id
+ WHERE r.session_id = '<session-id>'
+   AND r.status = 'approved'
+   AND r.jupeb_candidate_number IS NULL;
+
+-- Verify whether matric lockdown applies to a given user
+SELECT u.id, u.email,
+       EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+          WHERE ur.user_id = u.id AND ro.name NOT IN ('student','user')
+       ) AS has_admin_role,
+       EXISTS (
+         SELECT 1 FROM jupeb_registrations rr
+          WHERE rr.user_id = u.id AND rr.jupeb_candidate_number IS NOT NULL
+       ) AS has_matric
+  FROM users u
+ WHERE LOWER(u.email) = LOWER('<email>');
+-- Lockdown is active when has_admin_role=f AND has_matric=t.
+
+-- Email verification token state for a user
+SELECT id, email, email_verified, email_verified_at,
+       (email_verification_token_hash IS NOT NULL) AS has_pending_token,
+       email_verification_expires_at
+  FROM users
+ WHERE LOWER(email) = LOWER('<email>');
 ```
 
 ## Appendix B — quick reset between runs
