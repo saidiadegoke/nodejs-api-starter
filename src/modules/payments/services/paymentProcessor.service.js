@@ -54,25 +54,32 @@ class PaymentProcessorService {
             const currency = payment.currency || paymentData.currency || 'NGN';
             const sym = currency === 'NGN' ? '₦' : currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '£';
             const formatted = `${sym}${parseFloat(payment.amount).toLocaleString()}`;
-            await sendEmail({
-              to,
-              subject: `${appName} — bank transfer instructions`,
-              templateFile: 'direct-transfer-instructions.html',
-              placeholders: [
-                appName,
-                customer,
-                formatted,
-                payment.payment_id,
-                bankAccount.bank_name,
-                bankAccount.account_name,
-                bankAccount.account_number,
-                link,
-                link,
-                appName,
-              ],
+            // Fire-and-forget — don't make the customer wait on SMTP.
+            setImmediate(() => {
+              sendEmail({
+                to,
+                subject: `${appName} — bank transfer instructions`,
+                templateFile: 'direct-transfer-instructions.html',
+                placeholders: [
+                  appName,
+                  customer,
+                  formatted,
+                  payment.payment_id,
+                  bankAccount.bank_name,
+                  bankAccount.account_name,
+                  bankAccount.account_number,
+                  link,
+                  link,
+                  appName,
+                ],
+              }).catch((e) => {
+                // eslint-disable-next-line no-console
+                console.warn('[PaymentProcessor] Direct transfer email failed:', e && e.message);
+              });
             });
           } catch (e) {
-            console.error('[PaymentProcessor] Direct transfer email failed:', e.message);
+            // eslint-disable-next-line no-console
+            console.warn('[PaymentProcessor] Email setup failed:', e && e.message);
           }
         }
 

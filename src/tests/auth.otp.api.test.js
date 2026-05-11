@@ -80,9 +80,13 @@ describe('OTP — /auth/resend-otp + /auth/verify-phone', () => {
         .send({ identifier: user.phone, channel: 'sms' });
       expect(res.status).toBe(200);
       expect(res.body.data.channels).toEqual(['sms']);
-      expect(res.body.data.dispatches[0].channel).toBe('sms');
-      // Default SMS provider is the mock — it always reports `sent`.
-      expect(res.body.data.dispatches[0].outcome).toBe('sent');
+      // Dispatches are fire-and-forget; the response no longer carries
+      // per-channel SMTP outcomes. We assert via the DB row instead.
+      const r = await pool.query(
+        `SELECT channel FROM otp_codes WHERE user_id = $1 AND verified_at IS NULL`,
+        [user.id]
+      );
+      expect(r.rows[0].channel).toBe('sms');
     });
 
     it('channel=both dispatches to email and sms in parallel', async () => {
@@ -93,7 +97,11 @@ describe('OTP — /auth/resend-otp + /auth/verify-phone', () => {
         .send({ identifier: user.email, channel: 'both' });
       expect(res.status).toBe(200);
       expect(new Set(res.body.data.channels)).toEqual(new Set(['email', 'sms']));
-      expect(res.body.data.dispatches.length).toBe(2);
+      const r = await pool.query(
+        `SELECT channel FROM otp_codes WHERE user_id = $1 AND verified_at IS NULL`,
+        [user.id]
+      );
+      expect(r.rows[0].channel).toBe('both');
     });
 
     it('overwrites the prior active OTP — only the latest row is active', async () => {

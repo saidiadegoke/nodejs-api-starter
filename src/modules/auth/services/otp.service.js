@@ -65,10 +65,14 @@ async function loadUser(userId) {
   return r.rows[0] || null;
 }
 
-async function dispatchEmail({ user, code, channel }) {
-  if (!user.email) return { outcome: 'skipped', reason: 'no_email' };
+// Fire-and-forget dispatchers. Failures are logged but never propagate —
+// the API response goes out the moment the DB row is written, and any
+// SMTP / SMS RTT happens after the response is on the wire.
+
+function dispatchEmail({ user, code }) {
+  if (!user.email) return;
   const ttlMinutes = Math.round(ttlMs() / 60000);
-  await sendEmail({
+  sendEmail({
     to: user.email,
     subject: `${appName()} — your verification code: ${code}`,
     templateFile: 'otp-code.html',
@@ -80,25 +84,29 @@ async function dispatchEmail({ user, code, channel }) {
       email: user.email,
       year: new Date().getUTCFullYear(),
     },
+  }).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[otp.dispatchEmail] send failed:', err && err.message);
   });
-  return { outcome: 'sent', channel: 'email' };
 }
 
-async function dispatchSms({ user, code }) {
-  if (!user.phone) return { outcome: 'skipped', reason: 'no_phone' };
+function dispatchSms({ user, code }) {
+  if (!user.phone) return;
   const providerName = smsRegistry.resolveName();
   const provider = smsRegistry.get(providerName);
   const ttlMinutes = Math.round(ttlMs() / 60000);
   const message = `${appName()}: your verification code is ${code}. Expires in ${ttlMinutes} minutes.`;
-  const result = await provider.sendSms({ phone: user.phone, message });
-  return {
-    outcome: result.outcome,
-    channel: 'sms',
-    provider: providerName,
-    provider_reference: result.provider_reference || null,
-    error_code: result.error_code,
-    error_message: result.error_message,
-  };
+  Promise.resolve(provider.sendSms({ phone: user.phone, message })).then((result) => {
+    if (result && result.outcome !== 'sent') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[otp.dispatchSms:${providerName}] outcome=${result.outcome} error=${result.error_message || result.error_code || 'unknown'}`
+      );
+    }
+  }).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn(`[otp.dispatchSms:${providerName}] send failed:`, err && err.message);
+  });
 }
 
 /**
@@ -173,20 +181,20 @@ async function issueOtp(userId, { channel, ipAddress, userAgent } = {}) {
   if (resolved === 'email' || resolved === 'both') targets.push('email');
   if (resolved === 'sms' || resolved === 'both') targets.push('sms');
 
-  const dispatches = await Promise.all(targets.map((t) => {
-    if (t === 'email') return dispatchEmail({ user, code, channel: resolved }).catch((e) => ({
-      outcome: 'failed', channel: 'email', error_message: e.message,
-    }));
-    return dispatchSms({ user, code }).catch((e) => ({
-      outcome: 'failed', channel: 'sms', error_message: e.message,
-    }));
-  }));
+  // Fire-and-forget: schedule the dispatches and return immediately.
+  // The DB row is already written, so a subsequent /verify-phone has
+  // everything it needs. Delivery happens in the background.
+  setImmediate(() => {
+    for (const t of targets) {
+      if (t === 'email') dispatchEmail({ user, code });
+      else dispatchSms({ user, code });
+    }
+  });
 
   const out = {
     otp_id: ins.rows[0].id,
     channels: targets,
     expires_at: ins.rows[0].expires_at,
-    dispatches,
   };
   // Tests need to assert the code; production responses must never
   // include it.

@@ -17,25 +17,27 @@ class AuthController {
 
       const user = await AuthService.register(req.body);
       
-      // Send welcome email asynchronously if user has email
+      // Fire-and-forget welcome email — deferred via setImmediate so
+      // the HTTP response goes out before the worker boots.
       if (user.email && req.body.first_name) {
         const sendEmail = require('../../../shared/utils/sendEmail');
         const appName = process.env.APP_NAME || 'our app';
         const welcomeUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/`;
 
-        sendEmail({
-          to: user.email,
-          subject: `Welcome to ${appName}!`,
-          templateFile: 'welcome.html',
-          placeholders: [
-            req.body.first_name || 'User',
-            welcomeUrl,
-            user.email
-          ]
-        }).then(() => {
-          console.log('Welcome email sent to:', user.email);
-        }).catch((emailError) => {
-          console.error('Failed to send welcome email:', emailError);
+        setImmediate(() => {
+          sendEmail({
+            to: user.email,
+            subject: `Welcome to ${appName}!`,
+            templateFile: 'welcome.html',
+            placeholders: [
+              req.body.first_name || 'User',
+              welcomeUrl,
+              user.email
+            ]
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[auth.register] welcome email failed:', err && err.message);
+          });
         });
       }
       
@@ -278,10 +280,9 @@ class AuthController {
           masked_recipient: AuthController._maskRecipient(
             issued.channels.includes('email') ? user.email : user.phone
           ),
-          // Dispatch outcomes per channel — useful for debugging in dev,
-          // never reveals account existence. In test mode, the raw code
-          // is surfaced too (otp.service guards on NODE_ENV).
-          dispatches: issued.dispatches,
+          // In test mode, the raw code is surfaced so integration tests
+          // can assert the verify-side mechanics. Outside of test mode
+          // this field is absent.
           ...(issued.code ? { code: issued.code } : {}),
         },
         'Verification code sent',
@@ -373,20 +374,21 @@ class AuthController {
         const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-        sendEmail({
-          to: user.email,
-          subject: `Reset Your ${appName} Password`,
-          templateFile: 'forgot-password.html',
-          placeholders: [
-            user.first_name || user.display_name || 'User',
-            resetUrl,
-            resetUrl,
-            user.email
-          ]
-        }).then(() => {
-          console.log('Password reset email sent successfully to:', user.email);
-        }).catch((emailError) => {
-          console.error('Failed to send reset email:', emailError);
+        setImmediate(() => {
+          sendEmail({
+            to: user.email,
+            subject: `Reset Your ${appName} Password`,
+            templateFile: 'forgot-password.html',
+            placeholders: [
+              user.first_name || user.display_name || 'User',
+              resetUrl,
+              resetUrl,
+              user.email
+            ]
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[auth.forgotPassword] reset email failed:', err && err.message);
+          });
         });
         
         const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
@@ -532,21 +534,22 @@ class AuthController {
           minute: '2-digit'
         });
 
-        sendEmail({
-          to: resetRecord.email,
-          subject: `Password Reset Successful - ${appName}`,
-          templateFile: 'password-reset-success.html',
-          placeholders: [
-            resetRecord.first_name || 'User',
-            resetDate,
-            loginUrl,
-            resetDate,
-            resetRecord.email
-          ]
-        }).then(() => {
-          console.log('Password reset success email sent to:', resetRecord.email);
-        }).catch((emailError) => {
-          console.error('Failed to send password reset success email:', emailError);
+        setImmediate(() => {
+          sendEmail({
+            to: resetRecord.email,
+            subject: `Password Reset Successful - ${appName}`,
+            templateFile: 'password-reset-success.html',
+            placeholders: [
+              resetRecord.first_name || 'User',
+              resetDate,
+              loginUrl,
+              resetDate,
+              resetRecord.email
+            ]
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[auth.resetPassword] success email failed:', err && err.message);
+          });
         });
       }
       
