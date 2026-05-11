@@ -53,6 +53,81 @@ class AuthController {
   }
 
   /**
+   * M.3 — Register with institution code (single-shot signup for figma `log in 11`)
+   */
+  static async registerWithCode(req, res) {
+    try {
+      // Honeypot
+      if (req.body && (req.body.website || req.body.url || req.body.homepage)) {
+        return sendError(res, 'Registration failed. Please try again later.', BAD_REQUEST);
+      }
+      const result = await AuthService.registerWithCode(req.body);
+      return sendSuccess(res, result, 'Registration successful', CREATED);
+    } catch (error) {
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code
+        ? { error_code: error.error_code, ...(error.details || {}) }
+        : (error.details || null);
+      return sendError(res, error.message, status, details);
+    }
+  }
+
+  /**
+   * M.9 — Public code-status lookup (no auth) for figma `log in 11` pre-validation
+   */
+  static async codeStatus(req, res) {
+    try {
+      const code = String(req.query.code || '').trim();
+      if (!code) {
+        return sendError(res, 'code query parameter is required', BAD_REQUEST, {
+          error_code: 'code_required'
+        });
+      }
+      const pool = require('../../../db/pool');
+      const result = await pool.query(
+        `SELECT r.id, r.status, r.user_id, r.institution_code_expires_at,
+                u.id AS university_id, u.name AS university_name, u.short_name
+         FROM jupeb_registrations r
+         JOIN jupeb_universities u ON u.id = r.university_id
+         WHERE r.institution_issued_code = $1
+         LIMIT 1`,
+        [code]
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return sendSuccess(res, { valid: false, error_code: 'code_not_found' });
+      }
+      if (
+        row.institution_code_expires_at &&
+        new Date(row.institution_code_expires_at).getTime() < Date.now()
+      ) {
+        return sendSuccess(res, {
+          valid: false,
+          error_code: 'code_expired',
+          expires_at: row.institution_code_expires_at
+        });
+      }
+      if (row.status !== 'code_issued' || row.user_id) {
+        return sendSuccess(res, {
+          valid: false,
+          error_code: row.user_id ? 'code_already_claimed' : 'code_unavailable'
+        });
+      }
+      return sendSuccess(res, {
+        valid: true,
+        expires_at: row.institution_code_expires_at,
+        university: {
+          id: row.university_id,
+          name: row.university_name,
+          short_name: row.short_name
+        }
+      });
+    } catch (err) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  /**
    * Login user
    */
   static async login(req, res) {

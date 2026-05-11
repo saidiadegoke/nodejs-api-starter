@@ -32,13 +32,34 @@ class RegistrationDocumentModel {
     return result.rows[0] || null;
   }
 
-  async create(data) {
-    const { registration_id, requirement_id, file_id, status } = data;
+  async findCurrentBySourceSitting(registrationId, source, sitting) {
     const result = await pool.query(
-      `INSERT INTO jupeb_registration_documents (registration_id, requirement_id, file_id, status)
-       VALUES ($1, $2, $3, COALESCE($4, 'submitted'))
+      `SELECT * FROM jupeb_registration_documents
+       WHERE registration_id = $1
+         AND source = $2
+         AND sitting = $3
+         AND status IN ('submitted', 'accepted')
+       ORDER BY created_at DESC LIMIT 1`,
+      [registrationId, source, sitting]
+    );
+    return result.rows[0] || null;
+  }
+
+  async create(data) {
+    const { registration_id, requirement_id, file_id, status, source, sitting } = data;
+    const result = await pool.query(
+      `INSERT INTO jupeb_registration_documents
+         (registration_id, requirement_id, file_id, status, source, sitting)
+       VALUES ($1, $2, $3, COALESCE($4, 'submitted'), $5, $6)
        RETURNING *`,
-      [registration_id, requirement_id, file_id, status || 'submitted']
+      [
+        registration_id,
+        requirement_id,
+        file_id,
+        status || 'submitted',
+        source || null,
+        sitting || null
+      ]
     );
     return result.rows[0];
   }

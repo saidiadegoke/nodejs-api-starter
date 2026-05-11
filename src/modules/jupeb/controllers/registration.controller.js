@@ -25,6 +25,40 @@ class RegistrationController {
     }
   }
 
+  // E.4 — overview KPI cards
+  static async institutionStats(req, res) {
+    try {
+      const data = await registrationService.institutionStats(req.query, req.user.user_id);
+      return sendSuccess(res, data);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // E.5 — top-N institutions bar chart
+  static async institutionByUniversity(req, res) {
+    try {
+      const data = await registrationService.institutionByUniversity(req.query, req.user.user_id);
+      return sendSuccess(res, data);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // E.6 — CSV export honoring the same filters as institutionList
+  static async institutionExportCsv(req, res) {
+    try {
+      const data = await registrationService.institutionExportCsv(req.query, req.user.user_id);
+      const filename = `candidates-${new Date().toISOString().slice(0, 10)}.csv`;
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).end(data);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async institutionList(req, res) {
     try {
       const { rows, page, limit, total } = await registrationService.institutionList(req.query, req.user.user_id);
@@ -40,6 +74,30 @@ class RegistrationController {
       return sendSuccess(res, row, 'Registration approved');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // E.7 — batch approve / reject / withdraw
+  static async institutionBatchAction(req, res) {
+    try {
+      const data = await registrationService.institutionBatchAction(req.body, req.user.user_id);
+      return sendSuccess(res, data, `Batch ${data.action} processed`);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
+  // E.8 — per-row withdraw
+  static async institutionWithdraw(req, res) {
+    try {
+      const data = await registrationService.institutionWithdraw(
+        req.params.registrationId,
+        req.body,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Registration withdrawn');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -92,6 +150,53 @@ class RegistrationController {
     try {
       const data = await registrationService.updateAcademicIntake(req.user.user_id, req.body);
       return sendSuccess(res, data, 'Academic intake updated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async patchMeProfile(req, res) {
+    try {
+      const data = await registrationService.updateMeProfile(req.user.user_id, req.body);
+      return sendSuccess(res, data, 'Profile updated');
+    } catch (err) {
+      const details = err.details || null;
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, details);
+    }
+  }
+
+  /**
+   * M.10 — Stream the candidate's registration form as a PDF.
+   * Allowed only when the registration is at `pending_institution_review`
+   * or later, since earlier states are still being filled in.
+   */
+  static async getMeRegistrationFormPdf(req, res) {
+    try {
+      const userId = req.user.user_id;
+      const { registration, preview } =
+        await registrationService.getMeRegistrationFormPayload(userId);
+
+      const READY = new Set(['pending_institution_review', 'approved']);
+      if (!READY.has(registration.status)) {
+        return sendError(
+          res,
+          'Registration is not ready for export. Submit your registration first.',
+          422,
+          { error_code: 'not_ready', current_status: registration.status }
+        );
+      }
+
+      // Lazy require so that pdfkit being missing surfaces as a runtime 500
+      // rather than crashing the whole module at startup.
+      // eslint-disable-next-line global-require
+      const RegistrationFormPdfService = require('../services/registration-form-pdf.service');
+      const buffer = await RegistrationFormPdfService.render(preview);
+
+      const filename = `registration-form-${registration.provisional_candidate_code || registration.id}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Content-Length', String(buffer.length));
+      return res.status(200).end(buffer);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

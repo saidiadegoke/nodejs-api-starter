@@ -1,0 +1,369 @@
+openapi: '3.0.0'
+info:
+  title: OCR
+  version: '1.0.0'
+  description: |
+    Extract structured JSON from uploaded examination result documents
+    (WAEC, NECO, NABTEB, GCE) supplied as PDF or image. Pairs with
+    `docs-impl/015-ocr-technical-design.md`. Base path: **`/ocr`**.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    FileId:
+      name: fileId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    ExamType:
+      type: string
+      enum: [auto, waec, neco, nabteb, gce, generic]
+
+    Subject:
+      type: object
+      required: [name, grade]
+      properties:
+        name: { type: string, example: ENGLISH LANGUAGE }
+        code: { type: string, nullable: true, example: '001' }
+        grade:
+          type: string
+          example: B3
+          description: |
+            Grade exactly as printed on the certificate. For
+            WAEC / NECO / NABTEB this is one of `A1`, `B2`, `B3`, `C4`,
+            `C5`, `C6`, `D7`, `E8`, `F9`. For GCE A-Level it is one of
+            `A`, `B`, `C`, `D`, `E`, `U`. WAEC GCE (O-Level) uses the
+            same `A1..F9` scheme as WAEC SSCE.
+        grade_normalized:
+          type: string
+          nullable: true
+          enum: [A, B, C, D, E, F, null]
+          example: B
+          description: |
+            A–F collapse of `grade` for downstream scoring (academic module
+            uses this for the `+1` / `0` rule). Mapping:
+            `A1→A`, `B2|B3→B`, `C4|C5|C6→C`, `D7→D`, `E8→E`, `F9→F`,
+            GCE `U→F`. `null` when the raw grade could not be recognized.
+        score:
+          type: number
+          nullable: true
+          description: 'Numeric score where present (NECO, GCE)'
+
+    Candidate:
+      type: object
+      properties:
+        name: { type: string, example: ADEGOKE RASHEED OLUWASEUN }
+        exam_number: { type: string, example: '4250101234' }
+        centre_number: { type: string, nullable: true }
+        centre_name: { type: string, nullable: true }
+        date_of_birth:
+          type: string
+          format: date
+          nullable: true
+
+    OcrResult:
+      type: object
+      required: [exam_type, candidate, subjects, confidence]
+      properties:
+        exam_type:
+          $ref: '#/components/schemas/ExamType'
+        exam_body: { type: string, example: WEST AFRICAN EXAMINATIONS COUNCIL }
+        exam_year: { type: integer, example: 2023 }
+        exam_diet:
+          type: string
+          nullable: true
+          enum: [May/June, November/December, Private, null]
+        candidate:
+          $ref: '#/components/schemas/Candidate'
+        subjects:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subject'
+        summary:
+          type: object
+          properties:
+            subject_count: { type: integer }
+            credits: { type: integer }
+            passes: { type: integer }
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          example: 92.4
+        warnings:
+          type: array
+          items: { type: string }
+          example: ['low_confidence_field:candidate.date_of_birth']
+
+    OcrJob:
+      type: object
+      required: [job_id, file_id, status, exam_type, provider]
+      properties:
+        job_id: { type: string, format: uuid }
+        file_id: { type: string, format: uuid }
+        exam_type:
+          $ref: '#/components/schemas/ExamType'
+        provider:
+          type: string
+          enum: [pdf_text, tesseract, ocr_space, aws_textract, google_doc_ai, mock]
+          description: |
+            Provider that produced the result. Default chain is
+            `pdf_text` → `tesseract` (both free, in-process). `ocr_space`,
+            `aws_textract`, and `google_doc_ai` are optional fallbacks. `mock`
+            is test-only and is never returned in production.
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        attempt_count: { type: integer }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        result:
+          allOf:
+            - $ref: '#/components/schemas/OcrResult'
+          nullable: true
+        raw_text_excerpt:
+          type: string
+          nullable: true
+          description: 'First ~500 chars of OCR text. Full text only for staff.'
+        error:
+          type: object
+          nullable: true
+          properties:
+            code: { type: string, example: OCR_PROVIDER_TIMEOUT }
+            message: { type: string }
+
+    CreateJobJsonBody:
+      type: object
+      properties:
+        file_id: { type: string, format: uuid, description: 'Existing files.id (preferred)' }
+        data: { type: string, description: 'base64-encoded file (alternative to file_id)' }
+        filename: { type: string, description: 'Required when data is supplied' }
+        mime_type: { type: string }
+        exam_type:
+          $ref: '#/components/schemas/ExamType'
+        wait:
+          type: boolean
+          default: false
+          description: 'If true, block up to 30s for synchronous result.'
+        context: { type: string, example: submission }
+        metadata:
+          type: object
+          properties:
+            registration_id: { type: string, format: uuid }
+            requirement_id: { type: string, format: uuid }
+      oneOf:
+        - required: [file_id]
+        - required: [data, filename]
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - OCR_FILE_NOT_FOUND
+                - OCR_UNSUPPORTED_MIME
+                - OCR_FILE_TOO_LARGE
+                - OCR_PROVIDER_TIMEOUT
+                - OCR_PROVIDER_FAILED
+                - OCR_UNREADABLE
+                - OCR_PARSER_FAILED
+                - OCR_NOT_OWNER
+            message: { type: string }
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: OCR
+
+paths:
+  /ocr/jobs:
+    post:
+      tags: [OCR]
+      summary: Create an OCR job
+      description: |
+        Submit a PDF or image for OCR. Provide **one** of:
+        - `file` (multipart) — direct upload
+        - `file_id` (JSON) — existing file in the `files` module
+        - `data` + `filename` (JSON) — base64 payload
+
+        Returns `202` with a `job_id` to poll, or `200` with the result when
+        `wait=true` and processing completes within 30s.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                exam_type:
+                  $ref: '#/components/schemas/ExamType'
+                wait: { type: boolean, default: false }
+                context: { type: string }
+                metadata: { type: string, description: 'JSON-encoded object' }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJobJsonBody'
+      responses:
+        '200':
+          description: Synchronous completion (wait=true)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OcrJob'
+        '202':
+          description: Job accepted; poll status via GET /ocr/jobs/{jobId}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OcrJob'
+        '400': { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '413': { description: File too large, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '415': { description: Unsupported MIME, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+    get:
+      tags: [OCR]
+      summary: List OCR jobs
+      description: |
+        Owner-scoped by default. Staff with `ocr.read.any` see all jobs.
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [queued, processing, completed, failed]
+        - in: query
+          name: exam_type
+          schema:
+            $ref: '#/components/schemas/ExamType'
+        - in: query
+          name: file_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          description: Paginated job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OcrJob' }
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+
+  /ocr/jobs/{jobId}:
+    get:
+      tags: [OCR]
+      summary: Get an OCR job (status + result when complete)
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: OCR job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OcrJob' }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /ocr/jobs/{jobId}/retry:
+    post:
+      tags: [OCR]
+      summary: Re-run a failed job
+      description: |
+        Allowed only when the source job's `status` is `failed`. Creates a
+        **new** job referencing the same `file_id`; the original is left
+        untouched for audit.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202':
+          description: Retry accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OcrJob' }
+        '409':
+          description: Source job is not in `failed` state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /ocr/jobs/{jobId}/bind-requirement:
+    post:
+      tags: [OCR]
+      summary: Bind a completed OCR result to a submission requirement
+      description: |
+        Records the linkage between an OCR result and a JUPEB submission
+        requirement so the `submission` / `academic` modules can pre-fill
+        candidate grades. Requires `ocr.requirement.bind` or ownership of the
+        registration.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registration_id, requirement_id]
+              properties:
+                registration_id: { type: string, format: uuid }
+                requirement_id: { type: string, format: uuid }
+      responses:
+        '200': { description: Bound }
+        '403': { description: Forbidden }
+        '404': { description: Job, registration, or requirement not found }
+        '409': { description: Job is not completed }
+
+  /ocr/files/{fileId}/latest:
+    get:
+      tags: [OCR]
+      summary: Latest completed OCR result for a file
+      description: Convenience endpoint for UIs that already hold a `file_id`.
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Latest completed job for the file
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OcrJob' }
+        '404':
+          description: No completed job exists for this file
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }

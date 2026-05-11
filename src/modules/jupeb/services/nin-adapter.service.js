@@ -1,46 +1,11 @@
+// Thin facade over the NIN provider registry. The active provider is chosen
+// by JUPEB_NIN_PROVIDER (default: 'mock'). JUPEB_NIN_FORCE_UNAVAILABLE=1
+// short-circuits to an `unavailable` outcome regardless of provider — used
+// by tests to exercise the resolver's retry/back-off paths.
+
+const registry = require('./nin-providers');
+
 const DEFAULT_RETRY_SECONDS = 300;
-
-const MOCK_PROFILE = {
-  first_name: 'Mock',
-  last_name: 'Candidate',
-  middle_name: null,
-  date_of_birth: '1990-01-01',
-  gender: 'unspecified',
-  address: '123 Main Street, Lagos, Nigeria',
-  state_of_origin: 'Ondo State',
-  lga: 'Ondo West',
-  place_of_birth: 'Lagos State',
-  phone: '+234 801 234 5678',
-  next_of_kin: {
-    name: 'Jane Johnson',
-    relationship: 'Mother',
-    contact: '+234 802 345 6789',
-  },
-  photo_url: null,
-};
-
-function mockOutcome(normalizedNin) {
-  if (normalizedNin.length !== 11) {
-    return {
-      outcome: 'failed',
-      error_code: 'invalid_nin',
-      error_message: 'NIN must be 11 digits',
-    };
-  }
-  if (/^0+$/.test(normalizedNin)) {
-    return {
-      outcome: 'failed',
-      error_code: 'invalid_nin',
-      error_message: 'Invalid NIN',
-    };
-  }
-  const ref = `mock-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return {
-    outcome: 'verified',
-    provider_reference: ref,
-    profile: { ...MOCK_PROFILE },
-  };
-}
 
 function unavailable() {
   const seconds = Number(process.env.JUPEB_NIN_RETRY_AFTER_SECONDS) || DEFAULT_RETRY_SECONDS;
@@ -53,11 +18,11 @@ function unavailable() {
 }
 
 function getProvider() {
-  return (process.env.JUPEB_NIN_PROVIDER || 'mock').toLowerCase();
+  return registry.resolveName();
 }
 
 /**
- * Verify a normalized 11-digit NIN.
+ * Verify a normalized 11-digit NIN through the currently selected provider.
  *
  * Returns an outcome of `verified`, `failed` (provider rejected the NIN — terminal),
  * or `unavailable` (we could not reach the provider — should be retried).
@@ -80,11 +45,13 @@ async function verifyNin(normalizedNin) {
     const u = unavailable();
     return { ...u, ok: false };
   }
-  const result = mockOutcome(normalizedNin);
+  const provider = registry.get(getProvider());
+  const result = await provider.verifyNin(normalizedNin);
   return { ...result, ok: result.outcome === 'verified' };
 }
 
 module.exports = {
   verifyNin,
   getProvider,
+  listProviders: registry.list,
 };

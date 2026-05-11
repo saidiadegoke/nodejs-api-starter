@@ -50,6 +50,35 @@ router.post(
 );
 
 /**
+ * @route   POST /api/auth/register-with-code
+ * @desc    Single-shot signup using an institution-issued registration code (M.3)
+ * @access  Public
+ */
+router.post(
+  '/register-with-code',
+  [
+    body('code').isString().trim().notEmpty().withMessage('code is required'),
+    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+    body('email').optional().isEmail().withMessage('Valid email is required'),
+    body('phone')
+      .optional()
+      .matches(/^(\+)?\d{8,20}$/)
+      .withMessage('Valid phone number is required (8-20 digits, optional + prefix)'),
+    body('first_name').optional().isString().trim(),
+    body('last_name').optional().isString().trim(),
+    validate
+  ],
+  AuthController.registerWithCode
+);
+
+/**
+ * @route   GET /api/auth/code-status
+ * @desc    Public lookup — is this institution code valid? (M.9)
+ * @access  Public
+ */
+router.get('/code-status', AuthController.codeStatus);
+
+/**
  * @route   POST /api/auth/login
  * @desc    Login user
  * @access  Public

@@ -89,6 +89,18 @@ class SubmissionController {
     }
   }
 
+  static async downloadUrlMine(req, res) {
+    try {
+      const data = await submissionService.downloadUrlMine(
+        req.user.user_id,
+        req.params.documentId
+      );
+      return sendSuccess(res, data);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
   static async validateCompleteness(req, res) {
     try {
       const data = await submissionService.validateCompleteness(req.user.user_id, req.body.registration_id);

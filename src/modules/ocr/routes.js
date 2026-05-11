@@ -1,0 +1,29 @@
+const router = require('express').Router();
+const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const { uploadSingle } = require('../../shared/middleware/upload.middleware');
+const OcrController = require('./controllers/ocr.controller');
+
+router.get('/health', (req, res) => {
+  res.json({ success: true, module: 'ocr', status: 'ok' });
+});
+
+router.post(
+  '/jobs',
+  requireAuth,
+  (req, res, next) => {
+    const ct = (req.headers['content-type'] || '').toLowerCase();
+    if (ct.startsWith('multipart/form-data')) {
+      return uploadSingle('file')(req, res, next);
+    }
+    return next();
+  },
+  OcrController.createJob
+);
+
+router.get('/jobs', requireAuth, OcrController.listJobs);
+router.get('/jobs/:jobId', requireAuth, OcrController.getJob);
+router.post('/jobs/:jobId/retry', requireAuth, OcrController.retryJob);
+router.post('/jobs/:jobId/bind-requirement', requireAuth, OcrController.bindRequirement);
+router.get('/files/:fileId/latest', requireAuth, OcrController.getLatestForFile);
+
+module.exports = router;

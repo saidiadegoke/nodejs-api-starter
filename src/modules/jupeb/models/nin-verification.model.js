@@ -3,7 +3,8 @@ const pool = require('../../../db/pool');
 const RETURNING_COLUMNS = `
   id, nin_hash, nin_last4, provider, provider_reference, idempotency_key, status,
   response_payload, error_payload, verified_at, requested_by, created_at,
-  intake_payload, retry_after, attempt_count, last_attempt_at, last_error_code
+  intake_payload, retry_after, attempt_count, last_attempt_at, last_error_code,
+  cleared_at
 `;
 
 class NinVerificationModel {
@@ -133,6 +134,38 @@ class NinVerificationModel {
        WHERE id = $1 AND status = 'pending'
        RETURNING ${RETURNING_COLUMNS}`,
       [id, retry_after || null, last_error_code || null]
+    );
+    return result.rows[0] || null;
+  }
+
+  // Cache lookup: the latest verified row for this nin_hash that hasn't been
+  // cleared yet. Used by IdentityService.verifyNin to avoid a second upstream
+  // call while the linked registration is still in-flight.
+  async findActiveCacheByNinHash(ninHash) {
+    if (!ninHash) return null;
+    const result = await pool.query(
+      `SELECT * FROM jupeb_nin_verifications
+       WHERE nin_hash = $1
+         AND status = 'verified'
+         AND cleared_at IS NULL
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [ninHash]
+    );
+    return result.rows[0] || null;
+  }
+
+  // PII purge + cache invalidation. After this runs, the row is kept for
+  // audit (status, verified_at, nin_last4, provider_reference) but the
+  // sensitive profile data is gone and subsequent cache lookups will miss.
+  async clearById(id) {
+    const result = await pool.query(
+      `UPDATE jupeb_nin_verifications
+         SET response_payload = '{}'::jsonb,
+             cleared_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND cleared_at IS NULL
+       RETURNING ${RETURNING_COLUMNS}`,
+      [id]
     );
     return result.rows[0] || null;
   }
