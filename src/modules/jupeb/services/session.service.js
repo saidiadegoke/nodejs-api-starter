@@ -337,6 +337,15 @@ class SessionService {
     return registrationService.finalizeCandidateNumbers(id, userId);
   }
 
+  /**
+   * Sweep finalize over every closed session in one call. Useful for
+   * the registrar's end-of-year batch. Per-session errors are captured
+   * (not thrown) so a single bad session doesn't abort the run.
+   */
+  async finalizeAllClosed(userId) {
+    return registrationService.finalizeAllClosedSessions(userId);
+  }
+
   async _statsRaw(id) {
     await this.getById(id);
     let byStatus = {};

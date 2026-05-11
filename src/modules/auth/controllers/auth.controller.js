@@ -17,25 +17,27 @@ class AuthController {
 
       const user = await AuthService.register(req.body);
       
-      // Send welcome email asynchronously if user has email
+      // Fire-and-forget welcome email — deferred via setImmediate so
+      // the HTTP response goes out before the worker boots.
       if (user.email && req.body.first_name) {
         const sendEmail = require('../../../shared/utils/sendEmail');
         const appName = process.env.APP_NAME || 'our app';
         const welcomeUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/`;
 
-        sendEmail({
-          to: user.email,
-          subject: `Welcome to ${appName}!`,
-          templateFile: 'welcome.html',
-          placeholders: [
-            req.body.first_name || 'User',
-            welcomeUrl,
-            user.email
-          ]
-        }).then(() => {
-          console.log('Welcome email sent to:', user.email);
-        }).catch((emailError) => {
-          console.error('Failed to send welcome email:', emailError);
+        setImmediate(() => {
+          sendEmail({
+            to: user.email,
+            subject: `Welcome to ${appName}!`,
+            templateFile: 'welcome.html',
+            placeholders: [
+              req.body.first_name || 'User',
+              welcomeUrl,
+              user.email
+            ]
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[auth.register] welcome email failed:', err && err.message);
+          });
         });
       }
       
@@ -73,7 +75,34 @@ class AuthController {
   }
 
   /**
-   * M.9 — Public code-status lookup (no auth) for figma `log in 11` pre-validation
+   * Public code-status lookup (M.9 — figma `log in 11` pre-validation).
+   *
+   * Tells the mobile / web app, given a code typed by the student:
+   *   1. Is the code valid and still claimable? → show "create account"
+   *   2. Has it already been used to create an account? → show "log in"
+   *      (with the account's masked email/phone so the client can
+   *      prefill the identifier field)
+   *   3. Is it expired / unknown? → show error
+   *
+   * Response shape:
+   *   {
+   *     valid: boolean,         // can this code still be used to claim?
+   *     error_code?: string,    // present when valid === false
+   *     expires_at?: ISO,
+   *     university?: { id, name, short_name },
+   *     account?: {             // present when error_code === 'code_already_claimed'
+   *       exists: true,
+   *       active: boolean,      // users.status === 'active'
+   *       email_masked: string|null,
+   *       phone_masked: string|null,
+   *       email_verified: boolean,
+   *       phone_verified: boolean,
+   *       can_login: boolean,   // true ⇔ active === true
+   *     }
+   *   }
+   *
+   * Public endpoint — no auth required. Account identifiers are masked
+   * so the response can't be used for enumeration.
    */
   static async codeStatus(req, res) {
     try {
@@ -84,11 +113,19 @@ class AuthController {
         });
       }
       const pool = require('../../../db/pool');
+      // JOIN users too so a single round-trip carries everything we need
+      // to decide between "claim" and "log in" UIs on the client.
       const result = await pool.query(
         `SELECT r.id, r.status, r.user_id, r.institution_code_expires_at,
-                u.id AS university_id, u.name AS university_name, u.short_name
+                u.id AS university_id, u.name AS university_name, u.short_name,
+                acc.email AS account_email,
+                acc.phone AS account_phone,
+                acc.status AS account_status,
+                acc.email_verified AS account_email_verified,
+                acc.phone_verified AS account_phone_verified
          FROM jupeb_registrations r
-         JOIN jupeb_universities u ON u.id = r.university_id
+         JOIN jupeb_universities u  ON u.id = r.university_id
+         LEFT JOIN users acc        ON acc.id = r.user_id
          WHERE r.institution_issued_code = $1
          LIMIT 1`,
         [code]
@@ -97,6 +134,13 @@ class AuthController {
       if (!row) {
         return sendSuccess(res, { valid: false, error_code: 'code_not_found' });
       }
+
+      const university = {
+        id: row.university_id,
+        name: row.university_name,
+        short_name: row.short_name,
+      };
+
       if (
         row.institution_code_expires_at &&
         new Date(row.institution_code_expires_at).getTime() < Date.now()
@@ -104,23 +148,41 @@ class AuthController {
         return sendSuccess(res, {
           valid: false,
           error_code: 'code_expired',
-          expires_at: row.institution_code_expires_at
+          expires_at: row.institution_code_expires_at,
+          university,
         });
       }
+
+      // Code has been used (user_id set ⇒ account exists; status≠code_issued
+      // without a user means something moved the row administratively).
       if (row.status !== 'code_issued' || row.user_id) {
-        return sendSuccess(res, {
+        const claimed = !!row.user_id;
+        const out = {
           valid: false,
-          error_code: row.user_id ? 'code_already_claimed' : 'code_unavailable'
-        });
+          error_code: claimed ? 'code_already_claimed' : 'code_unavailable',
+          expires_at: row.institution_code_expires_at,
+          university,
+        };
+        if (claimed) {
+          const active = row.account_status === 'active';
+          out.account = {
+            exists: true,
+            active,
+            email_masked: AuthController._maskRecipient(row.account_email),
+            phone_masked: AuthController._maskRecipient(row.account_phone),
+            email_verified: !!row.account_email_verified,
+            phone_verified: !!row.account_phone_verified,
+            can_login: active,
+          };
+        }
+        return sendSuccess(res, out);
       }
+
+      // Claimable.
       return sendSuccess(res, {
         valid: true,
         expires_at: row.institution_code_expires_at,
-        university: {
-          id: row.university_id,
-          name: row.university_name,
-          short_name: row.short_name
-        }
+        university,
       });
     } catch (err) {
       return sendError(res, err.message, 500);
@@ -185,59 +247,191 @@ class AuthController {
   }
 
   /**
-   * Verify phone number
+   * Verify a 6-digit OTP (email or SMS — both flow through the same
+   * code path). Accepts the identifier on either `identifier`, `email`,
+   * or `phone` for backward compatibility with the legacy `verify-phone`
+   * payload. Returns 200 + { verified: true, user_id, channel }.
    */
   static async verifyPhone(req, res) {
     try {
-      const pool = require('../../../db/pool');
-      const { phone, otp } = req.body;
-      
-      if (!phone || !otp) {
-        return sendError(res, 'Phone and OTP are required', BAD_REQUEST);
+      const identifier = AuthController._otpIdentifier(req.body);
+      if (!identifier) {
+        return sendError(res, 'identifier (email or phone) is required', BAD_REQUEST);
       }
-      
-      // In production, verify OTP from SMS service or database
-      // For testing/development, accept '123456' as valid OTP
-      if (otp === '123456') {
-        // Mark phone as verified
-        const result = await pool.query(
-          `UPDATE users SET phone_verified = true, updated_at = NOW() WHERE phone = $1 RETURNING id`,
-          [phone]
-        );
-        
-        if (result.rows.length > 0) {
-          sendSuccess(res, { 
-            verified: true, 
-            user_id: result.rows[0].id 
-          }, 'Phone number verified successfully', OK);
-        } else {
-          sendError(res, 'User not found', BAD_REQUEST);
-        }
-      } else {
-        sendError(res, 'Invalid OTP', BAD_REQUEST);
+      const { otp } = req.body;
+      if (!otp) {
+        return sendError(res, 'OTP is required', BAD_REQUEST);
       }
+      const AuthModel = require('../models/auth.model');
+      const user = await AuthModel.findByIdentifier(identifier);
+      if (!user) {
+        // Don't leak existence — mirror an invalid-OTP response.
+        return sendError(res, 'Invalid verification code', BAD_REQUEST);
+      }
+      const otpService = require('../services/otp.service');
+      const result = await otpService.verifyOtp(user.id, otp);
+      return sendSuccess(
+        res,
+        { verified: true, user_id: user.id, channel: result.channel },
+        'Verification successful',
+        OK
+      );
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
   }
 
   /**
-   * Resend OTP
+   * Issue a fresh 6-digit OTP for the user and dispatch it via the
+   * configured channel(s). Channel selection (in priority order):
+   *   1. request body `channel: 'email' | 'sms' | 'both'`
+   *   2. env `OTP_CHANNEL`
+   *   3. default `'email'`
+   *
+   * Response shape:
+   *   { sent, channels: ['email'?, 'sms'?], expires_at, masked_recipient }
+   *
+   * Never leaks whether the user exists — when no account matches, the
+   * handler still returns 200 with a fake-mask response so an attacker
+   * can't enumerate registered accounts.
    */
   static async resendOtp(req, res) {
     try {
-      const { phone } = req.body;
-      
-      // Mock implementation - would send actual SMS
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-      
-      sendSuccess(res, { 
-        sent: true, 
-        expires_at: expiresAt.toISOString() 
-      }, 'OTP sent successfully', OK);
+      const identifier = AuthController._otpIdentifier(req.body);
+      if (!identifier) {
+        return sendError(res, 'identifier (email or phone) is required', BAD_REQUEST);
+      }
+      const requestedChannel = req.body && req.body.channel;
+      const AuthModel = require('../models/auth.model');
+      const user = await AuthModel.findByIdentifier(identifier);
+
+      // Account-enumeration guard: same response shape whether the user
+      // exists or not. We still do the lookup but bail with a fake mask.
+      if (!user) {
+        const ttlMs = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
+        return sendSuccess(
+          res,
+          {
+            sent: true,
+            channels: [(requestedChannel || process.env.OTP_CHANNEL || 'email')],
+            expires_at: new Date(Date.now() + ttlMs).toISOString(),
+            masked_recipient: AuthController._maskRecipient(identifier),
+          },
+          'Verification code sent',
+          OK
+        );
+      }
+
+      const otpService = require('../services/otp.service');
+      const issued = await otpService.issueOtp(user.id, {
+        channel: requestedChannel,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      return sendSuccess(
+        res,
+        {
+          sent: true,
+          channels: issued.channels,
+          expires_at: issued.expires_at,
+          masked_recipient: AuthController._maskRecipient(
+            issued.channels.includes('email') ? user.email : user.phone
+          ),
+          // In test mode, the raw code is surfaced so integration tests
+          // can assert the verify-side mechanics. Outside of test mode
+          // this field is absent.
+          ...(issued.code ? { code: issued.code } : {}),
+        },
+        'Verification code sent',
+        OK
+      );
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
+  }
+
+  // ── Email verification (token-link flow) ───────────────────────────────
+  //
+  // Three routes:
+  //   POST /auth/send-verification    (authenticated)
+  //   POST /auth/resend-verification  (authenticated; same effect, alt template)
+  //   GET  /auth/verify-email?token=  (public — the link target)
+  //
+  // Service methods (sendVerificationEmail, resendVerificationEmail,
+  // verifyEmailToken) already exist on AuthService; these are just the
+  // HTTP entry points.
+
+  static async sendVerification(req, res) {
+    try {
+      const userId = req.user && req.user.user_id;
+      if (!userId) return sendError(res, 'Unauthorized', UNAUTHORIZED);
+      const result = await AuthService.sendVerificationEmail(userId);
+      // Never expose the raw token outside test mode; the service only
+      // returns it for assertion convenience.
+      const safe = { sent: true, expires_at: result.expiresAt };
+      if (process.env.NODE_ENV === 'test') safe.token = result.token;
+      return sendSuccess(res, safe, 'Verification email queued', OK);
+    } catch (err) {
+      const details = err.error_code ? { error_code: err.error_code } : null;
+      return sendError(res, err.message, err.status || BAD_REQUEST, details);
+    }
+  }
+
+  static async resendVerification(req, res) {
+    try {
+      const userId = req.user && req.user.user_id;
+      if (!userId) return sendError(res, 'Unauthorized', UNAUTHORIZED);
+      const result = await AuthService.resendVerificationEmail(userId);
+      const safe = { sent: true, expires_at: result.expiresAt };
+      if (process.env.NODE_ENV === 'test') safe.token = result.token;
+      return sendSuccess(res, safe, 'Verification email queued', OK);
+    } catch (err) {
+      const details = err.error_code ? { error_code: err.error_code } : null;
+      return sendError(res, err.message, err.status || BAD_REQUEST, details);
+    }
+  }
+
+  static async verifyEmail(req, res) {
+    try {
+      // Accept the token from query (link click) or body (POST variant).
+      const token = (req.query && req.query.token) || (req.body && req.body.token);
+      const result = await AuthService.verifyEmailToken(token);
+      return sendSuccess(res, result, 'Email verified', OK);
+    } catch (err) {
+      const details = err.error_code ? { error_code: err.error_code } : null;
+      return sendError(res, err.message, err.status || BAD_REQUEST, details);
+    }
+  }
+
+  /**
+   * Pull the OTP identifier (email or phone) from a request body that
+   * may carry it under `identifier`, `email`, or the legacy `phone`.
+   */
+  static _otpIdentifier(body) {
+    if (!body || typeof body !== 'object') return null;
+    const raw = body.identifier || body.email || body.phone;
+    return raw ? String(raw).trim() : null;
+  }
+
+  /**
+   * Mask an email or phone for safe response logging. Email: keep first
+   * 2 + last 1 of local part. Phone: keep first 4 + last 2.
+   */
+  static _maskRecipient(value) {
+    if (!value) return '***';
+    const s = String(value);
+    if (s.includes('@')) {
+      return s.replace(/^(.{1,2})[^@]*(@.*)$/, '$1***$2');
+    }
+    if (s.length > 6) {
+      return `${s.slice(0, 4)}***${s.slice(-2)}`;
+    }
+    return '***';
   }
 
   /**
@@ -293,20 +487,21 @@ class AuthController {
         const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-        sendEmail({
-          to: user.email,
-          subject: `Reset Your ${appName} Password`,
-          templateFile: 'forgot-password.html',
-          placeholders: [
-            user.first_name || user.display_name || 'User',
-            resetUrl,
-            resetUrl,
-            user.email
-          ]
-        }).then(() => {
-          console.log('Password reset email sent successfully to:', user.email);
-        }).catch((emailError) => {
-          console.error('Failed to send reset email:', emailError);
+        setImmediate(() => {
+          sendEmail({
+            to: user.email,
+            subject: `Reset Your ${appName} Password`,
+            templateFile: 'forgot-password.html',
+            placeholders: [
+              user.first_name || user.display_name || 'User',
+              resetUrl,
+              resetUrl,
+              user.email
+            ]
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[auth.forgotPassword] reset email failed:', err && err.message);
+          });
         });
         
         const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
@@ -452,21 +647,22 @@ class AuthController {
           minute: '2-digit'
         });
 
-        sendEmail({
-          to: resetRecord.email,
-          subject: `Password Reset Successful - ${appName}`,
-          templateFile: 'password-reset-success.html',
-          placeholders: [
-            resetRecord.first_name || 'User',
-            resetDate,
-            loginUrl,
-            resetDate,
-            resetRecord.email
-          ]
-        }).then(() => {
-          console.log('Password reset success email sent to:', resetRecord.email);
-        }).catch((emailError) => {
-          console.error('Failed to send password reset success email:', emailError);
+        setImmediate(() => {
+          sendEmail({
+            to: resetRecord.email,
+            subject: `Password Reset Successful - ${appName}`,
+            templateFile: 'password-reset-success.html',
+            placeholders: [
+              resetRecord.first_name || 'User',
+              resetDate,
+              loginUrl,
+              resetDate,
+              resetRecord.email
+            ]
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[auth.resetPassword] success email failed:', err && err.message);
+          });
         });
       }
       

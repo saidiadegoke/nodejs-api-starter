@@ -7,11 +7,15 @@ const { parentPort } = require('worker_threads');
 // Load environment variables from .env file
 dotenv.config();
 
-// Create a transporter using the SMTP configuration
+// Create a transporter using the SMTP configuration. `secure` MUST be derived
+// from the port: 465 uses implicit TLS (true); 587/25/2525 use STARTTLS
+// (false → nodemailer upgrades automatically). Hard-coding `true` on port 587
+// breaks the TLS handshake immediately.
+const SMTP_PORT = Number(process.env.SMTP_PORT) || 465;
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
-  secure: true, // Use true for port 465, false for other ports
+  port: SMTP_PORT,
+  secure: SMTP_PORT === 465,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASSWORD,

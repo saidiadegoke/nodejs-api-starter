@@ -68,6 +68,22 @@ class RegistrationController {
     }
   }
 
+  // Single-call candidate detail — composes registration, candidate user,
+  // displays, NIN verification, documents, result entries, biometrics,
+  // NoK, and status history. Powers the institution dashboard's
+  // candidate detail page.
+  static async institutionGetCandidate(req, res) {
+    try {
+      const data = await registrationService.institutionGetCandidate(
+        req.params.registrationId,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Candidate detail');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
   static async institutionApprove(req, res) {
     try {
       const row = await registrationService.institutionApprove(req.params.registrationId, req.user.user_id);

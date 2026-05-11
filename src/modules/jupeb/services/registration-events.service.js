@@ -1,9 +1,11 @@
 const NotificationService = require('../../notifications/services/notification.service');
 const WebhookService = require('../../webhooks/services/webhook.service');
+const jupebMailer = require('./jupeb-mailer.service');
 
 /**
- * After a registration is approved: in-app notification + user webhook delivery.
- * Failures are swallowed so approval cannot be rolled back by side-effects.
+ * After a registration is approved: in-app notification + user webhook
+ * delivery + congratulations email. Failures (including email delivery)
+ * are swallowed so approval cannot be rolled back by side-effects.
  */
 async function emitRegistrationApproved(registration, approvedByUserId) {
   if (!registration.user_id) return;
@@ -26,6 +28,7 @@ async function emitRegistrationApproved(registration, approvedByUserId) {
     /* non-fatal */
   }
   WebhookService.fire(registration.user_id, 'jupeb.registration.approved', payload);
+  setImmediate(() => { jupebMailer.sendRegistrationApproved(registration.id); });
 }
 
 module.exports = {

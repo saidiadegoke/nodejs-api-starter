@@ -14,6 +14,9 @@ router.post('/institution/registrations', instReg, RegistrationController.instit
 router.patch('/institution/registrations/:registrationId', instReg, RegistrationController.institutionPatch);
 router.get('/institution/registrations', instReg, RegistrationController.institutionList);
 router.get('/institution/registrations/export', instReg, RegistrationController.institutionExportCsv);
+// NOTE: must come AFTER the literal /export route above, otherwise
+// Express matches `:registrationId === "export"`.
+router.get('/institution/registrations/:registrationId', instReg, RegistrationController.institutionGetCandidate);
 router.get('/institution/overview/stats', instReg, RegistrationController.institutionStats);
 router.get('/institution/overview/by-university', instReg, RegistrationController.institutionByUniversity);
 router.post('/institution/registrations/batch', instReg, RegistrationController.institutionBatchAction);

@@ -337,6 +337,27 @@ class AuthService {
       });
 
       const claimedReg = upd.rows[0];
+
+      // Fire-and-forget welcome email. Send only when we have an email
+      // address; never block the registration on email delivery. Wrapped
+      // in setImmediate so the unawaited promise's DB queries don't
+      // share the response's microtask tail.
+      if (user.email) {
+        setImmediate(() => {
+          try {
+            // eslint-disable-next-line global-require
+            const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
+            // The mailer's loadRecipient does its own university lookup;
+            // pass only what we already have so this stays one query.
+            jupebMailer.sendWelcomeStudent({
+              email: user.email,
+              firstName: first_name,
+              provisionalCode: claimedReg.provisional_candidate_code,
+            });
+          } catch (_) { /* non-fatal */ }
+        });
+      }
+
       return {
         access_token: accessToken,
         refresh_token: refreshToken,
@@ -413,6 +434,36 @@ class AuthService {
       [user.id]
     );
     
+    // Embed the latest JUPEB registration so mobile clients can route
+    // immediately on app boot without a follow-up /me/current call.
+    // Best-effort: silent if the jupeb tables aren't migrated.
+    let registration = null;
+    try {
+      const regRes = await pool.query(
+        `SELECT id, status, provisional_candidate_code, jupeb_candidate_number,
+                claimed_at, submitted_at, approved_at, dashboard_unlocked_at
+           FROM jupeb_registrations
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [user.id]
+      );
+      if (regRes.rows[0]) {
+        const r = regRes.rows[0];
+        registration = {
+          id: r.id,
+          status: r.status,
+          provisional_candidate_code: r.provisional_candidate_code,
+          jupeb_candidate_number: r.jupeb_candidate_number,
+          claimed_at: r.claimed_at,
+          submitted_at: r.submitted_at,
+          approved_at: r.approved_at,
+          dashboard_unlocked: Boolean(r.dashboard_unlocked_at),
+          next_step: AuthService._nextStepForRegistration(r.status),
+        };
+      }
+    } catch { /* jupeb tables absent — non-fatal */ }
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -430,8 +481,27 @@ class AuthService {
         rating: null,
         verified: user.email_verified && user.phone_verified,
         created_at: user.created_at
-      }
+      },
+      registration,
     };
+  }
+
+  /**
+   * Maps a registration status to the next action the mobile / web app
+   * should send the user to. Kept in sync with registration-state.service.
+   */
+  static _nextStepForRegistration(status) {
+    switch (status) {
+      case 'code_issued':                 return 'claim_code';
+      case 'claimed':                     return 'confirm_subjects';
+      case 'pending_student_confirm':     return 'confirm_subjects';
+      case 'pending_documents':           return 'upload_documents';
+      case 'pending_institution_review':  return 'await_review';
+      case 'approved':                    return 'view_dashboard';
+      case 'rejected':                    return 'view_rejection';
+      case 'withdrawn':                   return 'restart';
+      default:                            return null;
+    }
   }
 
   /**
@@ -531,6 +601,160 @@ class AuthService {
       await AuthModel.revokeSession(sessionId);
     }
     return true;
+  }
+
+  // ── Email verification ─────────────────────────────────────────────────
+  //
+  // Single active token per user, stored as a sha256 hash on the users row.
+  // Raw token only lives in the recipient's inbox. Resend overwrites.
+  // TTL defaults to 24 hours; override with EMAIL_VERIFICATION_TTL_HOURS.
+
+  static _verificationTtlMs() {
+    const hours = Number(process.env.EMAIL_VERIFICATION_TTL_HOURS) || 24;
+    return Math.max(1, hours) * 60 * 60 * 1000;
+  }
+
+  static _hashToken(token) {
+    return require('crypto').createHash('sha256').update(token).digest('hex');
+  }
+
+  static _verifyUrl(token) {
+    const base = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    return `${base}/auth/verify-email?token=${encodeURIComponent(token)}`;
+  }
+
+  /**
+   * Issue (or re-issue) a verification token for the user, persist its
+   * sha256 hash, and fire the verification email. Idempotent under
+   * resend: the prior token is overwritten and becomes unverifiable.
+   *
+   * Returns the raw token for tests / non-email channels; callers in
+   * production should ignore it and let the email do the work.
+   */
+  static async sendVerificationEmail(userId, { templateFile = 'email-verification.html' } = {}) {
+    const pool = require('../../../db/pool');
+    const sendEmail = require('../../../shared/utils/sendEmail');
+
+    const userRes = await pool.query(
+      `SELECT u.id, u.email, u.email_verified, p.first_name
+         FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+        WHERE u.id = $1 LIMIT 1`,
+      [userId]
+    );
+    const user = userRes.rows[0];
+    if (!user) {
+      const err = new Error('User not found');
+      err.status = 404;
+      err.error_code = 'user_not_found';
+      throw err;
+    }
+    if (!user.email) {
+      const err = new Error('User has no email address');
+      err.status = 422;
+      err.error_code = 'email_required';
+      throw err;
+    }
+    if (user.email_verified) {
+      const err = new Error('Email already verified');
+      err.status = 409;
+      err.error_code = 'already_verified';
+      throw err;
+    }
+
+    const token = require('crypto').randomBytes(32).toString('hex');
+    const tokenHash = AuthService._hashToken(token);
+    const expiresAt = new Date(Date.now() + AuthService._verificationTtlMs());
+
+    await pool.query(
+      `UPDATE users
+          SET email_verification_token_hash = $2,
+              email_verification_expires_at = $3,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [userId, tokenHash, expiresAt.toISOString()]
+    );
+
+    // Fire-and-forget; deferred so the request handler's microtask tail
+    // doesn't drag the SMTP RTT. Template uses %s array placeholders:
+    // [first name, verify URL (button), verify URL (fallback monospace)].
+    const verifyUrl = AuthService._verifyUrl(token);
+    setImmediate(() => {
+      sendEmail({
+        to: user.email,
+        subject: `Verify your email — ${process.env.APP_NAME || 'Registration Portal'}`,
+        templateFile,
+        placeholders: [user.first_name || 'there', verifyUrl, verifyUrl],
+      }).catch(() => { /* logged in worker */ });
+    });
+
+    return { token, expiresAt: expiresAt.toISOString() };
+  }
+
+  /**
+   * Resend variant — same as sendVerificationEmail but uses the
+   * resend-verification template (different copy, same token mechanics).
+   */
+  static async resendVerificationEmail(userId) {
+    return AuthService.sendVerificationEmail(userId, {
+      templateFile: 'resend-verification.html',
+    });
+  }
+
+  /**
+   * Verify a raw token from the email link. Sets email_verified=true on
+   * the matching user, clears the token, and stamps email_verified_at.
+   * Returns the public user shape. Invalid / expired / already-used
+   * tokens throw structured errors.
+   */
+  static async verifyEmailToken(rawToken) {
+    if (!rawToken || typeof rawToken !== 'string') {
+      const err = new Error('Token is required');
+      err.status = 422;
+      err.error_code = 'token_required';
+      throw err;
+    }
+    const pool = require('../../../db/pool');
+    const tokenHash = AuthService._hashToken(rawToken.trim());
+    const r = await pool.query(
+      `SELECT id, email, email_verified, email_verification_expires_at
+         FROM users
+        WHERE email_verification_token_hash = $1
+        LIMIT 1`,
+      [tokenHash]
+    );
+    const user = r.rows[0];
+    if (!user) {
+      const err = new Error('Invalid verification token');
+      err.status = 400;
+      err.error_code = 'invalid_token';
+      throw err;
+    }
+    if (user.email_verified) {
+      // Token matched but already verified — treat as success so users
+      // who click the link twice don't see a scary error.
+      return { id: user.id, email: user.email, email_verified: true };
+    }
+    if (
+      user.email_verification_expires_at
+      && new Date(user.email_verification_expires_at).getTime() < Date.now()
+    ) {
+      const err = new Error('Verification link has expired. Request a new one.');
+      err.status = 410;
+      err.error_code = 'token_expired';
+      throw err;
+    }
+
+    await pool.query(
+      `UPDATE users
+          SET email_verified = TRUE,
+              email_verified_at = NOW(),
+              email_verification_token_hash = NULL,
+              email_verification_expires_at = NULL,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [user.id]
+    );
+    return { id: user.id, email: user.email, email_verified: true };
   }
 }
 

@@ -115,6 +115,32 @@ router.post(
 router.post('/logout', requireAuth, AuthController.logout);
 
 /**
+ * @route   POST /api/auth/send-verification
+ * @desc    Issue (or re-issue) an email-verification link to the
+ *          authenticated user. Idempotent — invalidates any prior link.
+ * @access  Authenticated
+ */
+router.post('/send-verification', requireAuth, AuthController.sendVerification);
+
+/**
+ * @route   POST /api/auth/resend-verification
+ * @desc    Same as /send-verification but uses the resend-* template.
+ * @access  Authenticated
+ */
+router.post('/resend-verification', requireAuth, AuthController.resendVerification);
+
+/**
+ * @route   GET  /api/auth/verify-email?token=...
+ * @route   POST /api/auth/verify-email   (body: { token })
+ * @desc    Mark email_verified=true for whoever owns the supplied token.
+ *          The query-string form is intentional — that's the URL the
+ *          email link points at. POST is also accepted for SPA flows.
+ * @access  Public
+ */
+router.get('/verify-email', AuthController.verifyEmail);
+router.post('/verify-email', AuthController.verifyEmail);
+
+/**
  * @route   POST /api/auth/verify-phone
  * @desc    Verify phone number with OTP
  * @access  Public
@@ -122,12 +148,12 @@ router.post('/logout', requireAuth, AuthController.logout);
 router.post(
   '/verify-phone',
   [
-    body('phone')
-      .notEmpty()
-      .withMessage('Phone number is required')
-      .matches(/^(\+)?\d{8,20}$/)
-      .withMessage('Valid phone number format required (8-20 digits, optional + prefix)'),
-    body('otp').notEmpty().withMessage('OTP is required'),
+    // Either an `identifier` (email | phone), or the legacy `phone`
+    // field, must be present. Validate inside the handler so we can
+    // accept either shape without a brittle express-validator OR chain.
+    body('otp')
+      .notEmpty().withMessage('OTP is required')
+      .matches(/^\d{6}$/).withMessage('OTP must be 6 digits'),
     validate,
   ],
   AuthController.verifyPhone
@@ -135,17 +161,15 @@ router.post(
 
 /**
  * @route   POST /api/auth/resend-otp
- * @desc    Resend OTP
+ * @desc    Issue a fresh 6-digit OTP and dispatch it via the configured
+ *          channel (email | sms | both — see OTP_CHANNEL). Accepts either
+ *          `identifier` (email or phone), or the legacy `phone` field.
  * @access  Public
  */
 router.post(
   '/resend-otp',
   [
-    body('phone')
-      .notEmpty()
-      .withMessage('Phone number is required')
-      .matches(/^(\+)?\d{8,20}$/)
-      .withMessage('Valid phone number format required (8-20 digits, optional + prefix)'),
+    // Identifier validated in the handler (see verify-phone note above).
     validate,
   ],
   AuthController.resendOtp

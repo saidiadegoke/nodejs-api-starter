@@ -16,6 +16,7 @@ const {
   effectiveInstitutionListUniversityId,
 } = require('../utils/institution-scope');
 const { emitRegistrationApproved } = require('./registration-events.service');
+const jupebMailer = require('./jupeb-mailer.service');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -227,6 +228,17 @@ async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) 
       );
     }
   }
+
+  // Fire lifecycle emails for rejected / withdrawn here. Approved is
+  // handled separately in emitRegistrationApproved (which also writes
+  // an in-app notification + webhook). All sends are best-effort and
+  // deferred via setImmediate so the DB lookups in the mailer never
+  // share the request-handler's microtask tail.
+  if (toStatus === 'rejected') {
+    setImmediate(() => { jupebMailer.sendRegistrationRejected(reg.id, reason); });
+  } else if (toStatus === 'withdrawn') {
+    setImmediate(() => { jupebMailer.sendRegistrationWithdrawn(reg.id, reason); });
+  }
   return updated;
 }
 
@@ -302,6 +314,14 @@ class RegistrationService {
         }
       }
 
+      // Send the candidate the registration code via email if we know
+      // their intake email. Fire-and-forget — no-ops silently when SMTP
+      // isn't configured or no email is on the verification's intake.
+      // Deferred via setImmediate so the unawaited promise's DB queries
+      // don't share the express response's microtask tail (which
+      // measurably delays response in async-hooks-instrumented stacks).
+      setImmediate(() => { jupebMailer.sendCodeIssued(row.id); });
+
       return serializeRegistration(row);
     } catch (e) {
       if (e.code === '23505') {
@@ -309,6 +329,154 @@ class RegistrationService {
       }
       throw e;
     }
+  }
+
+  /**
+   * Single-call candidate detail for the institution dashboard.
+   *
+   * Composes everything an institution reviewer needs onto one page:
+   *   - registration + status history
+   *   - candidate user + profile (name, email, phone, address fields)
+   *   - subject combination + university + session
+   *   - NIN verification snapshot
+   *   - documents (uploaded + per-doc status)
+   *   - result entries grouped by (source, sitting)
+   *   - biometric captures + skip flags
+   *   - next-of-kin
+   *
+   * Auth: institution-write role + university scope on the row.
+   */
+  async institutionGetCandidate(registrationId, userId) {
+    await assertInstitutionRegistration(userId);
+    if (!isUuid(registrationId)) throw httpError(422, 'Invalid registration id');
+    const reg = await registrationModel.findById(registrationId);
+    if (!reg) throw httpError(404, 'Registration not found');
+    await assertInstitutionUniversityAccess(userId, reg.university_id);
+
+    // Pull related rows in parallel. Each model returns null/[] when
+    // there's nothing — the detail page renders graceful empty states.
+    const nokModel = require('../models/next-of-kin.model');
+    const documentModel = require('../models/registration-document.model');
+    const resultEntriesModel = require('../models/result-entries.model');
+
+    const [
+      displays,
+      nin_verification,
+      candidate,
+      biometrics,
+      next_of_kin,
+      documents,
+      result_entries,
+      history,
+    ] = await Promise.all([
+      loadDisplayObjects(reg),
+      loadNinVerificationSummary(reg),
+      reg.user_id ? pool.query(
+        `SELECT u.id, u.email, u.phone, u.email_verified, u.phone_verified,
+                u.last_login_at,
+                p.first_name, p.last_name, p.display_name,
+                p.date_of_birth, p.gender, p.profile_photo_url,
+                p.residential_address, p.state_of_origin, p.lga, p.place_of_birth
+           FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+          WHERE u.id = $1 LIMIT 1`,
+        [reg.user_id]
+      ).then((r) => r.rows[0] || null) : Promise.resolve(null),
+      biometricCaptureModel.findByRegistrationId(reg.id).catch(() => []),
+      Promise.resolve()
+        .then(() => nokModel.findActiveByRegistration(reg.id))
+        .catch(() => null),
+      Promise.resolve()
+        .then(() => documentModel.findByRegistrationIdWithRequirements
+          ? documentModel.findByRegistrationIdWithRequirements(reg.id)
+          : documentModel.findByRegistrationId
+            ? documentModel.findByRegistrationId(reg.id)
+            : [])
+        .catch(() => []),
+      Promise.resolve()
+        .then(() => resultEntriesModel.listByRegistrationId
+          ? resultEntriesModel.listByRegistrationId(reg.id)
+          : resultEntriesModel.findByRegistrationId
+            ? resultEntriesModel.findByRegistrationId(reg.id)
+            : [])
+        .catch(() => []),
+      pool.query(
+        `SELECT from_status, to_status, reason, changed_by, created_at
+           FROM jupeb_registration_status_history
+          WHERE registration_id = $1
+          ORDER BY created_at ASC`,
+        [reg.id]
+      ).then((r) => r.rows).catch(() => []),
+    ]);
+
+    // Decode biometric status (mirrors the list endpoint's enrichment).
+    const captureTypes = new Set((biometrics || []).map((b) => b.capture_type).filter(Boolean));
+    const skipped = {
+      face: !!reg.face_skipped_at,
+      fingerprint: !!reg.fingerprint_skipped_at,
+    };
+    const hasFace = captureTypes.has('face') || skipped.face;
+    const hasFinger = captureTypes.has('fingerprint') || skipped.fingerprint;
+    const biometric_status = hasFace && hasFinger ? 'yes' : (hasFace || hasFinger ? 'partial' : 'no');
+
+    return {
+      id: reg.id,
+      status: reg.status,
+      status_reason: reg.status_reason || null,
+      institution_issued_code: reg.institution_issued_code,
+      institution_code_expires_at: reg.institution_code_expires_at,
+      provisional_candidate_code: reg.provisional_candidate_code,
+      jupeb_candidate_number: reg.jupeb_candidate_number,
+      claimed_at: reg.claimed_at,
+      submitted_at: reg.submitted_at,
+      approved_at: reg.approved_at,
+      approved_by: reg.approved_by,
+      dashboard_unlocked_at: reg.dashboard_unlocked_at,
+      created_at: reg.created_at,
+      updated_at: reg.updated_at,
+      nin_verification_id: reg.nin_verification_id,
+      ...displays,
+      nin_verification,
+      candidate: candidate ? {
+        id: candidate.id,
+        email: candidate.email,
+        phone: candidate.phone,
+        email_verified: candidate.email_verified,
+        phone_verified: candidate.phone_verified,
+        last_login_at: candidate.last_login_at,
+        first_name: candidate.first_name,
+        last_name: candidate.last_name,
+        display_name: candidate.display_name
+          || [candidate.first_name, candidate.last_name].filter(Boolean).join(' ').trim()
+          || null,
+        date_of_birth: candidate.date_of_birth,
+        gender: candidate.gender,
+        profile_photo_url: candidate.profile_photo_url,
+        residential_address: candidate.residential_address,
+        state_of_origin: candidate.state_of_origin,
+        lga: candidate.lga,
+        place_of_birth: candidate.place_of_birth,
+      } : null,
+      next_of_kin: next_of_kin ? {
+        name: next_of_kin.name,
+        relationship: next_of_kin.relationship,
+        phone: next_of_kin.phone,
+        email: next_of_kin.email,
+        address: next_of_kin.address,
+        source: next_of_kin.source,
+      } : null,
+      documents: documents || [],
+      result_entries: result_entries || [],
+      biometrics: (biometrics || []).map((b) => ({
+        id: b.id,
+        capture_type: b.capture_type,
+        quality_score: b.quality_score,
+        captured_at: b.captured_at,
+        external_reference: b.external_reference || null,
+      })),
+      biometric_status,
+      biometric_skips: skipped,
+      status_history: history || [],
+    };
   }
 
   async institutionPatch(registrationId, body, userId) {
@@ -1125,6 +1293,11 @@ class RegistrationService {
       if (updated) {
         assigned += 1;
         numbers.push({ registration_id: r.id, jupeb_candidate_number: num });
+        // Notify the candidate that their matric is ready — fire-and-
+        // forget so SMTP RTT doesn't gate the rest of the loop. Email
+        // also restates the lockdown rule so students aren't surprised
+        // when their email/phone login stops working.
+        setImmediate(() => { jupebMailer.sendMatricAssigned(r.id); });
       } else {
         skipped += 1;
       }
@@ -1135,6 +1308,61 @@ class RegistrationService {
       assigned,
       skipped,
       numbers,
+    };
+  }
+
+  /**
+   * Bulk-finalize every closed session that still has approved
+   * registrations awaiting matric assignment. Each session is processed
+   * via the same per-session `finalizeCandidateNumbers` method so
+   * mailer + event-log + uniqueness behavior is identical.
+   *
+   * Returns `{ sessions: [{ session_id, academic_year, assigned, skipped, error? }], totals }`.
+   * A failure on one session is captured but doesn't abort the others.
+   */
+  async finalizeAllClosedSessions(userId) {
+    await assertFinalizeRole(userId);
+
+    const closed = await sessionModel.findAll({ limit: 1000, offset: 0, status: 'closed' });
+    const results = [];
+    let totalAssigned = 0;
+    let totalSkipped = 0;
+    let totalSessionsTouched = 0;
+
+    for (const s of closed) {
+      try {
+        const out = await this.finalizeCandidateNumbers(s.id, userId);
+        if (out.assigned > 0) totalSessionsTouched += 1;
+        totalAssigned += out.assigned;
+        totalSkipped += out.skipped;
+        results.push({
+          session_id: s.id,
+          academic_year: s.academic_year,
+          year_short: s.year_short,
+          assigned: out.assigned,
+          skipped: out.skipped,
+        });
+      } catch (err) {
+        // Per-session failures shouldn't abort the whole bulk run.
+        results.push({
+          session_id: s.id,
+          academic_year: s.academic_year,
+          year_short: s.year_short,
+          assigned: 0,
+          skipped: 0,
+          error: err.message || 'finalize_failed',
+        });
+      }
+    }
+
+    return {
+      sessions: results,
+      totals: {
+        sessions_processed: results.length,
+        sessions_touched: totalSessionsTouched,
+        assigned: totalAssigned,
+        skipped: totalSkipped,
+      },
     };
   }
 }
