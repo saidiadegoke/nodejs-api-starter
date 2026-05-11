@@ -39,6 +39,16 @@ beforeAll(async () => {
   originalConsole.info(`📡 API Base URL: ${process.env.API_BASE_URL}`);
   originalConsole.info(`🔧 Environment: ${process.env.NODE_ENV}`);
   originalConsole.info('');
+
+  // Pre-seed the JUPEB test-prefix helper with prefixes already occupied
+  // in the DB so cross-run collisions on the 100..999 prefix space don't
+  // 409 tests with bounded retry loops. Best-effort: silently no-ops on a
+  // fresh DB or when the table hasn't been migrated yet.
+  try {
+    const pool = require('../db/pool');
+    const { warmJupebPrefixCache } = require('./jupeb-session-test-helpers');
+    await warmJupebPrefixCache(pool);
+  } catch { /* ignore */ }
 });
 
 // Global afterAll

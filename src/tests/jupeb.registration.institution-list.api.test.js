@@ -30,7 +30,9 @@ describe('Institution registrations — list / stats / by-university / export (0
 
   async function makeUniversity(adminToken, tag) {
     let res;
-    for (let i = 0; i < 5; i += 1) {
+    // jupeb_prefix space is only 100..999 with a global unique index, and
+    // test DBs accumulate rows across runs — retry generously.
+    for (let i = 0; i < 30; i += 1) {
       res = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -130,10 +132,10 @@ describe('Institution registrations — list / stats / by-university / export (0
     );
 
     const res = await request(app)
-      .get(`/institution/registrations?university_id=${uni.id}&session_id=${session.id}`)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    const row = res.body.data.rows.find((r) => r.id === registrationId);
+    const row = res.body.data.find((r) => r.id === registrationId);
     expect(row).toBeDefined();
     expect(row.candidate).toBeDefined();
     expect(row.candidate.email).toBe(studentEmail);
@@ -157,15 +159,15 @@ describe('Institution registrations — list / stats / by-university / export (0
     );
 
     const res = await request(app)
-      .get(`/institution/registrations?university_id=${uni.id}&session_id=${session.id}&q=ada`)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&q=ada`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.rows.some((r) => r.id === registrationId)).toBe(true);
+    expect(res.body.data.some((r) => r.id === registrationId)).toBe(true);
 
     const noMatch = await request(app)
-      .get(`/institution/registrations?university_id=${uni.id}&session_id=${session.id}&q=nonexistentname`)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&q=nonexistentname`)
       .set('Authorization', `Bearer ${adminToken}`);
-    expect(noMatch.body.data.rows.find((r) => r.id === registrationId)).toBeUndefined();
+    expect(noMatch.body.data.find((r) => r.id === registrationId)).toBeUndefined();
   });
 
   it('?bucket=pending matches all pending statuses (E.3)', async () => {
@@ -189,16 +191,16 @@ describe('Institution registrations — list / stats / by-university / export (0
     await pool.query(`UPDATE jupeb_registrations SET status = 'pending_institution_review' WHERE id = $1`, [r2]);
 
     const res = await request(app)
-      .get(`/institution/registrations?university_id=${uni.id}&session_id=${session.id}&bucket=pending`)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&bucket=pending`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    const ids = res.body.data.rows.map((r) => r.id);
+    const ids = res.body.data.map((r) => r.id);
     expect(ids).toEqual(expect.arrayContaining([r1, r2]));
 
     const approvedOnly = await request(app)
-      .get(`/institution/registrations?university_id=${uni.id}&session_id=${session.id}&bucket=approved`)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&bucket=approved`)
       .set('Authorization', `Bearer ${adminToken}`);
-    expect(approvedOnly.body.data.rows.some((r) => r.id === r1)).toBe(false);
+    expect(approvedOnly.body.data.some((r) => r.id === r1)).toBe(false);
   });
 
   it('GET /institution/overview/stats returns approved / pending / rejected / with_biometrics counts (E.4)', async () => {
@@ -218,7 +220,7 @@ describe('Institution registrations — list / stats / by-university / export (0
     await pool.query(`INSERT INTO jupeb_biometric_captures (registration_id, capture_type, external_reference, captured_at) VALUES ($1, 'face', 'demo://stat', NOW())`, [a]);
 
     const res = await request(app)
-      .get(`/institution/overview/stats?university_id=${uni.id}&session_id=${session.id}`)
+      .get(`/registration/institution/overview/stats?university_id=${uni.id}&session_id=${session.id}`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(res.body.data.total).toBeGreaterThanOrEqual(3);
@@ -240,7 +242,7 @@ describe('Institution registrations — list / stats / by-university / export (0
     await createRegistrationWithStudent(adminToken, { universityId: uni.id, sessionId: session.id, comboId: combo.id, tag: 'C2' });
 
     const res = await request(app)
-      .get(`/institution/overview/by-university?session_id=${session.id}&limit=12`)
+      .get(`/registration/institution/overview/by-university?session_id=${session.id}&limit=12`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
@@ -261,7 +263,7 @@ describe('Institution registrations — list / stats / by-university / export (0
     await createRegistrationWithStudent(adminToken, { universityId: uni.id, sessionId: session.id, comboId: combo.id, tag: 'Csv' });
 
     const res = await request(app)
-      .get(`/institution/registrations/export?university_id=${uni.id}&session_id=${session.id}`)
+      .get(`/registration/institution/registrations/export?university_id=${uni.id}&session_id=${session.id}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .buffer(true)
       .parse((response, callback) => {

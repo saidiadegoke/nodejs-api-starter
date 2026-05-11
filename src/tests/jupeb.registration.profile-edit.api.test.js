@@ -128,6 +128,9 @@ describe('PATCH /registration/me/profile (M.2)', () => {
     if (!adminToken) return;
     const { studentToken } = await newClaimedRegistration(adminToken, 'OK');
 
+    // users.phone has a unique constraint, so the test phone must be unique
+    // per run — accumulated state across runs would otherwise 409 the PATCH.
+    const uniquePhone = `+234801${String(Date.now()).slice(-7)}`;
     const patch = await request(app)
       .patch('/registration/me/profile')
       .set('Authorization', `Bearer ${studentToken}`)
@@ -136,7 +139,7 @@ describe('PATCH /registration/me/profile (M.2)', () => {
         state_of_origin: 'Ondo',
         lga: 'Ondo West',
         place_of_birth: 'Lagos State',
-        phone: '+2348012345678',
+        phone: uniquePhone,
       });
     expect(patch.status).toBe(200);
     expect(patch.body.success).toBe(true);
@@ -146,7 +149,7 @@ describe('PATCH /registration/me/profile (M.2)', () => {
     expect(patch.body.data.basic_information.state_of_origin).toBe('Ondo');
     expect(patch.body.data.basic_information.lga).toBe('Ondo West');
     expect(patch.body.data.basic_information.place_of_birth).toBe('Lagos State');
-    expect(patch.body.data.contact_information.phone).toBe('+2348012345678');
+    expect(patch.body.data.contact_information.phone).toBe(uniquePhone);
 
     // Subsequent GET reflects the same values
     const profile = await request(app)

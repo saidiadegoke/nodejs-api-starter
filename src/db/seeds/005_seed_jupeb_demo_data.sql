@@ -86,27 +86,66 @@ FROM (VALUES
    'Awka, Anambra State', 950, 'Federal university in Anambra')
 ) AS v(code, name, short_name, jupeb_prefix, type, email, phone, address, expected, description)
 WHERE NOT EXISTS (
-  SELECT 1 FROM jupeb_universities u WHERE LOWER(u.code) = LOWER(v.code)
+  -- Skip when either the code or the prefix is already taken.
+  -- `jupeb_prefix` has a partial unique index, and ad-hoc test runs can
+  -- consume prefix values before the demo seed runs; this guard keeps
+  -- the seed idempotent on a polluted DB.
+  SELECT 1 FROM jupeb_universities u
+   WHERE u.deleted_at IS NULL
+     AND (LOWER(u.code) = LOWER(v.code) OR u.jupeb_prefix = v.jupeb_prefix)
 );
 
 -- ============================================================================
 -- 3. Subject combinations (mirrors figma "JUPEB SC-001..004")
+-- ----------------------------------------------------------------------------
+-- The `subjects` column was historically a JSONB on this table and has
+-- since been refactored into a separate `jupeb_subject_combination_items`
+-- join table on some environments. Detect which shape the live DB uses
+-- so this seed stays idempotent across both.
 -- ============================================================================
-INSERT INTO jupeb_subject_combinations (code, title, subjects, status, is_global)
-SELECT v.code, v.title, v.subjects::jsonb, 'active', true
-FROM (VALUES
-  ('JUPEB SC-001', 'CRS/ISS, Government, Literature',
-   '["CRS","Government","Literature in English"]'),
-  ('JUPEB SC-002', 'Mathematics, Physics, Chemistry',
-   '["Mathematics","Physics","Chemistry"]'),
-  ('JUPEB SC-003', 'Biology, Chemistry, Physics',
-   '["Biology","Chemistry","Physics"]'),
-  ('JUPEB SC-004', 'Economics, Government, Mathematics',
-   '["Economics","Government","Mathematics"]')
-) AS v(code, title, subjects)
-WHERE NOT EXISTS (
-  SELECT 1 FROM jupeb_subject_combinations sc WHERE LOWER(sc.code) = LOWER(v.code)
-);
+DO $$
+DECLARE
+  has_subjects_jsonb BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'jupeb_subject_combinations' AND column_name = 'subjects'
+  ) INTO has_subjects_jsonb;
+
+  IF has_subjects_jsonb THEN
+    INSERT INTO jupeb_subject_combinations (code, title, subjects, status, is_global)
+    SELECT v.code, v.title, v.subjects::jsonb, 'active', true
+    FROM (VALUES
+      ('JUPEB SC-001', 'CRS/ISS, Government, Literature',
+       '["CRS","Government","Literature in English"]'),
+      ('JUPEB SC-002', 'Mathematics, Physics, Chemistry',
+       '["Mathematics","Physics","Chemistry"]'),
+      ('JUPEB SC-003', 'Biology, Chemistry, Physics',
+       '["Biology","Chemistry","Physics"]'),
+      ('JUPEB SC-004', 'Economics, Government, Mathematics',
+       '["Economics","Government","Mathematics"]')
+    ) AS v(code, title, subjects)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM jupeb_subject_combinations sc WHERE LOWER(sc.code) = LOWER(v.code)
+    );
+  ELSE
+    -- New schema: subjects normalized into jupeb_subject_combination_items.
+    -- Seed only the header rows here; populating items requires
+    -- subject IDs which live in a separate table that may not be present
+    -- on this environment.
+    INSERT INTO jupeb_subject_combinations (code, title, status, is_global)
+    SELECT v.code, v.title, 'active', true
+    FROM (VALUES
+      ('JUPEB SC-001', 'CRS/ISS, Government, Literature'),
+      ('JUPEB SC-002', 'Mathematics, Physics, Chemistry'),
+      ('JUPEB SC-003', 'Biology, Chemistry, Physics'),
+      ('JUPEB SC-004', 'Economics, Government, Mathematics')
+    ) AS v(code, title)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM jupeb_subject_combinations sc WHERE LOWER(sc.code) = LOWER(v.code)
+    );
+  END IF;
+END$$;
 
 -- ============================================================================
 -- 4. Demo students — 30 users with full profiles

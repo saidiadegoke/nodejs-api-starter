@@ -90,7 +90,10 @@ function validateBulkPayload(body) {
     if (!subject || subject.length < 2) {
       errors.push({ path, field: 'subject', error_code: 'subject_required' });
     }
-    if (!grade || grade.length > 4) {
+    // A grade is invalid if it's missing, too long, or doesn't normalize
+    // to one of the recognized values (A-F variants). The length cap is
+    // kept as a cheap early reject for obvious junk.
+    if (!grade || grade.length > 4 || normalizeGrade(grade) === null) {
       errors.push({ path, field: 'grade', error_code: 'grade_invalid' });
     }
     if (score !== null && (Number.isNaN(score) || score < 0 || score > 100)) {
