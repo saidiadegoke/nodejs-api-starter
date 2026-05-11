@@ -41,22 +41,54 @@ This pulls in the new deps: `pdfkit`, `pdf-parse`, `pdfjs-dist`,
 
 ### 0.2 Configure `.env`
 
-Required for UAT:
+Required for UAT (matches `.env.example` — split DB params, not a single URL):
 
 ```bash
+# App / server
+PORT=5269
+API_BASE_URL=http://localhost:5269
+
 # Postgres
-DATABASE_URL=postgres://user:pass@localhost:5432/regportal_uat
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=<your_db_password>
+DB_NAME=reg_portal_db
+
 # JWT
 JWT_SECRET=<random 32+ chars>
 JWT_REFRESH_SECRET=<random 32+ chars>
+
 # Code TTL: leave 0 (no expiry) for the happy-path scenarios; flip to '1'
 # (1 hour) when running the expired-code negative case.
 JUPEB_INSTITUTION_CODE_TTL_HOURS=0
+
 # OCR: enabled by default; turn off to verify the M.6 disable path
 FEATURE_OCR_ENABLED=true
 OCR_DEFAULT_CHAIN=pdf_text,tesseract
+
 # Biometric quality threshold (0 disables the check; set to 0.6 for B.4)
 JUPEB_FACE_MIN_QUALITY=0
+
+# NIN provider — selects which adapter answers /identity/nin/verify.
+# Registered: `mock` (in-process, default; deterministic per-NIN fixtures)
+# and `speedysms` (calls https://api.speedysms.com.ng/identity/nin).
+JUPEB_NIN_PROVIDER=mock
+# Seconds the resolver waits before retrying when a provider reports
+# unavailable. Applies to every provider; default 300.
+# JUPEB_NIN_RETRY_AFTER_SECONDS=300
+
+# Required only when JUPEB_NIN_PROVIDER=speedysms
+# SPEEDYSMS_API_KEY=sk_live_your_key
+# SPEEDYSMS_API_BASE_URL=https://api.speedysms.com.ng
+# SPEEDYSMS_NIN_TIMEOUT_MS=15000
+```
+
+For convenience, define a shell alias so the SQL snippets in this doc
+work against the split DB params:
+
+```bash
+alias uatpsql='PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME"'
 ```
 
 ### 0.3 Migrate + seed
@@ -66,8 +98,12 @@ npm run migrate
 npm run seed
 ```
 
-This applies migrations `001..007` and seed files `001..005`. The demo
-seed (`005_seed_jupeb_demo_data.sql`) creates:
+This applies migrations `001..009` and seed files `001..005`. Migrations
+`008_jupeb_nin_cache_cleared_at.sql` (NIN cache invalidation) and
+`009_jupeb_registration_documents_multi_sitting.sql` (relaxes the active
+document uniqueness to allow sitting=1 and sitting=2 to coexist) were
+added with the NIN-flow + multi-sitting work. The demo seed
+(`005_seed_jupeb_demo_data.sql`) creates:
 
 - 2 sessions (`2024/2025` closed, `2025/2026` open)
 - 12 universities (UNILAG, OAU, UI, FUTMINNA, FUTA, UNILORIN, OOU, CU,
@@ -81,13 +117,21 @@ seed (`005_seed_jupeb_demo_data.sql`) creates:
 npm run dev
 ```
 
-The API listens on `http://localhost:5000` by default. Replace `:5000`
-with your `PORT` if different.
+The API listens on `http://localhost:5269` by default (per `PORT` in
+`.env.example`). Throughout this doc the `$BASE` shell variable is used
+so every command stays portable:
+
+```bash
+export BASE="http://localhost:${PORT:-5269}"
+```
+
+If you run on a different port, just `export BASE=http://localhost:<your-port>`
+once at the top of the run.
 
 ### 0.5 Get an admin access token
 
 ```bash
-ADMIN=$(curl -s -X POST http://localhost:5000/auth/login \
+ADMIN=$(curl -s -X POST $BASE/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"identifier":"admin@example.com","password":"Admin@12"}' \
   | jq -r '.data.access_token')
@@ -99,10 +143,10 @@ Keep `$ADMIN` set for the registrar / institution-side scenarios.
 ### 0.6 Smoke check
 
 ```bash
-curl -s http://localhost:5000/health | jq
+curl -s $BASE/health | jq
 # → { "success": true, "message": "API is running", ... }
 
-curl -s http://localhost:5000/ | jq '.endpoints'
+curl -s $BASE/ | jq '.endpoints'
 # → confirm "ocr": "/ocr" is in the list
 ```
 
@@ -117,7 +161,7 @@ migrations to run", and `/health` returns 200.
 ### TC-1.1 — List the seeded universities
 
 ```bash
-curl -s http://localhost:5000/catalog/universities/public | jq '.data | length'
+curl -s $BASE/catalog/universities/public | jq '.data | length'
 # Expected: ≥ 12
 ```
 
@@ -126,14 +170,14 @@ curl -s http://localhost:5000/catalog/universities/public | jq '.data | length'
 ### TC-1.2 — Filter by `university_type`
 
 ```bash
-curl -s "http://localhost:5000/catalog/universities/public?type=federal" | jq '.data | length'
+curl -s "$BASE/catalog/universities/public?type=federal" | jq '.data | length'
 # Expected: ≥ 9 (the federal subset of the demo seed)
 ```
 
 ### TC-1.3 — Public subject combinations list
 
 ```bash
-curl -s http://localhost:5000/catalog/subject-combinations/public | jq '.data | length'
+curl -s $BASE/catalog/subject-combinations/public | jq '.data | length'
 # Expected: ≥ 4
 ```
 
@@ -141,7 +185,7 @@ curl -s http://localhost:5000/catalog/subject-combinations/public | jq '.data | 
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/sessions?status=open&limit=10" | jq '.data | length'
+  "$BASE/sessions?status=open&limit=10" | jq '.data | length'
 # Expected: ≥ 1 (the 2025/2026 session)
 ```
 
@@ -154,7 +198,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 ### TC-2.1 — Verify a candidate's NIN
 
 ```bash
-NIN_VERIFY=$(curl -s -X POST http://localhost:5000/identity/nin/verify \
+NIN_VERIFY=$(curl -s -X POST $BASE/identity/nin/verify \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -177,16 +221,16 @@ Pick the open session and any active university:
 
 ```bash
 SESSION_ID=$(curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/sessions?status=open&limit=1" \
+  "$BASE/sessions?status=open&limit=1" \
   | jq -r '.data[0].id')
 
-UNIVERSITY_ID=$(curl -s "http://localhost:5000/catalog/universities/public?limit=1" \
+UNIVERSITY_ID=$(curl -s "$BASE/catalog/universities/public?limit=1" \
   | jq -r '.data[0].id')
 
-COMBO_ID=$(curl -s "http://localhost:5000/catalog/subject-combinations/public?limit=1" \
+COMBO_ID=$(curl -s "$BASE/catalog/subject-combinations/public?limit=1" \
   | jq -r '.data[0].id')
 
-REG=$(curl -s -X POST http://localhost:5000/registration/institution/registrations \
+REG=$(curl -s -X POST $BASE/registration/institution/registrations \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -211,7 +255,7 @@ echo "code=$CODE  reg=$REG_ID"
 verify by querying the `jupeb_next_of_kin` table:
 
 ```bash
-psql $DATABASE_URL -c \
+uatpsql -c \
   "SELECT name, source FROM jupeb_next_of_kin WHERE registration_id = '$REG_ID' AND deleted_at IS NULL"
 # Expected: 1 row, source='nin'
 ```
@@ -219,7 +263,7 @@ psql $DATABASE_URL -c \
 ### TC-2.3 — Public code-status (figma `log in 11` pre-validation)
 
 ```bash
-curl -s "http://localhost:5000/auth/code-status?code=$CODE" | jq
+curl -s "$BASE/auth/code-status?code=$CODE" | jq
 ```
 
 **Expected:** `data.valid === true`, `data.university.{id,name,short_name}` populated. **No `Authorization` header required.**
@@ -227,20 +271,80 @@ curl -s "http://localhost:5000/auth/code-status?code=$CODE" | jq
 ### TC-2.4 — Negative: unknown code
 
 ```bash
-curl -s "http://localhost:5000/auth/code-status?code=ZZZZZZ" | jq '.data'
+curl -s "$BASE/auth/code-status?code=ZZZZZZ" | jq '.data'
 # Expected: { valid: false, error_code: "code_not_found" }
 ```
 
 ### TC-2.5 — Negative: missing code parameter
 
 ```bash
-curl -s -i "http://localhost:5000/auth/code-status" | head -1
+curl -s -i "$BASE/auth/code-status" | head -1
 # Expected: HTTP/1.1 400
 ```
 
+### TC-2.6 — NIN cache hit on a repeat verify
+
+The NIN result is cached against `nin_hash` while the linked registration
+is still in-flight. Re-running TC-2.1 with the **same NIN** must return
+the **same `verification_id`** without calling the upstream provider.
+
+```bash
+# Re-verify the same NIN (note: omit idempotency_key to prove the cache
+# layer — not the idempotency check — is what's reusing the row).
+REPEAT=$(curl -s -X POST $BASE/identity/nin/verify \
+  -H "Authorization: Bearer $ADMIN" \
+  -H 'Content-Type: application/json' \
+  -d '{"nin":"12345678901"}')
+echo $REPEAT | jq '.data | {verification_id, status}'
+
+# Confirm the returned id is identical to the one minted in TC-2.1
+test "$(echo $REPEAT | jq -r '.data.verification_id')" = "$NIN_ID" \
+  && echo "✅ cache hit" || echo "❌ cache miss"
+```
+
+**Pass:** the second call returns `status: verified` AND the same
+`verification_id` as TC-2.1. Inspect the DB to confirm only one row
+exists for the NIN hash:
+
+```bash
+uatpsql -c "SELECT COUNT(*) FROM jupeb_nin_verifications
+            WHERE nin_last4 = RIGHT('12345678901', 4) AND cleared_at IS NULL"
+# Expected: 1
+```
+
+### TC-2.7 — Switch NIN provider via env
+
+The registry resolves `JUPEB_NIN_PROVIDER` at request time. Two
+providers ship: `mock` (default) and `speedysms`. The mock is sufficient
+for UAT — this case just proves the switch is wired up.
+
+```bash
+# Stop the server. In .env, change:
+#   JUPEB_NIN_PROVIDER=speedysms
+#   SPEEDYSMS_API_KEY=<your sandbox key>
+# Then restart and verify a fresh NIN:
+SS_NIN=$(printf '9%010d\n' $(($(date +%s) % 10000000000)))
+SS=$(curl -s -X POST $BASE/identity/nin/verify \
+  -H "Authorization: Bearer $ADMIN" \
+  -H 'Content-Type: application/json' \
+  -d '{"nin":"'"$SS_NIN"'","idempotency_key":"uat-ss-'"$(date +%s)"'"}')
+echo $SS | jq '.data | {status, verification_id}'
+
+uatpsql -c "SELECT provider FROM jupeb_nin_verifications
+            WHERE id = '$(echo $SS | jq -r '.data.verification_id')'"
+# Expected: provider = 'speedysms'
+```
+
+**Pass:** the audit row's `provider` column is `speedysms`. Without a
+live key, expect `status: pending` with `last_error_code` indicating
+provider_unavailable / provider_misconfigured — also a valid outcome
+proving the switch worked. Reset `JUPEB_NIN_PROVIDER=mock` before
+continuing the rest of the run-book.
+
 **Pass criteria for §2:** TC-2.1 returns verified, TC-2.2 returns a 6-char
 code AND a NoK row appears in the table, TC-2.3/2.4/2.5 each match the
-expected error codes.
+expected error codes, TC-2.6 reuses the cached row (same id, no second
+DB row), TC-2.7 routes through the selected provider.
 
 ---
 
@@ -249,7 +353,7 @@ expected error codes.
 ### TC-3.1 — Register with code
 
 ```bash
-RWC=$(curl -s -X POST http://localhost:5000/auth/register-with-code \
+RWC=$(curl -s -X POST $BASE/auth/register-with-code \
   -H 'Content-Type: application/json' \
   -d '{
     "code":"'"$CODE"'",
@@ -271,14 +375,14 @@ STUDENT=$(echo $RWC | jq -r '.data.access_token')
 ### TC-3.2 — Same code now reports claimed
 
 ```bash
-curl -s "http://localhost:5000/auth/code-status?code=$CODE" | jq '.data'
+curl -s "$BASE/auth/code-status?code=$CODE" | jq '.data'
 # Expected: { valid: false, error_code: "code_already_claimed" }
 ```
 
 ### TC-3.3 — Negative: weak password
 
 ```bash
-curl -s -i -X POST http://localhost:5000/auth/register-with-code \
+curl -s -i -X POST $BASE/auth/register-with-code \
   -H 'Content-Type: application/json' \
   -d '{"code":"BOGUS1","password":"short"}' | head -1
 # Expected: HTTP/1.1 422
@@ -290,12 +394,12 @@ curl -s -i -X POST http://localhost:5000/auth/register-with-code \
 # Re-issue a fresh code, then expire it via direct SQL
 # (or set JUPEB_INSTITUTION_CODE_TTL_HOURS to '1' BEFORE creating the
 #  registration, then wait 1 hour — the SQL approach is faster)
-psql $DATABASE_URL -c \
+uatpsql -c \
   "UPDATE jupeb_registrations
      SET institution_code_expires_at = NOW() - INTERVAL '1 minute'
    WHERE id = '<some_unclaimed_registration_id>'"
 
-curl -s -i -X POST http://localhost:5000/auth/register-with-code \
+curl -s -i -X POST $BASE/auth/register-with-code \
   -H 'Content-Type: application/json' \
   -d '{"code":"<that-code>","password":"Strong@Password1"}' \
   | head -1
@@ -316,7 +420,7 @@ structured `error_code: code_expired`.
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/profile | jq
+  $BASE/registration/me/profile | jq
 ```
 
 **Expected response shape (key fields):**
@@ -355,7 +459,7 @@ of the M.12 write-through.
 ### TC-5.1 — Patch editable fields
 
 ```bash
-curl -s -X PATCH http://localhost:5000/registration/me/profile \
+curl -s -X PATCH $BASE/registration/me/profile \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -377,12 +481,12 @@ overwrite it:
 
 ```bash
 ON_FILE_GENDER=$(curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/profile \
+  $BASE/registration/me/profile \
   | jq -r '.data.basic_information.gender')
 
 OPPOSITE=$([ "$ON_FILE_GENDER" = "male" ] && echo "female" || echo "male")
 
-curl -s -i -X PATCH http://localhost:5000/registration/me/profile \
+curl -s -i -X PATCH $BASE/registration/me/profile \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"gender":"'"$OPPOSITE"'"}' | head -1
@@ -395,7 +499,7 @@ error_code: "nin_field_immutable" }`.
 ### TC-5.3 — Negative: invalid email
 
 ```bash
-curl -s -X PATCH http://localhost:5000/registration/me/profile \
+curl -s -X PATCH $BASE/registration/me/profile \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"email":"not-an-email"}' | jq '.details.errors'
@@ -415,14 +519,14 @@ If TC-4.1 already showed a NoK from NIN, skip — the row exists. Otherwise:
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/next-of-kin | jq
+  $BASE/registration/me/next-of-kin | jq
 # 200 with row, OR 404 with message "No next-of-kin recorded yet"
 ```
 
 ### TC-6.2 — Replace NoK (PUT)
 
 ```bash
-curl -s -X PUT http://localhost:5000/registration/me/next-of-kin \
+curl -s -X PUT $BASE/registration/me/next-of-kin \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -438,7 +542,7 @@ curl -s -X PUT http://localhost:5000/registration/me/next-of-kin \
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/next-of-kin/history \
+  $BASE/registration/me/next-of-kin/history \
   | jq '.data.history | length, .data.history[].deleted_at'
 # Expected: count ≥ 2; at least one row has a non-null deleted_at
 ```
@@ -446,7 +550,7 @@ curl -s -H "Authorization: Bearer $STUDENT" \
 ### TC-6.4 — Negative: invalid relationship
 
 ```bash
-curl -s -i -X PUT http://localhost:5000/registration/me/next-of-kin \
+curl -s -i -X PUT $BASE/registration/me/next-of-kin \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"name":"X","relationship":"pet","phone":"+1"}' | head -1
@@ -463,7 +567,7 @@ shows soft-deleted history, TC-6.4 returns 422.
 ### TC-7.1 — Patch sittings + result types
 
 ```bash
-curl -s -X PATCH http://localhost:5000/registration/me/academic-intake \
+curl -s -X PATCH $BASE/registration/me/academic-intake \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"sittings_count":2,"result_types":["waec","neco"]}' | jq '.data | {sittings_count, result_types}'
@@ -474,7 +578,7 @@ curl -s -X PATCH http://localhost:5000/registration/me/academic-intake \
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/submission/me/requirements \
+  $BASE/submission/me/requirements \
   | jq '.data[] | .key' | sort
 # Expected (at minimum): "neco_result", "waec_result", "signed_registration_form"
 ```
@@ -484,7 +588,7 @@ curl -s -H "Authorization: Bearer $STUDENT" \
 ```bash
 # Create a tiny stub PDF
 echo '%PDF-1.4 fake' > /tmp/waec.pdf
-WAEC_FILE=$(curl -s -X POST http://localhost:5000/files/upload-base64 \
+WAEC_FILE=$(curl -s -X POST $BASE/files/upload-base64 \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -494,10 +598,10 @@ WAEC_FILE=$(curl -s -X POST http://localhost:5000/files/upload-base64 \
   }' | jq -r '.data.file_id // .data.id')
 
 WAEC_REQ=$(curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/submission/me/requirements \
+  $BASE/submission/me/requirements \
   | jq -r '.data[] | select(.key=="waec_result") | .id')
 
-ATTACH=$(curl -s -X POST http://localhost:5000/submission/me/documents \
+ATTACH=$(curl -s -X POST $BASE/submission/me/documents \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -520,7 +624,7 @@ JOB_ID=$(echo $ATTACH | jq -r '.data.ocr_job.id')
 ### TC-7.4 — Negative: missing source/sitting on a result requirement
 
 ```bash
-curl -s -i -X POST http://localhost:5000/submission/me/documents \
+curl -s -i -X POST $BASE/submission/me/documents \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"requirement_id":"'"$WAEC_REQ"'","file_id":"'"$WAEC_FILE"'"}' \
@@ -534,13 +638,13 @@ curl -s -i -X POST http://localhost:5000/submission/me/documents \
 
 ```bash
 # Attempt the same source+sitting again with a different file
-WAEC_FILE2=$(curl -s -X POST http://localhost:5000/files/upload-base64 \
+WAEC_FILE2=$(curl -s -X POST $BASE/files/upload-base64 \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"file_data":"data:application/pdf;base64,JVBERi0xLjQK","file_name":"waec2.pdf"}' \
   | jq -r '.data.file_id // .data.id')
 
-curl -s -i -X POST http://localhost:5000/submission/me/documents \
+curl -s -i -X POST $BASE/submission/me/documents \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -558,7 +662,7 @@ curl -s -i -X POST http://localhost:5000/submission/me/documents \
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  "http://localhost:5000/ocr/jobs/$JOB_ID" | jq '.data | {status, exam_type, exam_type_detected, confidence}'
+  "$BASE/ocr/jobs/$JOB_ID" | jq '.data | {status, exam_type, exam_type_detected, confidence}'
 # Expected: status ∈ {queued, processing, completed, failed}
 # (failed is OK — the stub PDF has no text. We're verifying the row was created.)
 ```
@@ -567,7 +671,7 @@ curl -s -H "Authorization: Bearer $STUDENT" \
 
 ```bash
 # Stop the server, set FEATURE_OCR_ENABLED=false, restart, then:
-curl -s -X POST http://localhost:5000/submission/me/documents \
+curl -s -X POST $BASE/submission/me/documents \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -593,7 +697,7 @@ returns 422 with `sitting_required`, TC-7.5 returns 409 with
 ### TC-8.1 — Bulk upsert grades manually
 
 ```bash
-curl -s -X POST http://localhost:5000/submission/me/result-entries \
+curl -s -X POST $BASE/submission/me/result-entries \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -613,7 +717,7 @@ curl -s -X POST http://localhost:5000/submission/me/result-entries \
 ### TC-8.2 — Negative: invalid payload
 
 ```bash
-curl -s -i -X POST http://localhost:5000/submission/me/result-entries \
+curl -s -i -X POST $BASE/submission/me/result-entries \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"entries":[{"source":"pet","sitting":7,"serial":0,"subject":"","grade":"XYZ","score":200}]}' \
@@ -626,7 +730,7 @@ curl -s -i -X POST http://localhost:5000/submission/me/result-entries \
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/submission-preview \
+  $BASE/registration/me/submission-preview \
   | jq '.data.academic_details'
 ```
 
@@ -643,7 +747,7 @@ curl -s -H "Authorization: Bearer $STUDENT" \
 
 ```bash
 # We use external_reference instead of file_id so we don't need a real file
-curl -s -X POST http://localhost:5000/identity/biometrics \
+curl -s -X POST $BASE/identity/biometrics \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -661,7 +765,7 @@ curl -s -X POST http://localhost:5000/identity/biometrics \
 
 ```bash
 # Stop server, set JUPEB_FACE_MIN_QUALITY=0.6, restart, then:
-curl -s -i -X POST http://localhost:5000/identity/biometrics \
+curl -s -i -X POST $BASE/identity/biometrics \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -680,7 +784,7 @@ curl -s -i -X POST http://localhost:5000/identity/biometrics \
 ### TC-9.3 — Skip fingerprint (existing B.2)
 
 ```bash
-curl -s -X POST "http://localhost:5000/identity/registrations/$REG_ID/biometrics/skip" \
+curl -s -X POST "$BASE/identity/registrations/$REG_ID/biometrics/skip" \
   -H "Authorization: Bearer $STUDENT" \
   -H 'Content-Type: application/json' \
   -d '{"capture_type":"fingerprint"}' | jq
@@ -702,7 +806,7 @@ its mandatory requirements met. For UAT shortcut, you can ALSO move it
 manually:
 
 ```bash
-psql $DATABASE_URL -c \
+uatpsql -c \
   "UPDATE jupeb_registrations
      SET status='pending_institution_review', submitted_at=NOW()
    WHERE id='$REG_ID'"
@@ -716,7 +820,7 @@ psql $DATABASE_URL -c \
 ```bash
 curl -s -o /tmp/reg-form.pdf -D - \
   -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/registration-form.pdf | head -5
+  $BASE/registration/me/registration-form.pdf | head -5
 
 file /tmp/reg-form.pdf
 # Expected: "PDF document, version 1.x"
@@ -739,15 +843,15 @@ Content-Length: <some integer >500>
 Roll the registration back to `claimed`:
 
 ```bash
-psql $DATABASE_URL -c "UPDATE jupeb_registrations SET status='claimed' WHERE id='$REG_ID'"
+uatpsql -c "UPDATE jupeb_registrations SET status='claimed' WHERE id='$REG_ID'"
 
 curl -s -i -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/registration/me/registration-form.pdf | head -1
+  $BASE/registration/me/registration-form.pdf | head -1
 # Expected: HTTP/1.1 422
 # Body details.error_code === 'not_ready', details.current_status === 'claimed'
 
 # Restore status:
-psql $DATABASE_URL -c \
+uatpsql -c \
   "UPDATE jupeb_registrations SET status='pending_institution_review' WHERE id='$REG_ID'"
 ```
 
@@ -755,7 +859,7 @@ psql $DATABASE_URL -c \
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  "http://localhost:5000/submission/me/documents/$DOC_ID/download-url" | jq '.data | {url: (.url | length > 0), expires_at}'
+  "$BASE/submission/me/documents/$DOC_ID/download-url" | jq '.data | {url: (.url | length > 0), expires_at}'
 # Expected: { "url": true, "expires_at": "<~5 minutes from now>" }
 ```
 
@@ -765,7 +869,7 @@ curl -s -H "Authorization: Bearer $STUDENT" \
 # Spin up a second student under a different code (skip if no second code handy):
 curl -s -i \
   -H "Authorization: Bearer $OTHER_STUDENT" \
-  "http://localhost:5000/submission/me/documents/$DOC_ID/download-url" | head -1
+  "$BASE/submission/me/documents/$DOC_ID/download-url" | head -1
 # Expected: HTTP/1.1 403
 ```
 
@@ -781,8 +885,8 @@ curl -s -i \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/registrations?limit=20" \
-  | jq '.data.rows[0] | {candidate, university, biometric_status, status}'
+  "$BASE/registration/institution/registrations?limit=20" \
+  | jq '.data[0] | {candidate, university, biometric_status, status}'
 ```
 
 **Expected:** each row includes `candidate.{id,name,email,candidate_id}`,
@@ -793,8 +897,8 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/registrations?q=adunni&limit=5" \
-  | jq '.data.rows | length'
+  "$BASE/registration/institution/registrations?q=adunni&limit=5" \
+  | jq '.data | length'
 # Expected: ≥ 1 (the test student we just registered)
 ```
 
@@ -802,8 +906,8 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/registrations?bucket=pending&limit=20" \
-  | jq '.data.rows | map(.status) | unique'
+  "$BASE/registration/institution/registrations?bucket=pending&limit=20" \
+  | jq '.data | map(.status) | unique'
 # Expected: subset of [code_issued, claimed, pending_student_confirm, pending_documents, pending_institution_review]
 ```
 
@@ -811,7 +915,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  http://localhost:5000/registration/institution/overview/stats | jq
+  $BASE/registration/institution/overview/stats | jq
 # Expected: { total, approved, pending, rejected, with_biometrics } — all integers
 ```
 
@@ -819,7 +923,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/overview/by-university?limit=12" \
+  "$BASE/registration/institution/overview/by-university?limit=12" \
   | jq 'length, .[0]'
 # Expected: array length ≤ 12; each row { university_id, university_name, short_name, registered_count }
 ```
@@ -829,7 +933,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 ```bash
 curl -s -D - -o /tmp/candidates.csv \
   -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/registrations/export" | head -10
+  "$BASE/registration/institution/registrations/export" | head -10
 head -3 /tmp/candidates.csv
 ```
 
@@ -843,7 +947,7 @@ head -3 /tmp/candidates.csv
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/submission/institution/registrations/$REG_ID/result-entries" \
+  "$BASE/submission/institution/registrations/$REG_ID/result-entries" \
   | jq '.data.groups[] | {source, sitting, origins: (.subjects | map(.origin) | unique)}'
 # Expected: at least one group with origins containing "manual" (from §8.1)
 ```
@@ -852,10 +956,10 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```bash
 ENTRY_ID=$(curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/submission/institution/registrations/$REG_ID/result-entries" \
+  "$BASE/submission/institution/registrations/$REG_ID/result-entries" \
   | jq -r '.data.groups[0].subjects[0].id')
 
-curl -s -X PATCH "http://localhost:5000/submission/institution/result-entries/$ENTRY_ID" \
+curl -s -X PATCH "$BASE/submission/institution/result-entries/$ENTRY_ID" \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{"grade":"A1"}' | jq '.data | {grade, grade_normalized, origin}'
@@ -874,10 +978,37 @@ entries.
 ### TC-12.1 — Single-row approve (existing)
 
 ```bash
-curl -s -X POST "http://localhost:5000/registration/institution/registrations/$REG_ID/approve" \
+curl -s -X POST "$BASE/registration/institution/registrations/$REG_ID/approve" \
   -H "Authorization: Bearer $ADMIN" | jq '.data | {status, approved_at, approved_by}'
 # Expected: status === "approved", approved_at + approved_by populated
 ```
+
+### TC-12.1a — Approval clears the cached NIN profile (PII purge)
+
+The NIN cache is "live" while the linked registration is in-flight and
+must be purged the moment the registration reaches a terminal status
+(approved / rejected / withdrawn). Confirm by reading the
+verification row directly:
+
+```bash
+uatpsql -c "SELECT status, cleared_at, response_payload = '{}'::jsonb AS payload_purged
+              FROM jupeb_nin_verifications WHERE id = '$NIN_ID'"
+# Expected: status='verified', cleared_at IS NOT NULL, payload_purged = true
+```
+
+A subsequent verify of the same NIN must now MISS the cache and create
+a fresh row (different `verification_id`):
+
+```bash
+FRESH=$(curl -s -X POST $BASE/identity/nin/verify \
+  -H "Authorization: Bearer $ADMIN" \
+  -H 'Content-Type: application/json' \
+  -d '{"nin":"12345678901"}' | jq -r '.data.verification_id')
+test "$FRESH" != "$NIN_ID" && echo "✅ cache cleared" || echo "❌ stale cache"
+```
+
+**Pass:** `cleared_at` is non-null, `response_payload` equals `{}`, and
+the post-approval verify returns a brand-new `verification_id`.
 
 ### TC-12.2 — Single-row withdraw (E.8)
 
@@ -885,10 +1016,10 @@ Pre-condition: pick a `pending_*` registration via `?bucket=pending`.
 
 ```bash
 PENDING_ID=$(curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/registrations?bucket=pending&limit=1" \
-  | jq -r '.data.rows[0].id')
+  "$BASE/registration/institution/registrations?bucket=pending&limit=1" \
+  | jq -r '.data[0].id')
 
-curl -s -X POST "http://localhost:5000/registration/institution/registrations/$PENDING_ID/withdraw" \
+curl -s -X POST "$BASE/registration/institution/registrations/$PENDING_ID/withdraw" \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{"reason":"Candidate requested withdrawal"}' | jq '.data | {status, status_reason}'
@@ -898,7 +1029,7 @@ curl -s -X POST "http://localhost:5000/registration/institution/registrations/$P
 ### TC-12.3 — Withdraw on terminal state returns 422
 
 ```bash
-curl -s -i -X POST "http://localhost:5000/registration/institution/registrations/$REG_ID/withdraw" \
+curl -s -i -X POST "$BASE/registration/institution/registrations/$REG_ID/withdraw" \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{"reason":"again"}' | head -1
@@ -910,10 +1041,10 @@ curl -s -i -X POST "http://localhost:5000/registration/institution/registrations
 ```bash
 # Pick 3 pending ids
 IDS=$(curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/registrations?bucket=pending&limit=3" \
-  | jq -r '[.data.rows[].id]')
+  "$BASE/registration/institution/registrations?bucket=pending&limit=3" \
+  | jq -r '[.data[].id]')
 
-curl -s -X POST http://localhost:5000/registration/institution/registrations/batch \
+curl -s -X POST $BASE/registration/institution/registrations/batch \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{"ids":'"$IDS"',"action":"reject","reason":"Incomplete docs (UAT batch)"}' \
@@ -926,7 +1057,7 @@ curl -s -X POST http://localhost:5000/registration/institution/registrations/bat
 ### TC-12.5 — Batch with invalid action
 
 ```bash
-curl -s -i -X POST http://localhost:5000/registration/institution/registrations/batch \
+curl -s -i -X POST $BASE/registration/institution/registrations/batch \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{"ids":["00000000-0000-1000-8000-000000000000"],"action":"archive"}' | head -1
@@ -936,7 +1067,7 @@ curl -s -i -X POST http://localhost:5000/registration/institution/registrations/
 ### TC-12.6 — Batch reject without reason
 
 ```bash
-curl -s -i -X POST http://localhost:5000/registration/institution/registrations/batch \
+curl -s -i -X POST $BASE/registration/institution/registrations/batch \
   -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' \
   -d '{"ids":["00000000-0000-1000-8000-000000000000"],"action":"reject"}' | head -1
@@ -954,13 +1085,13 @@ accepted/rejected arrays summing to 3, TC-12.5/12.6 return 422.
 ### TC-13.1 — Log in as a demo student
 
 ```bash
-DEMO=$(curl -s -X POST http://localhost:5000/auth/login \
+DEMO=$(curl -s -X POST $BASE/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"identifier":"demo.adebayo.salami@example.com","password":"Student@12"}' \
   | jq -r '.data.access_token')
 
 curl -s -H "Authorization: Bearer $DEMO" \
-  http://localhost:5000/registration/me/profile | jq '.data | {candidate, university, basic_information}'
+  $BASE/registration/me/profile | jq '.data | {candidate, university, basic_information}'
 ```
 
 **Expected:** the candidate is John... err, **Adebayo Salami**, with
@@ -970,7 +1101,7 @@ curl -s -H "Authorization: Bearer $DEMO" \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  http://localhost:5000/registration/institution/overview/stats \
+  $BASE/registration/institution/overview/stats \
   | jq '.data'
 # Expected after a fresh seed: total ≥ 30; approved ~17; rejected ~4; pending ~9; with_biometrics ~12.
 ```
@@ -979,7 +1110,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```bash
 curl -s -H "Authorization: Bearer $ADMIN" \
-  "http://localhost:5000/registration/institution/overview/by-university?limit=12" \
+  "$BASE/registration/institution/overview/by-university?limit=12" \
   | jq 'sort_by(-.registered_count) | .[0:5]'
 ```
 
@@ -997,7 +1128,7 @@ match the seed shape (`total ≥ 30`), TC-13.3 returns ranked counts.
 
 ```bash
 curl -s -H "Authorization: Bearer $STUDENT" \
-  http://localhost:5000/notifications/unread-count | jq
+  $BASE/notifications/unread-count | jq
 # Expected: { success: true, data: { count: <int> } }
 ```
 
@@ -1016,7 +1147,7 @@ for ep in \
   /registration/institution/registrations \
   /registration/institution/overview/stats; do
   echo -n "$ep → "
-  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5000$ep
+  curl -s -o /dev/null -w '%{http_code}\n' $BASE$ep
 done
 # Expected: every line returns 401
 ```
@@ -1027,7 +1158,7 @@ Set `JUPEB_STUDENT_ROUTES_STRICT=true` and restart, then:
 
 ```bash
 curl -s -i -H "Authorization: Bearer $DEMO" \
-  http://localhost:5000/registration/institution/registrations | head -1
+  $BASE/registration/institution/registrations | head -1
 # Expected: HTTP/1.1 403
 ```
 
@@ -1041,7 +1172,7 @@ documented in `jupeb-student.middleware.js`.)
 | # | Module | Endpoint(s) | Personas | Expected outcome |
 |---|---|---|---|---|
 | §1 | Catalog | `/catalog/*/public`, `/sessions` | Registrar | Seeded data visible |
-| §2 | Identity + Registration | `/identity/nin/verify`, `/registration/institution/registrations`, `/auth/code-status` | Registrar | NIN verified + 6-char code issued + NoK seeded via M.12 |
+| §2 | Identity + Registration | `/identity/nin/verify`, `/registration/institution/registrations`, `/auth/code-status` | Registrar | NIN verified + 6-char code issued + NoK seeded via M.12; cache hit on repeat verify; provider switchable via `JUPEB_NIN_PROVIDER` |
 | §3 | Auth | `/auth/register-with-code` | New student | Single-shot signup; tokens; claimed status |
 | §4 | Registration | `/registration/me/profile` | Student | Composite profile populated |
 | §5 | Registration | `PATCH /me/profile` | Student | Editable fields persist; NIN-immutable rejected |
@@ -1051,7 +1182,7 @@ documented in `jupeb-student.middleware.js`.)
 | §9 | Identity | `/identity/biometrics` + skip | Student | Quality threshold + skip lock |
 | §10 | Registration | `/me/registration-form.pdf`, `/me/documents/:id/download-url` | Student | PDF stream + 5-min URL |
 | §11 | Registration + Submission | `/institution/registrations`, `/overview/*`, `/institution/result-entries/*` | Registrar | Joins, search, bucket, stats, chart, CSV, OCR review/override |
-| §12 | Registration | `/institution/registrations/{batch,:id/{approve,reject,withdraw}}` | Registrar | Single + batch state changes |
+| §12 | Registration | `/institution/registrations/{batch,:id/{approve,reject,withdraw}}` | Registrar | Single + batch state changes; terminal status purges cached NIN profile |
 | §13 | Demo | (above) | All | Seed dataset is queryable |
 | §14 | Notifications | `/notifications/unread-count` | Any auth user | Count returned |
 | §15 | RBAC | many | Anonymous + Student | 401 / 403 enforcement |
@@ -1060,7 +1191,7 @@ documented in `jupeb-student.middleware.js`.)
 
 - [ ] §0 environment up; migrations + seeds run
 - [ ] §1 catalog smoke
-- [ ] §2 NIN verify + code generate (6 chars)
+- [ ] §2 NIN verify + code generate (6 chars) + cache hit on repeat + provider switch
 - [ ] §3 register-with-code happy + 3 negatives
 - [ ] §4 composite profile populated
 - [ ] §5 PATCH happy + 2 negatives
@@ -1070,7 +1201,7 @@ documented in `jupeb-student.middleware.js`.)
 - [ ] §9 biometrics + B.4 + skip
 - [ ] §10 PDF + per-doc URL + 2 negatives
 - [ ] §11 institution list / stats / chart / export / OCR review
-- [ ] §12 single + batch approve/reject/withdraw + 3 negatives
+- [ ] §12 single + batch approve/reject/withdraw + 3 negatives + cache cleared on approval
 - [ ] §13 demo data smoke
 - [ ] §14 notifications unread-count
 - [ ] §15 401 + 403 sweep
@@ -1110,6 +1241,19 @@ SELECT source, name, relationship, created_at, deleted_at
   FROM jupeb_next_of_kin
  WHERE registration_id = '<reg-id>'
  ORDER BY created_at DESC;
+
+-- NIN cache state for a registration (response_payload is the cached
+-- profile, cleared_at marks PII purge after the registration terminates)
+SELECT v.id, v.status, v.provider, v.cleared_at,
+       v.response_payload = '{}'::jsonb AS payload_purged
+  FROM jupeb_nin_verifications v
+  JOIN jupeb_registrations r ON r.nin_verification_id = v.id
+ WHERE r.id = '<reg-id>';
+
+-- Which provider answered a given verification
+SELECT id, provider, status, provider_reference, verified_at, cleared_at
+  FROM jupeb_nin_verifications
+ WHERE id = '<verification-id>';
 ```
 
 ## Appendix B — quick reset between runs
