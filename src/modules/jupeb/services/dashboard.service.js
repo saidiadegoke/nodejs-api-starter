@@ -103,11 +103,34 @@ async function kpiCounts(universityId, sessionId) {
           SELECT 1 FROM jupeb_biometric_captures bc
           WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
         )
-      )::int AS biometric
+      )::int AS biometric,
+      COUNT(*) FILTER (
+        WHERE r.status <> 'withdrawn' AND NOT EXISTS (
+          SELECT 1 FROM jupeb_biometric_captures bc
+          WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
+        )
+      )::int AS without_biometric
     FROM jupeb_registrations r
     ${where}`;
   const r = await pool.query(sql, params);
   return r.rows[0];
+}
+
+// Count active (non-deleted) universities. Optional filter by type so
+// the same helper drives both the "Institutions Onboarded" card and
+// the donut-chart slices.
+async function institutionsCount({ universityType } = {}) {
+  const params = [];
+  let where = `deleted_at IS NULL AND status = 'active'`;
+  if (universityType) {
+    where += ` AND university_type = $1`;
+    params.push(universityType);
+  }
+  const r = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM jupeb_universities WHERE ${where}`,
+    params
+  );
+  return r.rows[0].c;
 }
 
 class DashboardService {
@@ -145,11 +168,20 @@ class DashboardService {
       delta_pct: previous ? deltaPct(curVal, prevVal) : null,
     });
 
+    // Institution counts — derived from the universities catalog,
+    // not the per-session registration table. We don't have a notion
+    // of "institutions in previous session" (universities aren't
+    // session-scoped), so delta_pct here is always null. The frontend
+    // can still show the value without the comparison arrow.
+    const institutions_onboarded = await institutionsCount();
+
     return {
+      institutions_onboarded: { value: institutions_onboarded, delta_pct: null },
       total_registered: card(current.total, previous?.total),
       approved: card(current.approved, previous?.approved),
       pending: card(current.pending, previous?.pending),
       with_biometrics: card(current.biometric, previous?.biometric),
+      without_biometrics: card(current.without_biometric, previous?.without_biometric),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year }
         : null,
@@ -169,11 +201,73 @@ class DashboardService {
       params.push(scopedUniversityId);
     }
     const r = await pool.query(q, params);
+    const inst = await institutionsCount();
     return {
       total_students: r.rows[0].total,
+      institutions_count: inst,
       active_session: activeSession
         ? { id: activeSession.id, label: activeSession.academic_year, status: activeSession.status }
         : null,
+    };
+  }
+
+  /**
+   * Donut chart: distribution of institutions by `university_type`
+   * (`federal` / `state` / `private` / null). Returns counts + percent
+   * shares — the frontend draws the donut directly off this.
+   */
+  async getInstitutionDistribution() {
+    const r = await pool.query(
+      `SELECT COALESCE(university_type, 'unspecified') AS type,
+              COUNT(*)::int AS count
+         FROM jupeb_universities
+        WHERE deleted_at IS NULL AND status = 'active'
+        GROUP BY 1
+        ORDER BY 2 DESC`
+    );
+    const total = r.rows.reduce((sum, row) => sum + row.count, 0);
+    const slices = r.rows.map((row) => ({
+      type: row.type,
+      count: row.count,
+      pct: total ? Number(((row.count / total) * 100).toFixed(1)) : 0,
+    }));
+    return { total, slices };
+  }
+
+  /**
+   * Registration timeline for the Registration Management header card:
+   * the current session's open and close dates plus the live "now" so
+   * the client can render the progress indicator without doing its own
+   * clock arithmetic.
+   */
+  async getSessionTimeline({ sessionId }) {
+    assertUuid(sessionId, 'session_id');
+    const session = await resolveSession(sessionId);
+    if (!session) return null;
+    const r = await pool.query(
+      `SELECT id, academic_year, year_short, status, opens_at, closes_at,
+              candidate_info_cutoff_at, profile_update_cutoff_at, ca_cutoff_at
+         FROM jupeb_registration_sessions WHERE id = $1`,
+      [session.id]
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    const now = new Date();
+    const opens = row.opens_at ? new Date(row.opens_at) : null;
+    const closes = row.closes_at ? new Date(row.closes_at) : null;
+    const within = opens && closes && now >= opens && now <= closes;
+    return {
+      session_id: row.id,
+      academic_year: row.academic_year,
+      year_short: row.year_short,
+      status: row.status,
+      opens_at: row.opens_at,
+      closes_at: row.closes_at,
+      candidate_info_cutoff_at: row.candidate_info_cutoff_at,
+      profile_update_cutoff_at: row.profile_update_cutoff_at,
+      ca_cutoff_at: row.ca_cutoff_at,
+      now: now.toISOString(),
+      within_window: !!within,
     };
   }
 

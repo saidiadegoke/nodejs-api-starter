@@ -1323,7 +1323,23 @@ class RegistrationService {
   async finalizeAllClosedSessions(userId) {
     await assertFinalizeRole(userId);
 
-    const closed = await sessionModel.findAll({ limit: 1000, offset: 0, status: 'closed' });
+    // Only walk sessions that actually have approved registrations
+    // awaiting matric assignment. Without this filter the bulk path
+    // is O(closed_sessions) regardless of work to do; with the filter
+    // it's O(sessions_with_pending_rows) which is tiny in steady state.
+    const elig = await pool.query(
+      `SELECT s.*
+         FROM jupeb_registration_sessions s
+        WHERE s.status = 'closed'
+          AND EXISTS (
+            SELECT 1 FROM jupeb_registrations r
+             WHERE r.session_id = s.id
+               AND r.status = 'approved'
+               AND r.jupeb_candidate_number IS NULL
+          )
+        ORDER BY s.opens_at DESC`
+    );
+    const closed = elig.rows;
     const results = [];
     let totalAssigned = 0;
     let totalSkipped = 0;

@@ -1398,8 +1398,9 @@ trigger below puts a real message in the recipient's inbox.
 | `POST /auth/forgot-password` | `forgot-password.html` | identified user | inbox: subject `Reset Your <APP_NAME> Password` |
 | `POST /auth/reset-password` (on success) | `password-reset-success.html` | identified user | inbox: subject `Password Reset Successful - <APP_NAME>` |
 | `POST /auth/resend-otp` (channel=email|both) | `otp-code.html` | identified user | inbox: subject `… your verification code: <code>` |
-| (orphan, not yet wired) | `email-verification.html` | — | `/auth/send-verification` flow lands when wired |
-| (orphan, not yet wired) | `resend-verification.html` | — | `/auth/resend-verification` flow lands when wired |
+| `POST /sessions/:id/finalize-candidate-numbers` (per-row, on assign) | `jupeb-matric-assigned.html` | candidate | inbox: subject `… your JUPEB candidate number is <NUM>` — body restates the matric-lockdown rule |
+| `POST /auth/send-verification` | `email-verification.html` | authenticated user | inbox: subject `Verify your email — <APP_NAME>` |
+| `POST /auth/resend-verification` | `resend-verification.html` | authenticated user | inbox: subject `Verify your email — <APP_NAME>` (resend copy) |
 
 ### TC-17.1 — Each lifecycle trigger drops one mail
 
@@ -1578,11 +1579,68 @@ curl -s -X POST $BASE/sessions/$SESSION_ID/finalize-candidate-numbers \
 # Expected: assigned=0 (or excludes our row from the numbers[] array)
 ```
 
+### TC-18.10 — Bulk finalize across every closed session
+
+```bash
+curl -s -X POST $BASE/sessions/finalize-all-closed \
+  -H "Authorization: Bearer $ADMIN" \
+  | jq '.data | {totals, sample_session: .sessions[0]}'
+```
+
+**Expected response shape:**
+
+```jsonc
+{
+  "data": {
+    "sessions": [
+      { "session_id": "...", "academic_year": "2024/2025", "year_short": "25",
+        "assigned": 12, "skipped": 0 },
+      { "session_id": "...", "academic_year": "2023/2024", "year_short": "24",
+        "assigned": 0, "skipped": 47 }
+    ],
+    "totals": {
+      "sessions_processed": 2,
+      "sessions_touched": 1,
+      "assigned": 12,
+      "skipped": 47
+    }
+  }
+}
+```
+
+Pre-flight optimization: the endpoint only walks closed sessions that
+have approved rows still awaiting matric, so re-running on a clean DB
+finishes in milliseconds, not seconds.
+
+```bash
+# Idempotent: a second call assigns nothing new
+curl -s -X POST $BASE/sessions/finalize-all-closed \
+  -H "Authorization: Bearer $ADMIN" | jq '.data.totals.assigned'
+# Expected: 0
+```
+
+### TC-18.11 — Candidate is emailed when their matric is assigned
+
+The per-row finalize loop fires `jupeb-matric-assigned.html` to the
+student (fire-and-forget; deferred via `setImmediate` so the HTTP
+response doesn't block on SMTP).
+
+```bash
+# After TC-18.3 fires, check the student inbox. Subject contains the
+# matric verbatim for quick scan:
+#   "<APP_NAME> — your JUPEB candidate number is <NUM>"
+# Body restates the lockdown rule ("from now on, log in using this
+# candidate number"). Server logs show:
+#   [info] sendEmail completed for jupeb-matric-assigned.html
+```
+
 **Pass criteria for §18:** TC-18.1 reg-code login works, TC-18.2 preview
 surfaces formula-derived matric, TC-18.3 finalize persists it, TC-18.4
 matric login works, TC-18.5–18.7 prove the lockdown blocks email /
 phone / reg-code, TC-18.8 confirms alphanumeric matrics work, TC-18.9
-confirms re-running finalize is a no-op.
+confirms re-running finalize is a no-op, TC-18.10 bulk-finalize
+returns aggregated counts + is idempotent, TC-18.11 confirms the
+matric-assigned email lands.
 
 ---
 
@@ -1831,7 +1889,263 @@ return the expected error shapes, TC-21.6 produces the resend variant.
 
 ---
 
-## 22. Test matrix at a glance
+## 22. Catalog — bulk CSV upload
+
+The bulk endpoints (`POST /catalog/universities/bulk`,
+`POST /catalog/subjects/bulk`, `POST /catalog/subject-combinations/bulk`)
+historically only accepted a raw `text/csv` body. Frontend file
+pickers send multipart, so uploads silently parsed to zero rows. The
+unified `csv-upload` middleware now normalizes **three** payload
+shapes onto `req.csvText`:
+
+| Shape | Content-Type | How to attach |
+|---|---|---|
+| Multipart file | `multipart/form-data` | field name `file` (default) or `csv` — any field carrying a `.csv` / `text/csv` blob |
+| Raw CSV body | `text/csv` or `application/csv` | request body is the CSV string |
+| JSON | `application/json` | `{ "csv": "<text>" }` |
+
+All three return the same response shape:
+
+```jsonc
+{
+  "data": {
+    "total": <int>,
+    "succeeded": <int>,
+    "failed": <int>,
+    "outcomes": [
+      { "row": 1, "ok": true,  "data": { /* inserted row */ } },
+      { "row": 2, "ok": false, "error_code": "23505", "error_message": "duplicate key …" }
+    ]
+  }
+}
+```
+
+A per-row failure does NOT abort the run — every row gets a verdict.
+
+### TC-22.1 — Multipart upload (the failing-in-prod case)
+
+```bash
+cat > /tmp/unis.csv <<'EOF'
+code,name,jupeb_prefix
+PROBE-A-001,Probe A University,901
+PROBE-B-001,Probe B University,902
+EOF
+
+curl -s -X POST $BASE/catalog/universities/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -F "file=@/tmp/unis.csv;type=text/csv" \
+  | jq '.data | {total, succeeded, failed}'
+# Expected: total=2, succeeded=2, failed=0
+```
+
+### TC-22.2 — Multipart with the field named `csv` instead of `file`
+
+```bash
+curl -s -X POST $BASE/catalog/universities/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -F "csv=@/tmp/unis.csv;type=text/csv" \
+  | jq '.data | {total, succeeded, failed}'
+# Expected: same as TC-22.1 — field-name flexible
+```
+
+### TC-22.3 — Raw text/csv body (regression — original shape)
+
+```bash
+curl -s -X POST $BASE/catalog/universities/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -H "Content-Type: text/csv" \
+  --data-binary @/tmp/unis.csv \
+  | jq '.data | {total, succeeded, failed}'
+# Expected: total=2 (modulo dup-code failures from previous TCs)
+```
+
+### TC-22.4 — JSON `{ csv: "..." }` body
+
+```bash
+CSV_CONTENT=$(jq -Rs . < /tmp/unis.csv)
+curl -s -X POST $BASE/catalog/universities/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -H "Content-Type: application/json" \
+  -d "{\"csv\": $CSV_CONTENT}" \
+  | jq '.data | {total, succeeded, failed}'
+# Expected: total=2
+```
+
+### TC-22.5 — Per-row failure does not abort the run
+
+```bash
+cat > /tmp/dup.csv <<'EOF'
+code,name,jupeb_prefix
+DUP-001,Dup Probe,903
+DUP-001,Dup Probe Again,904
+EOF
+curl -s -X POST $BASE/catalog/universities/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -F "file=@/tmp/dup.csv;type=text/csv" \
+  | jq '.data | {total, succeeded, failed, outcomes}'
+# Expected: total=2, succeeded=1, failed=1
+# Second outcome carries error_code (23505 or "conflict") and a message.
+```
+
+### TC-22.6 — Subjects + subject-combinations bulk routes
+
+```bash
+# Subjects
+cat > /tmp/subjects.csv <<'EOF'
+code,name,description
+MTH101,Mathematics 101,Intro maths
+PHY101,Physics 101,Intro physics
+EOF
+curl -s -X POST $BASE/catalog/subjects/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -F "file=@/tmp/subjects.csv;type=text/csv" \
+  | jq '.data | {total, succeeded}'
+
+# Subject combinations
+cat > /tmp/combos.csv <<'EOF'
+code,title,subjects,is_global
+JUPEB SC-301,Math+Physics+Chem,"Mathematics;Physics;Chemistry",true
+EOF
+curl -s -X POST $BASE/catalog/subject-combinations/bulk \
+  -H "Authorization: Bearer $ADMIN" \
+  -F "file=@/tmp/combos.csv;type=text/csv" \
+  | jq '.data | {total, succeeded}'
+```
+
+**Pass criteria for §22:** TC-22.1 + 22.2 confirm the multipart fix
+lands (frontend file pickers now succeed), TC-22.3 + 22.4 prove the
+legacy text/csv + JSON shapes still work, TC-22.5 confirms per-row
+isolation, TC-22.6 confirms the same middleware is in place on the
+sibling bulk routes.
+
+---
+
+## 23. Dashboard analytics — graph data for the portal
+
+Every chart on the Dashboard Overview screen and the Registration
+Management screen is backed by one of these endpoints. They all
+share the `dashboardRead` role set (admin / super_admin / registrar /
+program_director / institution_admin) and accept optional
+`?university_id=…` and `?session_id=…` query params for scoping.
+
+| Chart / card | Endpoint | Field(s) used |
+|---|---|---|
+| KPI · Institutions Onboarded | `GET /dashboard/stat-cards` | `data.institutions_onboarded.{value, delta_pct}` |
+| KPI · Total Candidates Registered | `GET /dashboard/stat-cards` | `data.total_registered` |
+| KPI · Candidates with Biometrics | `GET /dashboard/stat-cards` | `data.with_biometrics` |
+| KPI · Candidates without Biometrics | `GET /dashboard/stat-cards` | `data.without_biometrics` |
+| KPI · Approved / Pending / Rejected | `GET /dashboard/students-status` | `approved`, `pending`, `rejected` |
+| Line · Registration Trends | `GET /dashboard/registration-trends?year=YYYY` | `series[].points[].count` (current + previous) |
+| Bar · Subject Combination Enrollment | `GET /dashboard/subject-enrollment?session_id=…&limit=6` | `[{ code, label, count }]` |
+| Bar · Top Institutions (Registration page) | `GET /registration/institution/overview/by-university?session_id=…&limit=12` | `[{ university_id, university_name, registered_count }]` |
+| Donut · Institution Distribution by type | `GET /dashboard/institution-distribution` | `total`, `slices[].{type, count, pct}` |
+| Card · Registration Timeline | `GET /dashboard/session-timeline?session_id=…` | `opens_at`, `closes_at`, `now`, `within_window`, cutoffs |
+| Table · Recent Registrations | `GET /dashboard/recent-registrations?session_id=…&limit=5` | full row enrichment |
+| Sidebar · Quick Statistics | `GET /dashboard/quick-stats` | `total_students`, `institutions_count`, `active_session` |
+| Header chip · Active session | `GET /dashboard/scope` | `session.{id, label, status}` |
+
+### TC-23.1 — Stat cards return all 6 KPI fields with deltas
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/stat-cards" \
+  | jq '.data | keys, .institutions_onboarded, .total_registered, .with_biometrics, .without_biometrics, .compared_to'
+```
+
+Expected: keys include `institutions_onboarded`, `total_registered`,
+`approved`, `pending`, `with_biometrics`, `without_biometrics`,
+`compared_to`. Each KPI card has `{ value: <int>, delta_pct: <number|null> }`.
+
+### TC-23.2 — Institution distribution donut
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/institution-distribution" | jq '.data'
+```
+
+**Expected:**
+
+```jsonc
+{
+  "total": 117,
+  "slices": [
+    { "type": "federal", "count": 61, "pct": 52.1 },
+    { "type": "state",   "count": 27, "pct": 23.1 },
+    { "type": "private", "count": 16, "pct": 13.7 },
+    { "type": "unspecified", "count": 13, "pct": 11.1 }
+  ]
+}
+```
+
+Slice `pct` values sum to ~100 (rounded to one decimal). Universities
+without `university_type` set roll up under `unspecified`.
+
+### TC-23.3 — Session timeline
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/session-timeline?session_id=$SESSION_ID" | jq '.data'
+```
+
+**Expected** (drives the "Registration Open / Current Date /
+Registration Close" cards in the Registration Management screen):
+
+```jsonc
+{
+  "session_id": "...",
+  "academic_year": "2025/2026",
+  "year_short": "26",
+  "status": "open",
+  "opens_at": "2026-01-01T00:00:00.000Z",
+  "closes_at": "2026-06-30T00:00:00.000Z",
+  "candidate_info_cutoff_at": null,
+  "profile_update_cutoff_at": null,
+  "ca_cutoff_at": null,
+  "now": "2026-03-24T11:02:00.000Z",
+  "within_window": true
+}
+```
+
+Without a `session_id` query param the endpoint falls back to the
+currently-open session, or the most recent one if none is open.
+
+### TC-23.4 — Quick stats now includes `institutions_count`
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/quick-stats" | jq '.data | {total_students, institutions_count, active_session}'
+# Expected: institutions_count present as a non-negative integer.
+```
+
+### TC-23.5 — Cross-endpoint consistency
+
+```bash
+DIST=$(curl -s -H "Authorization: Bearer $ADMIN" "$BASE/dashboard/institution-distribution" | jq -r '.data.total')
+QS=$(curl -s -H "Authorization: Bearer $ADMIN" "$BASE/dashboard/quick-stats" | jq -r '.data.institutions_count')
+test "$DIST" = "$QS" && echo "✅ counts match" || echo "❌ drift: dist=$DIST qs=$QS"
+# Expected: ✅ — the donut total and the quick-stat both come from the
+# same `institutionsCount()` helper.
+```
+
+### TC-23.6 — Analytics endpoints require auth
+
+```bash
+for ep in stat-cards quick-stats institution-distribution session-timeline subject-enrollment registration-trends students-status recent-registrations; do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/dashboard/$ep")
+  echo "$ep → $CODE"
+done
+# Expected: every line returns 401
+```
+
+**Pass criteria for §23:** TC-23.1 returns all 6 KPI cards, TC-23.2
+donut shape with `pct` summing to ~100, TC-23.3 timeline carries
+opens/closes/now and `within_window`, TC-23.4 `institutions_count`
+present, TC-23.5 confirms the two endpoints don't drift, TC-23.6
+auth gating intact.
+
+---
+
+## 24. Test matrix at a glance
 
 | # | Module | Endpoint(s) | Personas | Expected outcome |
 |---|---|---|---|---|
@@ -1856,8 +2170,10 @@ return the expected error shapes, TC-21.6 produces the resend variant.
 | §19 | Mobile routing hints | `/auth/login`, `/auth/code-status` | All | Login response embeds `registration` + `next_step`; code-status carries `account` block (masked email/phone, `can_login`) once claimed |
 | §20 | Institution candidate detail | `GET /registration/institution/registrations/:id` | Registrar | Single-call detail composes registration + candidate user + docs + result entries + biometrics + NoK + history |
 | §21 | Email verification link | `/auth/send-verification`, `/auth/verify-email` | Authenticated + public link | Token-bearing email lands; verify flips `email_verified`; expiry + invalid-token error paths |
+| §22 | Catalog bulk CSV upload | `/catalog/{universities,subjects,subject-combinations}/bulk` | Registrar / admin | Multipart, text/csv, JSON `{csv}` all accepted; per-row failures isolated |
+| §23 | Dashboard analytics | `/dashboard/{stat-cards,quick-stats,institution-distribution,session-timeline,…}` | Any dashboard role | Every chart on the portal has a backing endpoint; KPI cards carry value + delta_pct; donut + timeline shapes documented |
 
-## 23. Sign-off checklist
+## 25. Sign-off checklist
 
 - [ ] §0 environment up; migrations + seeds run
 - [ ] §1 catalog smoke
@@ -1877,10 +2193,12 @@ return the expected error shapes, TC-21.6 produces the resend variant.
 - [ ] §15 401 + 403 sweep
 - [ ] §16 OTP — resend (email/sms/both) + verify + retry-cap + expiry
 - [ ] §17 Email delivery — all 3 lifecycle templates land in candidate's inbox
-- [ ] §18 Matric lifecycle — finalize writes matric + lockdown blocks other identifiers
+- [ ] §18 Matric lifecycle — finalize writes matric + lockdown blocks other identifiers + bulk finalize-all + matric-assigned email
 - [ ] §19 Mobile routing hints — login.registration + code-status.account present
 - [ ] §20 Institution candidate detail — single-call shape returns full keys
 - [ ] §21 Email verification — send → verify → email_verified=true round-trip
+- [ ] §22 Catalog bulk CSV — multipart upload from the frontend file picker succeeds
+- [ ] §23 Dashboard analytics — every chart on the portal has a working backing endpoint
 
 When every box is checked, the registration end-to-end can be
 considered ready for stakeholder demo.

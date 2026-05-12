@@ -74,6 +74,28 @@ class DashboardController {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
   }
+
+  // Donut chart — institution distribution by university_type
+  // (federal / state / private / unspecified).
+  static async getInstitutionDistribution(req, res) {
+    try {
+      const data = await dashboardService.getInstitutionDistribution();
+      return sendSuccess(res, data, 'Institution distribution');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // Registration timeline — opens / closes / cutoffs / now-marker
+  // for the Registration Management header card.
+  static async getSessionTimeline(req, res) {
+    try {
+      const data = await dashboardService.getSessionTimeline(pickParams(req));
+      return sendSuccess(res, data, 'Session timeline');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
 }
 
 module.exports = DashboardController;

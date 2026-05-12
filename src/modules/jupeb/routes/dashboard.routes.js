@@ -15,4 +15,10 @@ router.get('/registration-trends', dashboardRead, DashboardController.getRegistr
 router.get('/subject-enrollment', dashboardRead, DashboardController.getSubjectEnrollment);
 router.get('/recent-registrations', dashboardRead, DashboardController.getRecentRegistrations);
 
+// Donut chart on the Dashboard Overview screen.
+router.get('/institution-distribution', dashboardRead, DashboardController.getInstitutionDistribution);
+// Registration Timeline card on the Registration Management screen
+// (opens_at / closes_at / now / within_window).
+router.get('/session-timeline', dashboardRead, DashboardController.getSessionTimeline);
+
 module.exports = router;
