@@ -252,9 +252,20 @@ class CatalogController {
     }
   }
 
+  // CSV body is normalized to `req.csvText` by the csv-upload middleware
+  // (handles multipart files + text/csv + JSON {csv}). The legacy
+  // shapes are still accepted as a fallback so existing clients keep
+  // working untouched.
+  static _csvFromRequest(req) {
+    if (typeof req.csvText === 'string' && req.csvText.length) return req.csvText;
+    if (typeof req.body === 'string') return req.body;
+    if (req.body && typeof req.body.csv === 'string') return req.body.csv;
+    return '';
+  }
+
   static async bulkUniversities(req, res) {
     try {
-      const csv = typeof req.body === 'string' ? req.body : (req.body && req.body.csv) || '';
+      const csv = CatalogController._csvFromRequest(req);
       const data = await catalogService.bulkCreateUniversities(csv);
       return sendSuccess(res, data, 'Universities bulk processed');
     } catch (err) {
@@ -264,7 +275,7 @@ class CatalogController {
 
   static async bulkSubjects(req, res) {
     try {
-      const csv = typeof req.body === 'string' ? req.body : (req.body && req.body.csv) || '';
+      const csv = CatalogController._csvFromRequest(req);
       const data = await catalogService.bulkCreateSubjects(csv);
       return sendSuccess(res, data, 'Subjects bulk processed');
     } catch (err) {
@@ -274,7 +285,7 @@ class CatalogController {
 
   static async bulkSubjectCombinations(req, res) {
     try {
-      const csv = typeof req.body === 'string' ? req.body : (req.body && req.body.csv) || '';
+      const csv = CatalogController._csvFromRequest(req);
       const data = await catalogService.bulkCreateSubjectCombinations(csv);
       return sendSuccess(res, data, 'Subject combinations bulk processed');
     } catch (err) {
