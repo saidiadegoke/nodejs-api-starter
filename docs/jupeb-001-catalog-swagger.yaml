@@ -228,15 +228,43 @@ paths:
       summary: Bulk-create universities from CSV
       description: |
         CSV header columns supported: `code,name,jupeb_prefix,short_name,university_type,
-        email,address,phone,expected_candidate_count,description`. Per-row validation; failures
-        are reported in `outcomes[]` rather than aborting the batch.
+        email,address,phone,expected_candidate_count,description`.
+
+        **Three payload shapes accepted** — pick whichever is convenient
+        for the client. The csv-upload middleware normalizes them all
+        onto `req.csvText`:
+
+        1. **`multipart/form-data`** — attach a file. Field name `file`
+           (default) or `csv` — both work. This is the shape frontend
+           file pickers send by default.
+        2. **`text/csv`** — raw CSV string in the request body.
+        3. **`application/json`** — `{ "csv": "<csv text>" }`.
+
+        Per-row validation; failures are reported in `outcomes[]` rather
+        than aborting the batch. Max 1000 rows.
       security:
         - BearerAuth: []
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file to ingest (field name flexible — `file` or `csv`).
           text/csv:
-            schema: { type: string }
+            schema:
+              type: string
+              description: Raw CSV body.
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              properties:
+                csv: { type: string, description: CSV body inline. }
       responses:
         '200':
           description: Per-row outcome summary.
@@ -346,14 +374,31 @@ paths:
     post:
       tags: [Catalog — admin]
       summary: Bulk-create subjects from CSV
-      description: 'CSV columns: `code,name,description`.'
+      description: |
+        CSV columns: `code,name,description`. Accepts the same three
+        payload shapes as `/catalog/universities/bulk`:
+
+        - `multipart/form-data` (field `file` or `csv`)
+        - `text/csv`
+        - `application/json` `{ "csv": "..." }`
       security:
         - BearerAuth: []
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
           text/csv:
             schema: { type: string }
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              properties:
+                csv: { type: string }
       responses:
         '200':
           description: Per-row outcomes
@@ -483,13 +528,27 @@ paths:
         CSV columns: `subjects` (comma/semicolon/pipe-separated within the cell),
         optional `code`, `title`, `is_global`, `university_id`. Codes/titles auto-derive
         when omitted.
+
+        Accepts the same three payload shapes as
+        `/catalog/universities/bulk` (multipart, text/csv, JSON).
       security:
         - BearerAuth: []
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
           text/csv:
             schema: { type: string }
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              properties:
+                csv: { type: string }
       responses:
         '200':
           description: Per-row outcomes

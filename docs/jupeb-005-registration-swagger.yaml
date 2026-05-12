@@ -113,6 +113,151 @@ paths:
         '200': { description: Paginated }
 
   /registration/institution/registrations/{registrationId}:
+    get:
+      tags: [Registration — institution]
+      summary: Full candidate detail (single-call composite)
+      description: |
+        Single-call endpoint that powers the institution dashboard's
+        candidate detail page. Composes everything an institution
+        reviewer needs in one response:
+
+        - Registration row (status, codes, timestamps, status history)
+        - Candidate user + profile (name, email, phone, verification
+          flags, address fields, photo URL)
+        - University / Subject Combination / Session display objects
+        - NIN verification snapshot (id + status)
+        - Documents (uploaded + per-doc status)
+        - Result entries grouped by (source, sitting)
+        - Biometric captures + skip flags
+        - Next of kin
+
+        **Auth:** admin / super_admin / registrar / program_director /
+        institution_admin (scoped to the registration's university).
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200':
+          description: Composite candidate detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string }
+                      status_reason: { type: string, nullable: true }
+                      institution_issued_code: { type: string, nullable: true }
+                      institution_code_expires_at: { type: string, format: date-time, nullable: true }
+                      provisional_candidate_code: { type: string, nullable: true }
+                      jupeb_candidate_number: { type: string, nullable: true }
+                      claimed_at: { type: string, format: date-time, nullable: true }
+                      submitted_at: { type: string, format: date-time, nullable: true }
+                      approved_at: { type: string, format: date-time, nullable: true }
+                      approved_by: { type: string, format: uuid, nullable: true }
+                      dashboard_unlocked_at: { type: string, format: date-time, nullable: true }
+                      created_at: { type: string, format: date-time }
+                      updated_at: { type: string, format: date-time }
+                      nin_verification_id: { type: string, format: uuid, nullable: true }
+                      nin_verification:
+                        type: object
+                        nullable: true
+                        properties:
+                          id: { type: string, format: uuid }
+                          status: { type: string }
+                      university:
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          name: { type: string }
+                          jupeb_prefix: { type: string }
+                      subject_combination:
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          code: { type: string }
+                          title: { type: string }
+                      session:
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          academic_year: { type: string }
+                          year_short: { type: string }
+                      candidate:
+                        type: object
+                        nullable: true
+                        properties:
+                          id: { type: string, format: uuid }
+                          email: { type: string }
+                          phone: { type: string, nullable: true }
+                          email_verified: { type: boolean }
+                          phone_verified: { type: boolean }
+                          last_login_at: { type: string, format: date-time, nullable: true }
+                          first_name: { type: string, nullable: true }
+                          last_name: { type: string, nullable: true }
+                          display_name: { type: string, nullable: true }
+                          date_of_birth: { type: string, format: date, nullable: true }
+                          gender: { type: string, nullable: true }
+                          profile_photo_url: { type: string, nullable: true }
+                          residential_address: { type: string, nullable: true }
+                          state_of_origin: { type: string, nullable: true }
+                          lga: { type: string, nullable: true }
+                          place_of_birth: { type: string, nullable: true }
+                      next_of_kin:
+                        type: object
+                        nullable: true
+                        properties:
+                          name: { type: string, nullable: true }
+                          relationship: { type: string, nullable: true }
+                          phone: { type: string, nullable: true }
+                          email: { type: string, nullable: true }
+                          address: { type: string, nullable: true }
+                          source:
+                            type: string
+                            enum: [nin, student, institution]
+                            nullable: true
+                      documents:
+                        type: array
+                        description: Per-document rows uploaded by the candidate.
+                        items: { type: object }
+                      result_entries:
+                        type: array
+                        description: Result entries grouped by (source, sitting).
+                        items: { type: object }
+                      biometrics:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            capture_type: { type: string, enum: [face, fingerprint] }
+                            quality_score: { type: number, nullable: true }
+                            captured_at: { type: string, format: date-time }
+                            external_reference: { type: string, nullable: true }
+                      biometric_status:
+                        type: string
+                        enum: [yes, partial, no]
+                      biometric_skips:
+                        type: object
+                        properties:
+                          face: { type: boolean }
+                          fingerprint: { type: boolean }
+                      status_history:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            from_status: { type: string, nullable: true }
+                            to_status: { type: string }
+                            reason: { type: string, nullable: true }
+                            changed_by: { type: string, format: uuid, nullable: true }
+                            created_at: { type: string, format: date-time }
+        '404': { description: Registration not found }
+        '422': { description: Malformed registrationId }
     patch:
       tags: [Registration — institution]
       summary: Update subject combination before student confirms
