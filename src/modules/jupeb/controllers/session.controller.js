@@ -25,6 +25,7 @@ class SessionController {
         page: req.query.page,
         limit: req.query.limit,
         status: req.query.status,
+        q: req.query.q,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {

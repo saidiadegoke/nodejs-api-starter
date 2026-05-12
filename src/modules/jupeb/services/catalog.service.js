@@ -36,12 +36,12 @@ class CatalogService {
     return subjectCombinationModel.findPublicActive({ universityId: universityId || null });
   }
 
-  async listUniversitiesAdmin({ page, limit, status }) {
+  async listUniversitiesAdmin({ page, limit, status, q }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
-    const rows = await universityModel.findAllAdmin({ limit: safeLimit, offset, status });
-    const total = await universityModel.countAdmin({ status });
+    const rows = await universityModel.findAllAdmin({ limit: safeLimit, offset, status, q });
+    const total = await universityModel.countAdmin({ status, q });
     return { rows, page: safePage, limit: safeLimit, total };
   }
 
@@ -150,7 +150,7 @@ class CatalogService {
     return row;
   }
 
-  async listSubjectCombinationsAdmin({ page, limit, status, university_id }) {
+  async listSubjectCombinationsAdmin({ page, limit, status, university_id, q }) {
     if (university_id && !isUuid(university_id)) {
       throw httpError(422, 'university_id must be a valid UUID');
     }
@@ -162,8 +162,13 @@ class CatalogService {
       offset,
       status,
       university_id: university_id || null,
+      q,
     });
-    const total = await subjectCombinationModel.countAdmin({ status, university_id: university_id || null });
+    const total = await subjectCombinationModel.countAdmin({
+      status,
+      university_id: university_id || null,
+      q,
+    });
     return { rows, page: safePage, limit: safeLimit, total };
   }
 
@@ -347,12 +352,12 @@ class CatalogService {
     return subjectModel.findPublicActive();
   }
 
-  async listSubjectsAdmin({ page, limit, status }) {
+  async listSubjectsAdmin({ page, limit, status, q }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
-    const rows = await subjectModel.findAllAdmin({ limit: safeLimit, offset, status });
-    const total = await subjectModel.countAdmin({ status });
+    const rows = await subjectModel.findAllAdmin({ limit: safeLimit, offset, status, q });
+    const total = await subjectModel.countAdmin({ status, q });
     return { rows, page: safePage, limit: safeLimit, total };
   }
 

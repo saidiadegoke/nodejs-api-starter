@@ -73,37 +73,45 @@ class SubjectCombinationModel {
     return result.rows;
   }
 
-  async findAllAdmin({ limit, offset, status, university_id }) {
+  _whereAdmin({ status, university_id, q }) {
     const values = [];
+    const where = ['deleted_at IS NULL'];
     let idx = 1;
-    let q = `SELECT * FROM jupeb_subject_combinations WHERE deleted_at IS NULL`;
     if (status) {
-      q += ` AND status = $${idx++}`;
+      where.push(`status = $${idx++}`);
       values.push(status);
     }
     if (university_id) {
-      q += ` AND (is_global = true OR university_id = $${idx++})`;
+      where.push(`(is_global = true OR university_id = $${idx++})`);
       values.push(university_id);
     }
-    q += ` ORDER BY title ASC LIMIT $${idx} OFFSET $${idx + 1}`;
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim()}%`;
+      where.push(`(
+        code ILIKE $${idx} OR
+        title ILIKE $${idx}
+      )`);
+      values.push(term);
+      idx += 1;
+    }
+    return { whereSql: where.join(' AND '), values, nextIdx: idx };
+  }
+
+  async findAllAdmin({ limit, offset, status, university_id, q }) {
+    const { whereSql, values, nextIdx } = this._whereAdmin({ status, university_id, q });
     values.push(limit, offset);
-    const result = await pool.query(q, values);
+    const sql = `SELECT * FROM jupeb_subject_combinations WHERE ${whereSql}
+                 ORDER BY title ASC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
+    const result = await pool.query(sql, values);
     return result.rows;
   }
 
-  async countAdmin({ status, university_id }) {
-    const values = [];
-    let idx = 1;
-    let q = `SELECT COUNT(*)::int AS c FROM jupeb_subject_combinations WHERE deleted_at IS NULL`;
-    if (status) {
-      q += ` AND status = $${idx++}`;
-      values.push(status);
-    }
-    if (university_id) {
-      q += ` AND (is_global = true OR university_id = $${idx++})`;
-      values.push(university_id);
-    }
-    const result = await pool.query(q, values);
+  async countAdmin({ status, university_id, q }) {
+    const { whereSql, values } = this._whereAdmin({ status, university_id, q });
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM jupeb_subject_combinations WHERE ${whereSql}`,
+      values
+    );
     return result.rows[0].c;
   }
 

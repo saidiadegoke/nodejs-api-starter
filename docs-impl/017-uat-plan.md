@@ -2172,6 +2172,7 @@ auth gating intact.
 | §21 | Email verification link | `/auth/send-verification`, `/auth/verify-email` | Authenticated + public link | Token-bearing email lands; verify flips `email_verified`; expiry + invalid-token error paths |
 | §22 | Catalog bulk CSV upload | `/catalog/{universities,subjects,subject-combinations}/bulk` | Registrar / admin | Multipart, text/csv, JSON `{csv}` all accepted; per-row failures isolated |
 | §23 | Dashboard analytics | `/dashboard/{stat-cards,quick-stats,institution-distribution,session-timeline,…}` | Any dashboard role | Every chart on the portal has a backing endpoint; KPI cards carry value + delta_pct; donut + timeline shapes documented |
+| §23a | Search + filter on list endpoints | `/catalog/{universities,subjects,subject-combinations}`, `/sessions`, `/registration/institution/registrations` | Any dashboard role | Server-side `?q=` ILIKE substring match across documented columns; combinable with `status` / `university_id` / `bucket` / `session_id`; `pagination.total` matches filtered count |
 
 ## 25. Sign-off checklist
 
@@ -2199,6 +2200,7 @@ auth gating intact.
 - [ ] §21 Email verification — send → verify → email_verified=true round-trip
 - [ ] §22 Catalog bulk CSV — multipart upload from the frontend file picker succeeds
 - [ ] §23 Dashboard analytics — every chart on the portal has a working backing endpoint
+- [ ] §23a Search + filter on list endpoints — `?q=` resolves on candidates / universities / subjects / combos / sessions; pagination.total matches
 
 When every box is checked, the registration end-to-end can be
 considered ready for stakeholder demo.

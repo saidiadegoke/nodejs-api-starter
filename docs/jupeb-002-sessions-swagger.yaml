@@ -94,13 +94,21 @@ paths:
   /sessions:
     get:
       tags: [Sessions]
-      summary: List sessions (paginated)
+      summary: List sessions (paginated, with text search)
+      description: |
+        Paginated list. `q` is a case-insensitive ILIKE substring match
+        across `academic_year` and `year_short` — powers the search
+        box on the Session History tab.
       security:
         - BearerAuth: []
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1 } }
         - { name: limit, in: query, schema: { type: integer } }
         - { name: status, in: query, schema: { type: string } }
+        - name: q
+          in: query
+          description: 'Case-insensitive substring match across academic_year / year_short.'
+          schema: { type: string, example: '2025/' }
       responses:
         '200': { description: Paginated `Session` rows }
         '401': { description: Unauthorized }

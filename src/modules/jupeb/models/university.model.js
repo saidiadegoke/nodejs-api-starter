@@ -66,29 +66,45 @@ class UniversityModel {
     return result.rows;
   }
 
-  async findAllAdmin({ limit, offset, status }) {
+  // Shared WHERE-builder so list + count stay in lock-step. `q` is a
+  // case-insensitive substring match across the catalog's searchable
+  // text columns — code (e.g. "UNILAG"), name, short_name.
+  _whereAdmin({ status, q }) {
     const values = [];
+    const where = ['deleted_at IS NULL'];
     let i = 1;
-    let q = `SELECT * FROM jupeb_universities WHERE deleted_at IS NULL`;
     if (status) {
-      q += ` AND status = $${i++}`;
+      where.push(`status = $${i++}`);
       values.push(status);
     }
-    q += ` ORDER BY name ASC LIMIT $${i} OFFSET $${i + 1}`;
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim()}%`;
+      where.push(`(
+        code ILIKE $${i} OR
+        name ILIKE $${i} OR
+        COALESCE(short_name, '') ILIKE $${i}
+      )`);
+      values.push(term);
+      i += 1;
+    }
+    return { whereSql: where.join(' AND '), values, nextIdx: i };
+  }
+
+  async findAllAdmin({ limit, offset, status, q }) {
+    const { whereSql, values, nextIdx } = this._whereAdmin({ status, q });
     values.push(limit, offset);
-    const result = await pool.query(q, values);
+    const sql = `SELECT * FROM jupeb_universities WHERE ${whereSql}
+                 ORDER BY name ASC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
+    const result = await pool.query(sql, values);
     return result.rows;
   }
 
-  async countAdmin({ status }) {
-    const values = [];
-    let i = 1;
-    let q = `SELECT COUNT(*)::int AS c FROM jupeb_universities WHERE deleted_at IS NULL`;
-    if (status) {
-      q += ` AND status = $${i++}`;
-      values.push(status);
-    }
-    const result = await pool.query(q, values);
+  async countAdmin({ status, q }) {
+    const { whereSql, values } = this._whereAdmin({ status, q });
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM jupeb_universities WHERE ${whereSql}`,
+      values
+    );
     return result.rows[0].c;
   }
 

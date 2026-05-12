@@ -37,6 +37,7 @@ class CatalogController {
         page: req.query.page,
         limit: req.query.limit,
         status: req.query.status,
+        q: req.query.q,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
@@ -109,6 +110,7 @@ class CatalogController {
         limit: req.query.limit,
         status: req.query.status,
         university_id: req.query.university_id,
+        q: req.query.q,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
@@ -200,6 +202,7 @@ class CatalogController {
         page: req.query.page,
         limit: req.query.limit,
         status: req.query.status,
+        q: req.query.q,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {

@@ -28,12 +28,12 @@ function parseTs(value, label) {
 }
 
 class SessionService {
-  async list({ page, limit, status }) {
+  async list({ page, limit, status, q }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
-    const rows = await sessionModel.findAll({ limit: safeLimit, offset, status });
-    const total = await sessionModel.count({ status });
+    const rows = await sessionModel.findAll({ limit: safeLimit, offset, status, q });
+    const total = await sessionModel.count({ status, q });
     return { rows, page: safePage, limit: safeLimit, total };
   }
 
