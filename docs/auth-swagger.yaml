@@ -547,6 +547,104 @@ paths:
         '200':
           description: Email verified
 
+  # ── Single-shot signup from a JUPEB code ────────────────────────────
+  /auth/register-with-code:
+    post:
+      summary: Claim a JUPEB institution code and create the student account
+      description: |
+        Single-shot signup paired with `GET /auth/code-status`. Once the
+        client has pre-validated that a code is claimable, it posts the
+        code + password here to:
+
+        1. Mint the user account.
+        2. Bind it to the matching `jupeb_registrations` row.
+        3. Issue access + refresh tokens — the response is the same
+           envelope as `/auth/login`, so the mobile app can transition
+           straight into the authenticated wizard (typically
+           `GET /jupeb/me/profile`).
+
+        The contact / name fields are optional overlays on the
+        institution-pre-seeded values. A `jupeb-welcome-student.html`
+        email fires fire-and-forget on success.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, password]
+              properties:
+                code:
+                  type: string
+                  description: The institution-issued code.
+                password:
+                  type: string
+                  minLength: 8
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                first_name: { type: string }
+                last_name: { type: string }
+            example:
+              code: F7K2P9
+              password: SecurePass123!
+              email: candidate@example.com
+              phone: '+2348000000000'
+              first_name: Adebayo
+              last_name: Salami
+      responses:
+        '201':
+          description: Account created and code claimed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token:  { type: string }
+                      refresh_token: { type: string }
+                      token_type:    { type: string, example: Bearer }
+                      expires_in:    { type: integer, example: 3600 }
+                      user:
+                        type: object
+                        properties:
+                          user_id:    { type: string, format: uuid }
+                          email:      { type: string, nullable: true, format: email }
+                          phone:      { type: string, nullable: true }
+                          first_name: { type: string, nullable: true }
+                          last_name:  { type: string, nullable: true }
+                          role:       { type: string }
+                          roles:
+                            type: array
+                            items: { type: string }
+                      registration:
+                        type: object
+                        properties:
+                          id:                          { type: string, format: uuid }
+                          status:                      { type: string, example: claimed }
+                          provisional_candidate_code:  { type: string }
+                          claimed_at:                  { type: string, format: date-time }
+        '400':
+          description: |
+            Validation / claim failure. `details.error_code` distinguishes
+            the cases: `code_required`, `code_invalid`.
+        '409':
+          description: |
+            `code_already_claimed` — the code has already been used to
+            create an account. Client should switch to the **Log in** UI
+            (the `account` block on `GET /auth/code-status` carries the
+            masked identifier to prefill).
+        '410':
+          description: '`code_expired` — the code is past its expiry.'
+        '422':
+          description: '`password_too_short` (or other field validation).'
+
   # ── Code-status (extended) ──────────────────────────────────────────
   /auth/code-status:
     get:

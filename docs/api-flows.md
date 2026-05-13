@@ -361,6 +361,75 @@ show next:
 
 Raw email / phone never leak — only masked values.
 
+### Register with an institution code (single-shot signup)
+
+```
+POST /auth/register-with-code     (public)
+```
+
+The companion to `GET /auth/code-status`. After the pre-validation
+call confirms the code is claimable, the client posts the code +
+chosen password to mint the account and bind it to the
+pre-loaded `jupeb_registrations` row in a single round-trip.
+
+`req`
+```json
+{
+  "code": "F7K2P9",
+  "password": "S3curePass!",
+  "email": "candidate@example.com",
+  "phone": "+2348000000000",
+  "first_name": "Adebayo",
+  "last_name": "Salami"
+}
+```
+
+`code` + `password` are required; the contact / name fields are
+optional overlays on whatever the institution pre-seeded. The
+endpoint also implements the same honeypot bot-trap as
+`/auth/register` — bodies carrying `website`, `url`, or `homepage`
+are silently rejected.
+
+`res 201`
+```json
+{
+  "success": true,
+  "data": {
+    "access_token": "eyJhbGc...",
+    "refresh_token": "eyJhbGc...",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "user": {
+      "user_id": "uuid",
+      "email": "candidate@example.com",
+      "phone": "+2348000000000",
+      "first_name": "Adebayo",
+      "last_name": "Salami",
+      "role": "user",
+      "roles": ["user"]
+    },
+    "registration": {
+      "id": "uuid",
+      "status": "claimed",
+      "provisional_candidate_code": "270010001",
+      "claimed_at": "2026-05-13T10:00:00.000Z"
+    }
+  }
+}
+```
+
+Errors carry `details.error_code` so the client can branch:
+- `400 code_required` / `400 code_invalid`
+- `409 code_already_claimed` — same shape as the matching
+  `code-status` error; client should switch to the **Log in** UI.
+- `410 code_expired`
+- `422 password_too_short`
+
+On success a `jupeb-welcome-student.html` email fires
+(fire-and-forget). The candidate is then authenticated and can
+fetch their pre-loaded profile via `GET /jupeb/me/profile`
+(Flow 5, step 6).
+
 ### OAuth (social login)
 
 The auth module also mounts OAuth routes at `/auth/...` (Google,
@@ -1202,6 +1271,14 @@ POST /registration/me/claim-code     (student)
 ```
 GET /registration/me/profile     (student)
 ```
+
+Powers the figma **"Student Information — Kindly verify your
+information below"** screen and the **"Confirm Subject Combinations"**
+bottom-sheet that follows it. The screen renders `candidate.full_name`,
+`candidate.provisional_candidate_code` (e.g. `001/0001`), the
+`subject_combination.title` + `subject_combination.code` (rendered as
+`"CRS/ISS, Government, Literature - JUPEB SC-001"`), gender, DOB,
+residential address, etc.
 
 `res 200` — composite read joining users + profiles + the NIN verification
 + registration + subject combination + university + session. When the
