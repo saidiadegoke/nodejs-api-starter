@@ -62,29 +62,41 @@ class SessionModel {
     return result.rows[0];
   }
 
-  async findAll({ limit, offset, status }) {
+  _where({ status, q }) {
     const values = [];
+    const where = ['1=1'];
     let idx = 1;
-    let q = `SELECT * FROM jupeb_registration_sessions WHERE 1=1`;
     if (status) {
-      q += ` AND status = $${idx++}`;
+      where.push(`status = $${idx++}`);
       values.push(status);
     }
-    q += ` ORDER BY opens_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim()}%`;
+      where.push(`(
+        academic_year ILIKE $${idx} OR
+        year_short ILIKE $${idx}
+      )`);
+      values.push(term);
+      idx += 1;
+    }
+    return { whereSql: where.join(' AND '), values, nextIdx: idx };
+  }
+
+  async findAll({ limit, offset, status, q }) {
+    const { whereSql, values, nextIdx } = this._where({ status, q });
     values.push(limit, offset);
-    const result = await pool.query(q, values);
+    const sql = `SELECT * FROM jupeb_registration_sessions WHERE ${whereSql}
+                 ORDER BY opens_at DESC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
+    const result = await pool.query(sql, values);
     return result.rows;
   }
 
-  async count({ status }) {
-    const values = [];
-    let idx = 1;
-    let q = `SELECT COUNT(*)::int AS c FROM jupeb_registration_sessions WHERE 1=1`;
-    if (status) {
-      q += ` AND status = $${idx++}`;
-      values.push(status);
-    }
-    const result = await pool.query(q, values);
+  async count({ status, q }) {
+    const { whereSql, values } = this._where({ status, q });
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM jupeb_registration_sessions WHERE ${whereSql}`,
+      values
+    );
     return result.rows[0].c;
   }
 

@@ -60,7 +60,24 @@ paths:
 
   /auth/login:
     post:
-      summary: Log in with email/phone and password
+      summary: Log in with email / phone / reg-number / matric and password
+      description: |
+        Accepts **four** identifier shapes on the same `identifier` field:
+
+        - email (case-insensitive)
+        - phone (E.164)
+        - `jupeb_registrations.provisional_candidate_code` (interim 9-digit reg no.)
+        - `jupeb_registrations.jupeb_candidate_number` (final matric — alphanumeric
+          with `/`, `-`, `_` accepted)
+
+        **Matric lockdown.** Once a candidate has a `jupeb_candidate_number`
+        assigned to any of their registrations, email / phone / reg-code stop
+        resolving to them — only matric works. Admins / registrars /
+        institution_admins bypass the lockdown.
+
+        **Response carries a `registration` block** when the user has any
+        JUPEB registration, including a `next_step` hint the mobile client
+        can route on without a follow-up call.
       tags: [Auth]
       security: []
       requestBody:
@@ -73,15 +90,61 @@ paths:
               properties:
                 identifier:
                   type: string
-                  description: Email or phone number
+                  description: |
+                    Email, phone, provisional reg number, or final matric.
                 password:
                   type: string
             example:
-              identifier: jane@example.com
+              identifier: UI/2024/12345
               password: SecurePass123!
       responses:
         '200':
-          description: Login successful — returns access/refresh tokens
+          description: Login successful — returns access/refresh tokens + registration summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+                      refresh_token: { type: string }
+                      token_type: { type: string, example: Bearer }
+                      expires_in: { type: integer, example: 3600 }
+                      user:
+                        type: object
+                        properties:
+                          user_id: { type: string, format: uuid }
+                          email: { type: string }
+                          phone: { type: string, nullable: true }
+                          first_name: { type: string, nullable: true }
+                          last_name: { type: string, nullable: true }
+                          role: { type: string, nullable: true }
+                          roles: { type: array, items: { type: string } }
+                          verified: { type: boolean }
+                      registration:
+                        nullable: true
+                        type: object
+                        description: |
+                          Latest JUPEB registration for the user. `null` when
+                          the user has none (admins, etc.).
+                        properties:
+                          id: { type: string, format: uuid }
+                          status:
+                            type: string
+                            enum: [provisional, code_issued, claimed, pending_student_confirm, pending_documents, pending_institution_review, approved, rejected, withdrawn]
+                          provisional_candidate_code: { type: string, nullable: true }
+                          jupeb_candidate_number: { type: string, nullable: true }
+                          claimed_at: { type: string, format: date-time, nullable: true }
+                          submitted_at: { type: string, format: date-time, nullable: true }
+                          approved_at: { type: string, format: date-time, nullable: true }
+                          dashboard_unlocked: { type: boolean }
+                          next_step:
+                            type: string
+                            description: Client-side route hint derived from `status`.
+                            enum: [claim_code, confirm_subjects, upload_documents, await_review, view_dashboard, view_rejection, restart]
+                            nullable: true
         '401':
           description: Invalid credentials
 
@@ -118,7 +181,16 @@ paths:
 
   /auth/verify-phone:
     post:
-      summary: Verify phone number with OTP
+      summary: Verify a 6-digit OTP (email or SMS channel — name is legacy)
+      description: |
+        Validates the supplied 6-digit code against the most recent
+        un-verified `otp_codes` row for the user. On success flips
+        `users.email_verified` and/or `users.phone_verified` based on the
+        channel the OTP was issued on.
+
+        Identifier may be supplied as `identifier` (preferred), `email`,
+        or the legacy `phone` field. Returns the same "invalid credentials"
+        shape when the identifier is unknown — no account-existence leak.
       tags: [Auth]
       security: []
       requestBody:
@@ -127,21 +199,62 @@ paths:
           application/json:
             schema:
               type: object
-              required: [phone, otp]
+              required: [otp]
               properties:
+                identifier:
+                  type: string
+                  description: Email or phone of the user being verified.
+                email:
+                  type: string
+                  description: Alias of `identifier`.
                 phone:
                   type: string
+                  description: Alias of `identifier` (legacy).
                 otp:
                   type: string
+                  pattern: '^\d{6}$'
       responses:
         '200':
-          description: Phone verified
+          description: Verification successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      verified: { type: boolean }
+                      user_id: { type: string, format: uuid }
+                      channel:
+                        type: string
+                        enum: [email, sms, both]
         '400':
-          description: Invalid or expired OTP
+          description: 'Invalid OTP — `details.error_code` ∈ { invalid_otp }'
+        '410':
+          description: 'OTP missing or expired — `details.error_code` ∈ { otp_expired_or_missing, otp_expired }'
+        '422':
+          description: 'Format error — `details.error_code` ∈ { otp_required, otp_invalid_format, identifier_required }'
+        '429':
+          description: 'Attempt cap (5) reached — `details.error_code` = `too_many_attempts`'
 
   /auth/resend-otp:
     post:
-      summary: Resend a verification OTP
+      summary: Issue and dispatch a fresh 6-digit OTP
+      description: |
+        Generates a cryptographically strong 6-digit code, stores only
+        its sha256 hash in `otp_codes`, and dispatches via the resolved
+        channel (fire-and-forget — SMTP / SMS RTT does not gate the HTTP
+        response).
+
+        **Channel resolution** (priority order):
+        1. request body `channel` (`email` | `sms` | `both`)
+        2. env `OTP_CHANNEL`
+        3. default `email`
+
+        **Account-enumeration safe.** Unknown identifiers still return
+        `200 OK` with the same shape and a masked recipient so an attacker
+        can't tell whether an account exists.
       tags: [Auth]
       security: []
       requestBody:
@@ -151,13 +264,39 @@ paths:
             schema:
               type: object
               properties:
-                email:
+                identifier:
                   type: string
-                phone:
+                  description: Email or phone of the user. Accepts `email` or `phone` as aliases.
+                email: { type: string }
+                phone: { type: string }
+                channel:
                   type: string
+                  enum: [email, sms, both]
+                  description: Optional override for the OTP_CHANNEL env.
+            example:
+              identifier: ada@example.com
+              channel: email
       responses:
         '200':
-          description: OTP resent
+          description: OTP queued. The actual delivery happens asynchronously.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sent: { type: boolean }
+                      channels:
+                        type: array
+                        items: { type: string, enum: [email, sms] }
+                      expires_at: { type: string, format: date-time }
+                      masked_recipient:
+                        type: string
+                        description: |
+                          `xx***@domain` for emails, `+234xxx***NN` for phones.
+                          Same shape whether or not the account actually exists.
 
   /auth/forgot-password:
     post:
@@ -307,3 +446,264 @@ paths:
       responses:
         '401':
           description: OAuth authentication failed
+
+  # ── Email verification (link flow) ──────────────────────────────────
+  /auth/send-verification:
+    post:
+      summary: Issue an email verification link
+      description: |
+        Generates a random verification token, stores its sha256 hash on
+        `users.email_verification_token_hash`, sets
+        `users.email_verification_expires_at` (TTL controlled by
+        `EMAIL_VERIFICATION_TTL_HOURS`, default 24h), and fires the
+        `email-verification.html` template. Resend invalidates the prior
+        token.
+      tags: [Auth]
+      responses:
+        '200':
+          description: Verification email queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sent: { type: boolean }
+                      expires_at: { type: string, format: date-time }
+        '401':
+          description: Unauthenticated
+        '404':
+          description: 'User not found — `details.error_code` = `user_not_found`'
+        '409':
+          description: 'Email already verified — `details.error_code` = `already_verified`'
+        '422':
+          description: 'User has no email — `details.error_code` = `email_required`'
+
+  /auth/resend-verification:
+    post:
+      summary: Re-issue a verification link (alt template)
+      description: |
+        Same mechanics as `/auth/send-verification` but uses the
+        `resend-verification.html` template (different copy).
+      tags: [Auth]
+      responses:
+        '200':
+          description: Verification email queued
+        '401':
+          description: Unauthenticated
+
+  /auth/verify-email:
+    get:
+      summary: Verify an email-verification token (link target)
+      description: |
+        Looks up the user by the sha256 hash of the supplied token,
+        marks `email_verified = TRUE`, stamps `email_verified_at`, and
+        clears the active token. Idempotent — clicking the same link
+        twice returns 200 with `email_verified: true`.
+      tags: [Auth]
+      security: []
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      email: { type: string }
+                      email_verified: { type: boolean }
+        '400':
+          description: 'Invalid token — `details.error_code` = `invalid_token`'
+        '410':
+          description: 'Token expired — `details.error_code` = `token_expired`'
+        '422':
+          description: 'No token supplied — `details.error_code` = `token_required`'
+    post:
+      summary: Verify an email-verification token (SPA POST variant)
+      description: Same as the GET variant but reads `token` from the request body.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: Email verified
+
+  # ── Single-shot signup from a JUPEB code ────────────────────────────
+  /auth/register-with-code:
+    post:
+      summary: Claim a JUPEB institution code and create the student account
+      description: |
+        Single-shot signup paired with `GET /auth/code-status`. Once the
+        client has pre-validated that a code is claimable, it posts the
+        code + password here to:
+
+        1. Mint the user account.
+        2. Bind it to the matching `jupeb_registrations` row.
+        3. Issue access + refresh tokens — the response is the same
+           envelope as `/auth/login`, so the mobile app can transition
+           straight into the authenticated wizard (typically
+           `GET /jupeb/me/profile`).
+
+        The contact / name fields are optional overlays on the
+        institution-pre-seeded values. A `jupeb-welcome-student.html`
+        email fires fire-and-forget on success.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, password]
+              properties:
+                code:
+                  type: string
+                  description: The institution-issued code.
+                password:
+                  type: string
+                  minLength: 8
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                first_name: { type: string }
+                last_name: { type: string }
+            example:
+              code: F7K2P9
+              password: SecurePass123!
+              email: candidate@example.com
+              phone: '+2348000000000'
+              first_name: Adebayo
+              last_name: Salami
+      responses:
+        '201':
+          description: Account created and code claimed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token:  { type: string }
+                      refresh_token: { type: string }
+                      token_type:    { type: string, example: Bearer }
+                      expires_in:    { type: integer, example: 3600 }
+                      user:
+                        type: object
+                        properties:
+                          user_id:    { type: string, format: uuid }
+                          email:      { type: string, nullable: true, format: email }
+                          phone:      { type: string, nullable: true }
+                          first_name: { type: string, nullable: true }
+                          last_name:  { type: string, nullable: true }
+                          role:       { type: string }
+                          roles:
+                            type: array
+                            items: { type: string }
+                      registration:
+                        type: object
+                        properties:
+                          id:                          { type: string, format: uuid }
+                          status:                      { type: string, example: claimed }
+                          provisional_candidate_code:  { type: string }
+                          claimed_at:                  { type: string, format: date-time }
+        '400':
+          description: |
+            Validation / claim failure. `details.error_code` distinguishes
+            the cases: `code_required`, `code_invalid`.
+        '409':
+          description: |
+            `code_already_claimed` — the code has already been used to
+            create an account. Client should switch to the **Log in** UI
+            (the `account` block on `GET /auth/code-status` carries the
+            masked identifier to prefill).
+        '410':
+          description: '`code_expired` — the code is past its expiry.'
+        '422':
+          description: '`password_too_short` (or other field validation).'
+
+  # ── Code-status (extended) ──────────────────────────────────────────
+  /auth/code-status:
+    get:
+      summary: Pre-validate a JUPEB institution-issued code
+      description: |
+        Anonymous lookup the mobile app calls when the student types the
+        code in. Tells the client whether the code is claimable, expired,
+        unknown, or already-used. When already-used, the response
+        carries an `account` block with masked identifiers so the
+        client can route to a **Log in** screen with a prefilled
+        identifier — no second round-trip needed.
+      tags: [Auth]
+      security: []
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lookup result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      valid:
+                        type: boolean
+                        description: 'true ⇔ the code can still be used to claim.'
+                      error_code:
+                        type: string
+                        nullable: true
+                        enum: [code_not_found, code_expired, code_already_claimed, code_unavailable]
+                      expires_at: { type: string, format: date-time, nullable: true }
+                      university:
+                        type: object
+                        nullable: true
+                        properties:
+                          id: { type: string, format: uuid }
+                          name: { type: string }
+                          short_name: { type: string, nullable: true }
+                      account:
+                        type: object
+                        nullable: true
+                        description: Present only when `error_code === 'code_already_claimed'`.
+                        properties:
+                          exists: { type: boolean }
+                          active:
+                            type: boolean
+                            description: 'true ⇔ `users.status === "active"`.'
+                          email_masked: { type: string, nullable: true, example: 'ad***@example.com' }
+                          phone_masked: { type: string, nullable: true, example: '+234803***5678' }
+                          email_verified: { type: boolean }
+                          phone_verified: { type: boolean }
+                          can_login:
+                            type: boolean
+                            description: Hint for the client — `account.active` aliased for readability.
+        '400':
+          description: 'Missing or malformed code parameter'

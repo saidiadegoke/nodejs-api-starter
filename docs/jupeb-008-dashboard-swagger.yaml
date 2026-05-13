@@ -197,9 +197,13 @@ paths:
         Counts are scoped to the resolved (or supplied) session and institution. Deltas compare
         against the chronologically-prior session by `opens_at`.
 
+        - `institutions_onboarded` is a count of active universities. There's no
+          session-scoped notion of "prior institutions", so `delta_pct` is always `null` here.
         - `total_registered` excludes `withdrawn`.
         - `pending` rolls up the six pending-bucket statuses (see top of doc).
-        - `with_biometrics` counts non-withdrawn registrations that have at least one non-replaced
+        - `with_biometrics` counts non-withdrawn registrations that have at least one
+          non-replaced biometric capture.
+        - `without_biometrics` is the inverse: non-withdrawn registrations with NO active
           biometric capture.
       security:
         - BearerAuth: []
@@ -218,10 +222,12 @@ paths:
                       data:
                         type: object
                         properties:
+                          institutions_onboarded: { $ref: '#/components/schemas/StatCard' }
                           total_registered: { $ref: '#/components/schemas/StatCard' }
                           approved:         { $ref: '#/components/schemas/StatCard' }
                           pending:          { $ref: '#/components/schemas/StatCard' }
                           with_biometrics:  { $ref: '#/components/schemas/StatCard' }
+                          without_biometrics: { $ref: '#/components/schemas/StatCard' }
                           compared_to:
                             type: object
                             nullable: true
@@ -238,8 +244,11 @@ paths:
       tags: [JUPEB — dashboard]
       summary: Sidebar quick stats (lifetime totals + active session label)
       description: |
-        `total_students` is a lifetime distinct-`user_id` count across all sessions (excludes withdrawn,
-        excludes rows with no `user_id`). `active_session` is the resolved active session (no override).
+        - `total_students` — lifetime distinct-`user_id` count across all sessions (excludes
+          withdrawn, excludes rows with no `user_id`).
+        - `institutions_count` — active universities (`deleted_at IS NULL AND status='active'`).
+          Matches `institution-distribution.total` exactly.
+        - `active_session` — resolved active session (no override).
       security:
         - BearerAuth: []
       parameters:
@@ -257,10 +266,97 @@ paths:
                         type: object
                         properties:
                           total_students: { type: integer, example: 12456 }
+                          institutions_count: { type: integer, example: 117 }
                           active_session: { $ref: '#/components/schemas/SessionSummary' }
         '401': { description: Unauthorized }
         '403': { description: Forbidden }
         '422': { description: Invalid UUID }
+
+  /dashboard/institution-distribution:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Institution distribution donut (by university_type)
+      description: |
+        Counts active universities (`deleted_at IS NULL AND status='active'`)
+        grouped by `university_type`. Universities without a type roll
+        up under `unspecified`. Slice `pct` values sum to ~100
+        (one-decimal rounding may leave a tenth off).
+
+        Powers the donut on the Dashboard Overview screen
+        (Federal / State / Private split).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Donut slices + total
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          total: { type: integer, example: 117 }
+                          slices:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                type:
+                                  type: string
+                                  enum: [federal, state, private, unspecified]
+                                count: { type: integer }
+                                pct:
+                                  type: number
+                                  format: float
+                                  description: 'Percent of total, rounded to one decimal.'
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+
+  /dashboard/session-timeline:
+    get:
+      tags: [JUPEB — dashboard]
+      summary: Registration Timeline card data
+      description: |
+        Powers the "Registration Open / Current Date / Registration
+        Close" header card on the Registration Management screen.
+        Without a `session_id`, resolves to the currently-open session
+        (or the most recent one if none is open).
+
+        `within_window: true` ⇔ `opens_at <= now <= closes_at`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdQuery'
+      responses:
+        '200':
+          description: Timeline data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - properties:
+                      data:
+                        nullable: true
+                        type: object
+                        properties:
+                          session_id: { type: string, format: uuid }
+                          academic_year: { type: string, example: '2025/2026' }
+                          year_short: { type: string, example: '26' }
+                          status: { type: string, enum: [open, closed, draft] }
+                          opens_at: { type: string, format: date-time, nullable: true }
+                          closes_at: { type: string, format: date-time, nullable: true }
+                          candidate_info_cutoff_at: { type: string, format: date-time, nullable: true }
+                          profile_update_cutoff_at: { type: string, format: date-time, nullable: true }
+                          ca_cutoff_at: { type: string, format: date-time, nullable: true }
+                          now: { type: string, format: date-time, description: 'Server clock at response time.' }
+                          within_window: { type: boolean }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden }
+        '422': { description: Invalid session_id }
 
   /dashboard/students-status:
     get:

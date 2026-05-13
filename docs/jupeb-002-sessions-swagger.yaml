@@ -94,13 +94,21 @@ paths:
   /sessions:
     get:
       tags: [Sessions]
-      summary: List sessions (paginated)
+      summary: List sessions (paginated, with text search)
+      description: |
+        Paginated list. `q` is a case-insensitive ILIKE substring match
+        across `academic_year` and `year_short` — powers the search
+        box on the Session History tab.
       security:
         - BearerAuth: []
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1 } }
         - { name: limit, in: query, schema: { type: integer } }
         - { name: status, in: query, schema: { type: string } }
+        - name: q
+          in: query
+          description: 'Case-insensitive substring match across academic_year / year_short.'
+          schema: { type: string, example: '2025/' }
       responses:
         '200': { description: Paginated `Session` rows }
         '401': { description: Unauthorized }
@@ -259,6 +267,13 @@ paths:
         Idempotent batch update for approved registrations without
         `jupeb_candidate_number`. See also JUPEB 005 and
         `GET /registration/sessions/{sessionId}/numbering-preview`.
+
+        **Side effect:** for every row a matric is assigned to, a
+        `jupeb-matric-assigned.html` email is dispatched to the
+        candidate (fire-and-forget). The email's subject embeds the
+        new matric, and the body restates the matric-lockdown rule so
+        students aren't surprised when their email / phone / reg-code
+        login stops working.
       security:
         - BearerAuth: []
       parameters:
@@ -268,3 +283,58 @@ paths:
           description: |
             Response data includes `session_id`, `assigned`, `skipped`, `numbers[]`.
         '422': { description: Session not closed }
+
+  /sessions/finalize-all-closed:
+    post:
+      tags: [Sessions]
+      summary: Bulk finalize across every closed session
+      description: |
+        Walks every session with `status='closed'` that still has
+        approved registrations awaiting matric assignment and runs
+        `finalize-candidate-numbers` against each. Per-session
+        failures are captured (`error` field in the result) without
+        aborting the bulk run.
+
+        **Auth:** admin / super_admin / registrar.
+
+        **Optimization:** the endpoint only walks sessions with
+        eligible rows — a clean DB returns in milliseconds.
+
+        **Idempotency:** safe to re-run. The second invocation
+        reports `totals.assigned: 0` because per-row updates use
+        `setCandidateNumberIfNull`.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Aggregated bulk-finalize result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sessions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            session_id: { type: string, format: uuid }
+                            academic_year: { type: string }
+                            year_short: { type: string }
+                            assigned: { type: integer }
+                            skipped: { type: integer }
+                            error:
+                              type: string
+                              description: Present only when finalize failed for this row.
+                      totals:
+                        type: object
+                        properties:
+                          sessions_processed: { type: integer }
+                          sessions_touched: { type: integer }
+                          assigned: { type: integer }
+                          skipped: { type: integer }
+        '401': { description: Unauthenticated }
+        '403': { description: Wrong role }
