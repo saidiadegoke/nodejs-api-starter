@@ -100,7 +100,7 @@ describe('Wednesday gap fixes', () => {
       const stamp = Date.now() + Math.floor(Math.random() * 1000);
       const email = `gap1-${stamp}@example.com`;
       const password = 'Strong@Password1';
-      await request(app).post('/auth/register-with-code').send({
+      await request(app).post('/auth/complete-registration').send({
         code: createReg.body.data.institution_issued_code,
         password, email,
       });

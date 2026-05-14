@@ -2,7 +2,7 @@ const name = 'mock';
 
 // Derive a per-NIN profile so different NINs map to different identifying
 // fields. Real upstream providers return distinct data for each NIN; using
-// a static fixture means downstream flows (e.g. registerWithCode, which
+// a static fixture means downstream flows (e.g. completeRegistration, which
 // pulls phone from the NIN response and INSERTs into users.phone with a
 // unique constraint) collide every time. The values aren't meaningful —
 // they just need to be deterministic per NIN and globally unique.

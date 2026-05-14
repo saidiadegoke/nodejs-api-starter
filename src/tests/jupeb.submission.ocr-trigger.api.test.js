@@ -140,7 +140,7 @@ describe('POST /submission/me/documents — OCR auto-trigger (M.6)', () => {
       });
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password: 'Strong@Password1',

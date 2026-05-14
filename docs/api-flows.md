@@ -158,6 +158,15 @@ assigned to any of their registrations, **email / phone / reg-code
 stop resolving** to them — only matric works. Admins, registrars,
 program-directors and institution-admins bypass the lockdown.
 
+**Re-entry exception.** The lockdown is automatically released as
+soon as the candidate has an *in-progress* registration without a
+matric yet (status one of `code_issued`, `claimed`,
+`pending_student_confirm`, `pending_documents`, or
+`pending_institution_review`). This lets a returning student claim
+a new session's code via email/phone after a prior session
+finalized — the prior matric still works too, so both identifiers
+resolve while a fresh registration is in flight.
+
 `res 200`
 ```json
 {
@@ -720,7 +729,9 @@ the endpoint is a no-op for already-numbered rows.
   matric-lockdown rule.
 - From now on the student's **only valid login identifier** is the
   matric. Email / phone / provisional reg-code stop resolving via
-  `findByIdentifier` (see §0 Log in for the lockdown rule).
+  `findByIdentifier` (see §0 Log in for the lockdown rule, and for
+  the re-entry exception that re-opens email/phone login as soon as
+  the student picks up a fresh code in a new session).
 
 **Format note.** The DB `CHECK` on `jupeb_candidate_number` was
 relaxed in migration `012_jupeb_candidate_number_format.sql` from
@@ -1797,3 +1808,75 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   `subject-combination.model.js` and `_where` on `session.model.js` — shared
   WHERE-builder used by `findAll*` and `count*` so the paginated `data` and the
   `pagination.total` never drift out of sync.
+
+---
+
+## 9. Post-claim student endpoint reference
+
+After `POST /auth/complete-registration` returns the access token, every
+endpoint below is gated by the `jupebStudent` auth middleware — pass
+`Authorization: Bearer <access_token>` from the claim response.
+
+### Status / current registration
+
+- `GET /registration/me/current` — current registration state.
+- `GET /registration/me/dashboard-access` — whether the student can enter
+  the post-submit dashboard.
+
+### Profile / bio data edit (figma `log in 13` and any later changes)
+
+- `GET /registration/me/profile` — full bio + contact + NoK composite
+  (same shape as the `register-with-code` preview).
+- `PATCH /registration/me/profile` — bio-data edit (M.2). Edits go to the
+  `profiles` table. NIN-derived fields are immutable when a verified NIN
+  payload is present.
+- `PATCH /registration/me/academic-intake` — academic intake fields.
+- `POST /registration/me/confirm-subjects` — confirm subject combination
+  (the "Confirm Subject Combinations" modal).
+
+### Next of kin
+
+- `GET /registration/me/next-of-kin` — current NoK.
+- `POST /registration/me/next-of-kin` — create.
+- `PUT /registration/me/next-of-kin` — replace.
+- `GET /registration/me/next-of-kin/history` — prior versions.
+
+### Document upload (figma `log in 14`)
+
+Document attachment is a two-step flow: upload raw bytes via the generic
+`/files` route to get a `file_id`, then link that `file_id` to a
+requirement on the student's registration.
+
+- `GET /submission/me/requirements` — which docs are required for this
+  session / institution.
+- `GET /submission/me/documents` — list student's uploaded docs.
+- `POST /submission/me/documents` — attach a doc (links a previously
+  uploaded `file_id` to a requirement).
+- `PATCH /submission/me/documents/:documentId` — replace / update metadata.
+- `GET /submission/me/documents/:documentId/download-url` — signed URL
+  to download / preview.
+- `POST /submission/me/validate-completeness` — server-side pre-submit
+  completeness check.
+
+### Result entries (WAEC / NECO grades selector at the bottom of `log in 14`)
+
+- `GET /submission/me/result-entries`
+- `POST /submission/me/result-entries` (upsert)
+
+### Identity / biometrics / photo
+
+- `POST /identity/biometrics` — capture.
+- `PUT /identity/biometrics/:captureId` — replace.
+- `DELETE /identity/biometrics/:captureId`
+- `GET /identity/registrations/:registrationId/biometrics`
+- `POST /identity/registrations/:registrationId/biometrics/skip`
+- `GET /identity/registrations/:registrationId/photo`
+
+### Submit + PDF
+
+- `GET /registration/me/submission-preview` — preview composite payload
+  before final submit.
+- `POST /registration/me/submit` — submit for institution review
+  (status → `pending_institution_review`).
+- `GET /registration/me/registration-form.pdf` — render the registration
+  PDF (only after submit).

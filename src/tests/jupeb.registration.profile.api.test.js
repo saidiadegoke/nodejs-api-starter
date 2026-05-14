@@ -139,7 +139,7 @@ describe('GET /registration/me/profile', () => {
 
     process.env.JUPEB_NIN_FORCE_UNAVAILABLE = '1';
     const nin = `9${String(Date.now()).slice(-10)}`;
-    // register-with-code copies intake_payload.phone onto users.phone,
+    // complete-registration copies intake_payload.phone onto users.phone,
     // which is uniquely constrained. Use a per-run value so reruns against
     // the same DB don't collide.
     const intakePhone = `+234800${String(Date.now()).slice(-7)}`;
@@ -163,11 +163,11 @@ describe('GET /registration/me/profile', () => {
         subject_combination_id: subjectCombinationId,
         nin_verification_id: ninVerificationId,
       });
-    // Claim as a fresh student via register-with-code so the user is born
+    // Claim as a fresh student via complete-registration so the user is born
     // out of the NIN intake (no admin phone leaking into contact_information).
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password: 'Strong@Password1',
@@ -183,5 +183,71 @@ describe('GET /registration/me/profile', () => {
     expect(res.body.data.nin_verification.status).toBe('pending');
     expect(res.body.data.contact_information.phone).toBe(intakePhone);
     expect(res.body.data.candidate.full_name).toMatch(/Adebayo Salami/);
+  });
+
+  // Regression: when a student has registrations across multiple
+  // sessions, findLatestForUser must prefer the row in the currently
+  // OPEN session — not the most-recently-touched row across all
+  // sessions. Without this, a stale rejected reg in a newer-by-
+  // created_at closed session would mask the active one.
+  it('prefers the open-session registration over a newer closed-session one', async () => {
+    if (!registrationMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+
+    // Session A — claimed by admin, then we'll close it.
+    const fixA = await makeFixtures(token, 'OSA');
+    const createA = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        session_id: fixA.sessionId,
+        university_id: fixA.universityId,
+        subject_combination_id: fixA.subjectCombinationId,
+      });
+    expect(createA.status).toBe(201);
+    await request(app)
+      .post('/registration/me/claim-code')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ institution_issued_code: createA.body.data.institution_issued_code });
+
+    // Close session A and open session B with a fresh fixture set.
+    await request(app).post(`/sessions/${fixA.sessionId}/close`).set('Authorization', `Bearer ${token}`);
+    const fixB = await makeFixtures(token, 'OSB');
+
+    // Resolve admin's user_id so we can attach a second registration.
+    const userRow = await pool.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER('admin@example.com') LIMIT 1`
+    );
+    const userId = userRow.rows[0]?.id;
+    if (!userId) return;
+
+    // Insert the new-session registration, *backdating* updated_at so
+    // the old query (ORDER BY updated_at DESC) would still pick A —
+    // proving the new query prefers B because session B is open.
+    await pool.query(
+      `INSERT INTO jupeb_registrations
+         (session_id, university_id, user_id, subject_combination_id,
+          provisional_serial, provisional_candidate_code, status,
+          claimed_at, updated_at, created_at)
+       VALUES ($1, $2, $3, $4, 1, $5, 'claimed',
+               CURRENT_TIMESTAMP,
+               CURRENT_TIMESTAMP - INTERVAL '1 day',
+               CURRENT_TIMESTAMP - INTERVAL '1 day')`,
+      [
+        fixB.sessionId,
+        fixB.universityId,
+        userId,
+        fixB.subjectCombinationId,
+        // 9-char numeric code; uniqueness scoped via the random suffix.
+        `26${String(Math.floor(100 + Math.random() * 899))}${String(Math.floor(1000 + Math.random() * 8999))}`,
+      ]
+    );
+
+    const res = await request(app)
+      .get('/registration/me/profile')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.session.id).toBe(fixB.sessionId);
   });
 });

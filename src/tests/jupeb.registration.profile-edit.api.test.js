@@ -102,7 +102,7 @@ describe('PATCH /registration/me/profile (M.2)', () => {
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const studentEmail = `pe-${tag.toLowerCase()}-${stamp}@example.com`;
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password: 'Strong@Password1',

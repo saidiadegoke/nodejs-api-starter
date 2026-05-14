@@ -138,7 +138,7 @@ async function sendCodeIssued(registrationId) {
 
 /**
  * Sent immediately after a student claims a code via
- * `POST /auth/register-with-code`.
+ * `POST /auth/complete-registration`.
  */
 async function sendWelcomeStudent({ email, firstName, universityName, provisionalCode }) {
   if (!email) return;

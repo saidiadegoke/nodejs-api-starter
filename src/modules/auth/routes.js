@@ -51,11 +51,29 @@ router.post(
 
 /**
  * @route   POST /api/auth/register-with-code
- * @desc    Single-shot signup using an institution-issued registration code (M.3)
+ * @desc    Preview the candidate behind a code without claiming it.
+ *          Powers the figma `log in 11` → `log in 12` transition.
+ *          The actual claim happens at POST /auth/complete-registration.
  * @access  Public
  */
 router.post(
   '/register-with-code',
+  [
+    body('code').isString().trim().notEmpty().withMessage('code is required'),
+    validate,
+  ],
+  AuthController.registerWithCode
+);
+
+/**
+ * @route   POST /api/auth/complete-registration
+ * @desc    Finalize the wizard: mint the user account with the password
+ *          the student set on the Bio Data step and atomically claim
+ *          the registration. Issues access + refresh tokens.
+ * @access  Public
+ */
+router.post(
+  '/complete-registration',
   [
     body('code').isString().trim().notEmpty().withMessage('code is required'),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
@@ -66,9 +84,10 @@ router.post(
       .withMessage('Valid phone number is required (8-20 digits, optional + prefix)'),
     body('first_name').optional().isString().trim(),
     body('last_name').optional().isString().trim(),
-    validate
+    body('residential_address').optional().isString().trim(),
+    validate,
   ],
-  AuthController.registerWithCode
+  AuthController.completeRegistration
 );
 
 /**

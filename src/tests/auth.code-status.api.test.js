@@ -161,7 +161,7 @@ describe('GET /auth/code-status (M.9 — public, no auth)', () => {
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const email = `accblock-${stamp}@example.com`;
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({ code, password: 'Strong@Password1', email });
     expect(reg.status).toBe(201);
 
@@ -190,7 +190,7 @@ describe('GET /auth/code-status (M.9 — public, no auth)', () => {
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const email = `suspended-${stamp}@example.com`;
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({ code, password: 'Strong@Password1', email });
     expect(reg.status).toBe(201);
 

@@ -23,8 +23,20 @@ class RegistrationModel {
   }
 
   async findLatestForUser(userId) {
+    // Prefer a registration in the currently-open session — that's the
+    // one the student is actively working on. If they don't have one in
+    // the open session (or no session is open), fall back to whichever
+    // row was touched most recently. Tie-breaker on created_at keeps
+    // the ordering deterministic when nothing has been updated yet.
     const result = await pool.query(
-      `SELECT * FROM jupeb_registrations WHERE user_id = $1 ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+      `SELECT r.*
+         FROM jupeb_registrations r
+         LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
+        WHERE r.user_id = $1
+        ORDER BY (s.status = 'open') DESC,
+                 r.updated_at DESC NULLS LAST,
+                 r.created_at DESC
+        LIMIT 1`,
       [userId]
     );
     return result.rows[0] || null;

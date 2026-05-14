@@ -55,7 +55,13 @@ class AuthController {
   }
 
   /**
-   * M.3 — Register with institution code (single-shot signup for figma `log in 11`)
+   * Preview the candidate behind a code without claiming it. Powers the
+   * figma `log in 11` → `log in 12` transition: code entry returns the
+   * student-information payload for the verify-info screen. The code
+   * stays in `code_issued`; only `completeRegistration` invalidates it.
+   *
+   * Accepts the code on either the body (POST) or query string (GET),
+   * so the same handler covers both verbs.
    */
   static async registerWithCode(req, res) {
     try {
@@ -63,7 +69,30 @@ class AuthController {
       if (req.body && (req.body.website || req.body.url || req.body.homepage)) {
         return sendError(res, 'Registration failed. Please try again later.', BAD_REQUEST);
       }
-      const result = await AuthService.registerWithCode(req.body);
+      const code = (req.body && req.body.code) || (req.query && req.query.code);
+      const result = await AuthService.previewByCode(code);
+      return sendSuccess(res, result, 'Code preview', OK);
+    } catch (error) {
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code
+        ? { error_code: error.error_code, ...(error.details || {}) }
+        : (error.details || null);
+      return sendError(res, error.message, status, details);
+    }
+  }
+
+  /**
+   * Complete the registration wizard. Takes the code + password (set on
+   * the Bio Data Update step) plus any editable bio overrides, mints
+   * the user account, and atomically claims the registration. This is
+   * the call that invalidates the code as used.
+   */
+  static async completeRegistration(req, res) {
+    try {
+      if (req.body && (req.body.website || req.body.url || req.body.homepage)) {
+        return sendError(res, 'Registration failed. Please try again later.', BAD_REQUEST);
+      }
+      const result = await AuthService.completeRegistration(req.body);
       return sendSuccess(res, result, 'Registration successful', CREATED);
     } catch (error) {
       const status = error.status || BAD_REQUEST;
