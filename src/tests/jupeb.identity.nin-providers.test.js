@@ -193,6 +193,52 @@ describe('speedysms NIN provider', () => {
     );
   });
 
+  // The terminal gate codes — SpeedySMS uses the same envelope for not_found /
+  // invalid as for refusals. These must map to outcome=failed so we charge
+  // and short-circuit instead of retrying forever.
+  it('maps gate-shape {success:false, code:"not_found"} to outcome=failed', async () => {
+    const http = makeHttpMock({
+      status: 200,
+      data: { success: false, code: 'not_found', message: 'NIN not found' },
+    });
+    const r = await speedysms.verifyNin('12345678901', { http });
+    expect(r.outcome).toBe('failed');
+    expect(r.error_code).toBe('not_found');
+    expect(r.error_message).toBe('NIN not found');
+  });
+
+  // SpeedySMS's live success wire shape is {success:true, message, data:{...}}
+  // — not the {status:'success', data} the contract doc describes. Both must
+  // map to outcome=verified.
+  it('maps success envelope {success:true, message, data:{...}} to outcome=verified', async () => {
+    const http = makeHttpMock({
+      status: 200,
+      data: {
+        success: true,
+        message: 'Lookup successful',
+        data: {
+          first_name: 'WIGO',
+          middle_name: 'SAMUEL',
+          last_name: 'MUSA',
+          date_of_birth: '1990-01-01',
+          gender: 'male',
+          phone_number: '08012345678',
+          birthplace: { country: 'nigeria', state: 'Lagos', lga: 'Lagos Mainland' },
+          residence: { address: '2A MUSA ADE STREET', town: 'OGBA', lga: 'Ogba', state: 'Lagos' },
+          next_of_kin: { first_name: 'AISHA', middle_name: '', last_name: 'AGBA' },
+          lookup_id: 'lookup-xyz',
+        },
+      },
+    });
+    const r = await speedysms.verifyNin('88379555660', { http });
+    expect(r.outcome).toBe('verified');
+    expect(r.provider_reference).toBe('lookup-xyz');
+    expect(r.profile.first_name).toBe('WIGO');
+    expect(r.profile.last_name).toBe('MUSA');
+    expect(r.profile.date_of_birth).toBe('1990-01-01');
+    expect(r.profile.phone).toBe('08012345678');
+  });
+
   it('returns outcome=unavailable on network failure', async () => {
     const http = makeHttpReject(Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }));
     const r = await speedysms.verifyNin('12345678901', { http });

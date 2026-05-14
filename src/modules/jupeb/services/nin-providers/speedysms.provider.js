@@ -119,15 +119,34 @@ async function verifyNin(normalizedNin, { http = axios } = {}) {
 
   const body = response.data || {};
 
-  // Pre-upstream gate shape: { success: false, code, message } — used by
-  // SpeedySMS for billing / auth refusals that happen before the NIN
-  // lookup runs (identity_balance_exhausted, unauthenticated, forbidden,
-  // rate_limited, etc.). Surface the real code + message verbatim so the
-  // registrar UI can show the operator exactly what to fix.
+  // SpeedySMS's live wire shape wraps every result in {success, message, ...}.
+  // - Success:  { success: true,  message: 'Lookup successful', data: {...profile}, lookup_id? }
+  // - Refusal:  { success: false, code, message }  (identity_balance_exhausted,
+  //             unauthenticated, forbidden, rate_limited, not_found, invalid, ...)
+  // The contract doc still describes the older {status: 'success'|'not_found'|...}
+  // shape — keep that branch below for back-compat with mock fixtures and any
+  // gateway that still uses it.
+  if (body && body.success === true) {
+    return {
+      outcome: 'verified',
+      provider_reference: (body.data && body.data.lookup_id) || body.lookup_id || null,
+      profile: mapProfile(body),
+    };
+  }
   if (body && body.success === false && body.code) {
+    const code = String(body.code).toLowerCase();
+    // Terminal codes — record's not found or input is bad. Charged per §4.
+    if (code === 'not_found' || code === 'invalid') {
+      return {
+        outcome: 'failed',
+        error_code: code,
+        error_message: body.message || (code === 'invalid' ? 'Invalid NIN' : 'NIN not found'),
+      };
+    }
+    // Everything else (identity_balance_exhausted, rate_limited, …) is retryable.
     return unavailable(
-      String(body.code),
-      body.message || `SpeedySMS refused with ${body.code}`,
+      code,
+      body.message || `SpeedySMS refused with ${code}`,
       retryAfterSeconds
     );
   }
