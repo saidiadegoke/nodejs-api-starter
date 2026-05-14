@@ -102,7 +102,7 @@ function pickIntake(input) {
 }
 
 class IdentityService {
-  async verifyNin({ nin, idempotency_key, intake_payload }, userId) {
+  async verifyNin({ nin, idempotency_key, intake_payload, provider: providerOverride, force_fresh }, userId) {
     const normalized = normalizeNin(nin);
     if (normalized.length !== 11) {
       throw httpError(422, 'NIN must be exactly 11 digits');
@@ -111,6 +111,9 @@ class IdentityService {
     const last4 = ninLast4(normalized);
     const idemKey = idempotency_key ? String(idempotency_key).trim() : null;
     const intake = pickIntake(intake_payload);
+    const adapterOpts = {};
+    if (providerOverride) adapterOpts.provider = String(providerOverride);
+    if (force_fresh) adapterOpts.force_fresh = true;
 
     if (idemKey) {
       const existing = await ninVerificationModel.findByIdempotencyKey(idemKey);
@@ -133,7 +136,7 @@ class IdentityService {
     }
 
     const provider = ninAdapter.getProvider();
-    const adapterResult = await ninAdapter.verifyNin(normalized);
+    const adapterResult = await ninAdapter.verifyNin(normalized, adapterOpts);
 
     if (adapterResult.outcome === 'unavailable') {
       const seconds = adapterResult.retry_after_seconds || 300;

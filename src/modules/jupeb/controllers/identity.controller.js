@@ -10,6 +10,12 @@ class IdentityController {
           nin: req.body.nin,
           idempotency_key: req.body.idempotency_key,
           intake_payload: req.body.intake_payload,
+          // Pass-through to SpeedySMS (the underlying gateway): `provider:
+          // 'mock'` switches to their free test pool (10 sample NINs,
+          // 00000000001..00000000010); `force_fresh: true` bypasses their
+          // cache. Ignored when our env's provider is `mock`.
+          provider: req.body.provider,
+          force_fresh: req.body.force_fresh,
         },
         req.user.user_id
       );

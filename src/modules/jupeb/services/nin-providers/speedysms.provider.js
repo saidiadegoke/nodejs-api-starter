@@ -68,7 +68,7 @@ function getConfig() {
   };
 }
 
-async function verifyNin(normalizedNin, { http = axios } = {}) {
+async function verifyNin(normalizedNin, { http = axios, provider, force_fresh } = {}) {
   const { apiKey, baseUrl, timeoutMs, retryAfterSeconds } = getConfig();
 
   // Local input checks. SpeedySMS will reject malformed NINs too, but a
@@ -92,11 +92,22 @@ async function verifyNin(normalizedNin, { http = axios } = {}) {
     );
   }
 
+  // SpeedySMS supports two per-request overrides on top of the NIN:
+  //   provider:   'mock' switches to their free test pool (10 sample NINs,
+  //               00000000001..00000000010). Any other value falls back to
+  //               the gateway's default (Mono).
+  //   force_fresh: when true, bypasses SpeedySMS's own cache and re-charges
+  //               full price. Useful for debugging stale verified rows.
+  // We pass these through verbatim — SpeedySMS validates them.
+  const upstreamBody = { nin: normalizedNin };
+  if (provider) upstreamBody.provider = String(provider);
+  if (force_fresh) upstreamBody.force_fresh = true;
+
   let response;
   try {
     response = await http.post(
       `${baseUrl}/identity/nin`,
-      { nin: normalizedNin },
+      upstreamBody,
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -120,17 +131,25 @@ async function verifyNin(normalizedNin, { http = axios } = {}) {
   const body = response.data || {};
 
   // SpeedySMS's live wire shape wraps every result in {success, message, ...}.
-  // - Success:  { success: true,  message: 'Lookup successful', data: {...profile}, lookup_id? }
+  // - Success:  { success: true,  message: 'Lookup successful',
+  //                data: {                              // <- IdentityLookupResult
+  //                  status: 'success', lookup_id, nin_last_4,
+  //                  data: { first_name, ... },        // <- NormalizedData (profile)
+  //                  photo_url, signature_url, ...
+  //                } }
   // - Refusal:  { success: false, code, message }  (identity_balance_exhausted,
   //             unauthenticated, forbidden, rate_limited, not_found, invalid, ...)
   // The contract doc still describes the older {status: 'success'|'not_found'|...}
-  // shape — keep that branch below for back-compat with mock fixtures and any
-  // gateway that still uses it.
+  // top-level shape — keep that branch below for back-compat with mock fixtures
+  // and any gateway that still uses it.
   if (body && body.success === true) {
+    // The inner envelope is the IdentityLookupResult — pass it to mapProfile
+    // so its `payload.data` indirection lands on the NormalizedData record.
+    const inner = body.data || {};
     return {
       outcome: 'verified',
-      provider_reference: (body.data && body.data.lookup_id) || body.lookup_id || null,
-      profile: mapProfile(body),
+      provider_reference: inner.lookup_id || body.lookup_id || null,
+      profile: mapProfile(inner),
     };
   }
   if (body && body.success === false && body.code) {
