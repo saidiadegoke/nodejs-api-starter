@@ -172,6 +172,27 @@ describe('speedysms NIN provider', () => {
     expect(r.error_code).toBe('identity_balance_exhausted');
   });
 
+  // SpeedySMS uses a different shape ({success,code,message}) for billing /
+  // auth refusals that happen before the NIN lookup runs. The real-world
+  // identity_balance_exhausted body looks like this — the adapter must
+  // surface the upstream message rather than a generic provider_unavailable.
+  it('maps gate-shape {success:false, code, message} to outcome=unavailable with the real code + message', async () => {
+    const http = makeHttpMock({
+      status: 402,
+      data: {
+        success: false,
+        code: 'identity_balance_exhausted',
+        message: 'Your Identity balance is empty. Top up at /dashboard/identity/plans.',
+      },
+    });
+    const r = await speedysms.verifyNin('12345678901', { http });
+    expect(r.outcome).toBe('unavailable');
+    expect(r.error_code).toBe('identity_balance_exhausted');
+    expect(r.error_message).toBe(
+      'Your Identity balance is empty. Top up at /dashboard/identity/plans.'
+    );
+  });
+
   it('returns outcome=unavailable on network failure', async () => {
     const http = makeHttpReject(Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }));
     const r = await speedysms.verifyNin('12345678901', { http });

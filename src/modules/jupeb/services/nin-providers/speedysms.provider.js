@@ -118,6 +118,20 @@ async function verifyNin(normalizedNin, { http = axios } = {}) {
   }
 
   const body = response.data || {};
+
+  // Pre-upstream gate shape: { success: false, code, message } — used by
+  // SpeedySMS for billing / auth refusals that happen before the NIN
+  // lookup runs (identity_balance_exhausted, unauthenticated, forbidden,
+  // rate_limited, etc.). Surface the real code + message verbatim so the
+  // registrar UI can show the operator exactly what to fix.
+  if (body && body.success === false && body.code) {
+    return unavailable(
+      String(body.code),
+      body.message || `SpeedySMS refused with ${body.code}`,
+      retryAfterSeconds
+    );
+  }
+
   const status = (body.status || '').toLowerCase();
 
   if (status === 'success') {
@@ -136,12 +150,9 @@ async function verifyNin(normalizedNin, { http = axios } = {}) {
     };
   }
 
-  // provider_error / provider_unavailable / rate_limited / identity_balance_exhausted
-  // — all retryable. The customer-facing wire shape has no further detail
-  // beyond `status` and `error_message`, so reuse those.
   return unavailable(
     status || 'provider_unavailable',
-    body.error_message || `SpeedySMS returned ${response.status}`,
+    body.error_message || body.message || `SpeedySMS returned ${response.status}`,
     retryAfterSeconds
   );
 }

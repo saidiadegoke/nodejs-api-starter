@@ -15,7 +15,7 @@ class IdentityController {
       );
       let message = 'NIN verified';
       if (data.status === 'failed') message = 'NIN verification failed';
-      else if (data.status === 'pending') message = 'NIN verification pending — provider unavailable';
+      else if (data.status === 'pending') message = data.error_message || 'NIN verification pending — provider unavailable';
       return sendSuccess(res, data, message, 200);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -30,7 +30,7 @@ class IdentityController {
       );
       let message = 'NIN verified';
       if (data.status === 'failed') message = 'NIN verification failed';
-      else if (data.status === 'pending') message = 'NIN verification still pending';
+      else if (data.status === 'pending') message = data.error_message || 'NIN verification still pending';
       return sendSuccess(res, data, message, 200);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

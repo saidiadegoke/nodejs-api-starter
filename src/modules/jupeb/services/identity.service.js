@@ -78,6 +78,12 @@ function publicVerifyResponse(row) {
   if (row.status === 'pending') {
     out.retry_after = row.retry_after;
     out.last_error_code = row.last_error_code;
+    // Surface the upstream message verbatim — operators need to see e.g.
+    // "Your Identity balance is empty. Top up at /dashboard/identity/plans."
+    // instead of the generic "provider unavailable" we used to send.
+    if (row.error_payload && (row.error_payload.message || row.error_payload.error_message)) {
+      out.error_message = row.error_payload.message || row.error_payload.error_message;
+    }
   }
   if (row.status === 'failed' && row.error_payload && Object.keys(row.error_payload).length) {
     out.error = row.error_payload;
@@ -140,6 +146,10 @@ class IdentityService {
         intake_payload: intake,
         retry_after,
         last_error_code: adapterResult.error_code || 'provider_unavailable',
+        error_payload: {
+          code: adapterResult.error_code || 'provider_unavailable',
+          message: adapterResult.error_message || null,
+        },
         requested_by: userId,
       });
       return publicVerifyResponse(row);
@@ -252,6 +262,10 @@ class IdentityService {
     const row = await ninVerificationModel.incrementAttempt(verificationId, {
       retry_after,
       last_error_code: adapterResult.error_code || 'provider_unavailable',
+      error_payload: {
+        code: adapterResult.error_code || 'provider_unavailable',
+        message: adapterResult.error_message || null,
+      },
     });
     return publicVerifyResponse(row || existing);
   }

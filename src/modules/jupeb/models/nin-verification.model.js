@@ -66,6 +66,7 @@ class NinVerificationModel {
       intake_payload,
       retry_after,
       last_error_code,
+      error_payload,
       requested_by,
     } = data;
     const result = await pool.query(
@@ -73,7 +74,7 @@ class NinVerificationModel {
         nin_hash, nin_last4, provider, idempotency_key, status,
         response_payload, error_payload, requested_by,
         intake_payload, retry_after, attempt_count, last_attempt_at, last_error_code
-      ) VALUES ($1, $2, $3, $4, 'pending', '{}'::jsonb, '{}'::jsonb, $5, $6::jsonb, $7, 1, CURRENT_TIMESTAMP, $8)
+      ) VALUES ($1, $2, $3, $4, 'pending', '{}'::jsonb, $9::jsonb, $5, $6::jsonb, $7, 1, CURRENT_TIMESTAMP, $8)
       RETURNING ${RETURNING_COLUMNS}`,
       [
         nin_hash,
@@ -84,6 +85,7 @@ class NinVerificationModel {
         JSON.stringify(intake_payload || {}),
         retry_after || null,
         last_error_code || null,
+        JSON.stringify(error_payload || {}),
       ]
     );
     return result.rows[0];
@@ -124,16 +126,22 @@ class NinVerificationModel {
     return result.rows[0] || null;
   }
 
-  async incrementAttempt(id, { retry_after, last_error_code }) {
+  async incrementAttempt(id, { retry_after, last_error_code, error_payload }) {
     const result = await pool.query(
       `UPDATE jupeb_nin_verifications
          SET retry_after = $2,
              last_error_code = $3,
+             error_payload = COALESCE($4::jsonb, error_payload),
              last_attempt_at = CURRENT_TIMESTAMP,
              attempt_count = attempt_count + 1
        WHERE id = $1 AND status = 'pending'
        RETURNING ${RETURNING_COLUMNS}`,
-      [id, retry_after || null, last_error_code || null]
+      [
+        id,
+        retry_after || null,
+        last_error_code || null,
+        error_payload === undefined ? null : JSON.stringify(error_payload || {}),
+      ]
     );
     return result.rows[0] || null;
   }
