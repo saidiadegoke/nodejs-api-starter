@@ -107,31 +107,40 @@ class AuthController {
    * Public code-status lookup (M.9 — figma `log in 11` pre-validation).
    *
    * Tells the mobile / web app, given a code typed by the student:
-   *   1. Is the code valid and still claimable? → show "create account"
+   *   1. Is the code valid and still claimable? → show "create account",
+   *      with the full candidate preview (mirrors /auth/register-with-code)
+   *      so the verify-info screen can render without a second round-trip.
    *   2. Has it already been used to create an account? → show "log in"
    *      (with the account's masked email/phone so the client can
-   *      prefill the identifier field)
-   *   3. Is it expired / unknown? → show error
+   *      prefill the identifier field).
+   *   3. Is it expired / unknown? → show error.
    *
-   * Response shape:
+   * Response shape (claimable):
    *   {
-   *     valid: boolean,         // can this code still be used to claim?
-   *     error_code?: string,    // present when valid === false
-   *     expires_at?: ISO,
-   *     university?: { id, name, short_name },
-   *     account?: {             // present when error_code === 'code_already_claimed'
-   *       exists: true,
-   *       active: boolean,      // users.status === 'active'
-   *       email_masked: string|null,
-   *       phone_masked: string|null,
-   *       email_verified: boolean,
-   *       phone_verified: boolean,
-   *       can_login: boolean,   // true ⇔ active === true
-   *     }
+   *     valid: true,
+   *     expires_at: ISO|null,
+   *     university: { id, name, short_name },
+   *     candidate: { registration_id, full_name, jupeb_reg_no, provisional_candidate_code, photo_url, status },
+   *     basic_information: {
+   *       date_of_birth, gender,
+   *       residential_address,
+   *       country: { id, name }|null,
+   *       state_of_origin: { id, name, code }|null,
+   *       lga: { id, name }|null,
+   *       place_of_birth,
+   *     },
+   *     contact_information: { email, phone },
+   *     next_of_kin: { name, contact_no, ... }|null,
+   *     subject_combination: { id, code, title }|null,
+   *     session: { id, academic_year, year_short }|null,
    *   }
    *
-   * Public endpoint — no auth required. Account identifiers are masked
-   * so the response can't be used for enumeration.
+   * Response shape (not claimable): same as before — { valid:false, error_code, ... }.
+   *
+   * Public endpoint — no auth required. Account identifiers are masked so
+   * the response can't be used for enumeration. Candidate preview is only
+   * returned for claimable codes (post-claim, the masked-account block
+   * carries everything the log-in UI needs).
    */
   static async codeStatus(req, res) {
     try {
@@ -142,6 +151,7 @@ class AuthController {
         });
       }
       const pool = require('../../../db/pool');
+      const GeoModel = require('../../../shared/models/geo.model');
       // JOIN users too so a single round-trip carries everything we need
       // to decide between "claim" and "log in" UIs on the client.
       const result = await pool.query(
@@ -207,11 +217,48 @@ class AuthController {
         return sendSuccess(res, out);
       }
 
-      // Claimable.
+      // Claimable — assemble the full candidate preview. previewByCode
+      // already does the heavy lifting (NIN intake + display-object
+      // resolution); we add the geo id resolution + jupeb_reg_no on top.
+      const preview = await AuthService.previewByCode(code);
+      const geo = await GeoModel.resolveBundle({
+        country: 'Nigeria',
+        stateOfOrigin: preview.basic_information && preview.basic_information.state_of_origin,
+        lga: preview.basic_information && preview.basic_information.lga,
+      });
+
+      const regExtra = await pool.query(
+        `SELECT jupeb_candidate_number FROM jupeb_registrations WHERE id = $1`,
+        [row.id]
+      );
+
+      // Prefer the dedicated jupeb_next_of_kin row (student-captured /
+      // institution-edited); fall back to whatever NIN returned.
+      const NextOfKinModel = require('../../jupeb/models/next-of-kin.model');
+      const nokRow = await NextOfKinModel.findActiveByRegistration(row.id);
+      const nextOfKin = AuthController._normalizeNextOfKin(nokRow, preview.next_of_kin);
+
       return sendSuccess(res, {
         valid: true,
         expires_at: row.institution_code_expires_at,
         university,
+        candidate: {
+          ...preview.candidate,
+          jupeb_reg_no:
+            (regExtra.rows[0] && regExtra.rows[0].jupeb_candidate_number) ||
+            preview.candidate.provisional_candidate_code ||
+            null,
+        },
+        basic_information: {
+          ...preview.basic_information,
+          country: geo.country,
+          state_of_origin: geo.state_of_origin,
+          lga: geo.lga,
+        },
+        contact_information: preview.contact_information,
+        next_of_kin: nextOfKin,
+        subject_combination: preview.subject_combination,
+        session: preview.session,
       });
     } catch (err) {
       return sendError(res, err.message, 500);
@@ -445,6 +492,41 @@ class AuthController {
     if (!body || typeof body !== 'object') return null;
     const raw = body.identifier || body.email || body.phone;
     return raw ? String(raw).trim() : null;
+  }
+
+  /**
+   * Resolve next-of-kin for the codeStatus preview. Prefers the
+   * jupeb_next_of_kin row (student- or institution-captured); falls back
+   * to whatever the NIN provider returned. Returns a normalized shape
+   * regardless of source so the client renders one way.
+   *
+   * Output: { name, relationship, contact_no, phone, email, address, source } | null
+   */
+  static _normalizeNextOfKin(jupebRow, ninPayload) {
+    if (jupebRow) {
+      return {
+        name: jupebRow.name || null,
+        relationship: jupebRow.relationship || null,
+        contact_no: jupebRow.phone || jupebRow.email || null,
+        phone: jupebRow.phone || null,
+        email: jupebRow.email || null,
+        address: jupebRow.address || null,
+        source: jupebRow.source || 'student',
+      };
+    }
+    if (ninPayload && typeof ninPayload === 'object') {
+      const phone = ninPayload.phone || ninPayload.contact || ninPayload.contact_no || null;
+      return {
+        name: ninPayload.name || ninPayload.full_name || null,
+        relationship: ninPayload.relationship || null,
+        contact_no: phone || ninPayload.email || null,
+        phone,
+        email: ninPayload.email || null,
+        address: ninPayload.address || null,
+        source: 'nin',
+      };
+    }
+    return null;
   }
 
   /**
