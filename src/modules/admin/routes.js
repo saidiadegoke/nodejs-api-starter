@@ -3,7 +3,12 @@ const AdminErrorLogController = require('./controllers/adminErrorLog.controller'
 const AdminSettingsController = require('./controllers/adminSettings.controller');
 const AdminAuditController = require('./controllers/adminAudit.controller');
 const RbacController = require('./controllers/rbac.controller');
-const { requireAuth, requireRole } = require('../../shared/middleware/rbac.middleware');
+const AdminUsersController = require('./controllers/adminUsers.controller');
+const {
+  requireAuth,
+  requireRole,
+  requirePermission,
+} = require('../../shared/middleware/rbac.middleware');
 
 const requireAdmin = requireRole('admin', 'super_admin');
 
@@ -69,5 +74,24 @@ router.delete('/permissions/:permissionId', requireAuth, requireAdmin, RbacContr
 
 router.get('/users/:userId/roles', requireAuth, requireAdmin, RbacController.listUserRoles);
 router.patch('/users/:userId/roles', requireAuth, requireAdmin, RbacController.setUserRoles);
+
+// ============================================================================
+// Admin user creation (with university association)
+// ============================================================================
+
+/**
+ * POST /admin/users
+ * Create a user and atomically bind them to a JUPEB university.
+ * Gated by the `users.create` permission (granted to admin/super_admin
+ * via roles; can also be granted directly to any other user via
+ * user_permissions). Single-uni-per-user is enforced by
+ * user_universities' partial unique index on (user_id, is_primary=true).
+ */
+router.post(
+  '/users',
+  requireAuth,
+  requirePermission('users.create'),
+  AdminUsersController.createUserWithUniversity
+);
 
 module.exports = router;

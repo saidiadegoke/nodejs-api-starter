@@ -548,205 +548,120 @@ class AuthController {
   /**
    * Forgot password
    */
+  /**
+   * Initiate a password reset.
+   *
+   * Body:
+   *   identifier: email | phone (required)
+   *   delivery?: 'token' | 'otp'        (default 'token' — existing email-link flow)
+   *   channel?:  'email' | 'sms' | 'both'  (only used when delivery='otp';
+   *              default: env OTP_CHANNEL, else email when present, else sms)
+   *
+   * Response (always shape-stable to avoid leaking account existence):
+   *   { reset_initiated: true, delivery, channels[], expires_at, masked_recipient }
+   *
+   * Back-compat note: legacy callers that didn't pass `delivery` get the
+   * existing email-link flow. The response also still includes a `method`
+   * field (= delivery) for older clients.
+   */
   static async forgotPassword(req, res) {
     try {
-      const { identifier } = req.body;
-      
+      const { identifier, delivery, channel } = req.body || {};
       if (!identifier) {
         return sendError(res, 'Email or phone is required', BAD_REQUEST);
       }
-      
-      const AuthModel = require('../models/auth.model');
-      const pool = require('../../../db/pool');
-      const crypto = require('crypto');
-      const sendEmail = require('../../../shared/utils/sendEmail');
-      
-      const user = await AuthModel.findByIdentifier(identifier);
-      if (!user) {
-        // Don't reveal if user exists - still return success
-        return sendSuccess(res, { 
-          reset_initiated: true,
-          method: 'email',
-          masked_recipient: '***@***.***'
-        }, 'If an account with that email exists, we have sent a password reset link', OK);
-      }
-      
-      // Generate reset token
-      const resetToken = crypto.randomBytes(32).toString('hex');
-      const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-      
-      // Store reset token in database
-      await pool.query(
-        `INSERT INTO password_resets (user_id, token_hash, email, phone, method, ip_address, user_agent, expires_at) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          user.id, 
-          tokenHash, 
-          user.email, 
-          user.phone, 
-          user.email ? 'email' : 'sms',
-          req.ip,
-          req.headers['user-agent'],
-          expiresAt
-        ]
-      );
-      
-      // Send email if user has email
-      if (user.email) {
-        const appName = process.env.APP_NAME || 'our app';
-        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-        const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+      const requestedDelivery = delivery === 'otp' ? 'otp' : 'token';
+      const passwordReset = require('../services/password-reset.service');
 
-        setImmediate(() => {
-          sendEmail({
-            to: user.email,
-            subject: `Reset Your ${appName} Password`,
-            templateFile: 'forgot-password.html',
-            placeholders: [
-              user.first_name || user.display_name || 'User',
-              resetUrl,
-              resetUrl,
-              user.email
-            ]
-          }).catch((err) => {
-            // eslint-disable-next-line no-console
-            console.warn('[auth.forgotPassword] reset email failed:', err && err.message);
-          });
-        });
-        
-        const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
-        sendSuccess(res, { 
-          reset_initiated: true,
-          method: 'email',
-          masked_recipient: maskedEmail
-        }, 'Password reset link sent to your email', OK);
-      } else {
-        // For phone-only users, would send SMS in production
-        const maskedPhone = user.phone.replace(/(\+\d{3})(.*)(\d{4})/, '$1***$3');
-        sendSuccess(res, { 
-          reset_initiated: true,
-          method: 'sms',
-          masked_recipient: maskedPhone
-        }, 'Password reset code sent to your phone', OK);
+      const user = await passwordReset.loadUserForReset(identifier);
+      if (!user) {
+        // Account-enumeration guard: same shape whether the user exists.
+        const fakeChannels = requestedDelivery === 'otp'
+          ? (channel ? [channel] : ['email'])
+          : ['email'];
+        const ttlMs = (Number(process.env.OTP_TTL_MINUTES) || 15) * 60 * 1000;
+        return sendSuccess(
+          res,
+          {
+            reset_initiated: true,
+            delivery: requestedDelivery,
+            method: requestedDelivery, // legacy alias
+            channels: fakeChannels,
+            expires_at: new Date(Date.now() + ttlMs).toISOString(),
+            masked_recipient: AuthController._maskRecipient(identifier),
+          },
+          requestedDelivery === 'otp'
+            ? 'If an account exists, a reset code has been sent'
+            : 'If an account exists, a reset link has been sent',
+          OK
+        );
       }
+
+      const issued = await passwordReset.issueReset({
+        user,
+        delivery: requestedDelivery,
+        channel,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      return sendSuccess(
+        res,
+        {
+          reset_initiated: true,
+          delivery: issued.delivery,
+          method: issued.delivery, // legacy alias
+          channels: issued.channels,
+          expires_at: issued.expires_at,
+          masked_recipient: issued.masked_recipient,
+          ...(issued.token ? { token: issued.token } : {}),
+          ...(issued.code ? { code: issued.code } : {}),
+        },
+        issued.delivery === 'otp'
+          ? 'Password reset code sent'
+          : 'Password reset link sent',
+        OK
+      );
     } catch (error) {
-      console.error('Forgot password error:', error);
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
   }
 
   /**
-   * Reset password
+   * Reset password. Accepts either redemption shape:
+   *
+   *   Token (link) flow:  { token, new_password }
+   *   OTP flow:           { identifier, code, new_password }
+   *
+   * Token flow is unchanged; OTP flow is the new mobile-friendly variant
+   * powered by migration 015 + password-reset.service. Both produce the
+   * same success email.
    */
   static async resetPassword(req, res) {
     try {
-      const { token, new_password } = req.body;
+      const { token, code, identifier, new_password } = req.body || {};
+      const passwordReset = require('../services/password-reset.service');
       const sendEmail = require('../../../shared/utils/sendEmail');
-      
-      if (!token || !new_password) {
-        return sendError(res, 'Reset token and new password are required', BAD_REQUEST);
+
+      if (!new_password) {
+        return sendError(res, 'New password is required', BAD_REQUEST);
       }
-      
-      const bcrypt = require('bcryptjs');
-      const crypto = require('crypto');
-      const pool = require('../../../db/pool');
-      
-      // Hash the provided token to match against stored hash
-      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-      
-      // console.log('[Password Reset] Token provided:', token);
-      // console.log('[Password Reset] Token hash:', tokenHash);
-      
-      // First, check if token exists (without expiration/used checks for debugging)
-      const allTokensResult = await pool.query(
-        `SELECT pr.*, u.id as user_id, u.email, p.first_name,
-                pr.expires_at > NOW() as is_valid,
-                pr.used_at IS NULL as is_unused
-         FROM password_resets pr 
-         JOIN users u ON pr.user_id = u.id 
-         LEFT JOIN profiles p ON u.id = p.user_id
-         WHERE pr.token_hash = $1`,
-        [tokenHash]
-      );
-      
-      if (allTokensResult.rows.length === 0) {
-        console.log('[Password Reset] No token found with hash:', tokenHash);
-        // Check if there are any recent password resets for debugging
-        const recentResets = await pool.query(
-          `SELECT pr.id, pr.token_hash, pr.expires_at, pr.used_at, pr.created_at, u.email
-           FROM password_resets pr
-           JOIN users u ON pr.user_id = u.id
-           ORDER BY pr.created_at DESC
-           LIMIT 5`
-        );
-        console.log('[Password Reset] Recent password resets:', recentResets.rows.map(r => ({
-          id: r.id,
-          email: r.email,
-          expires_at: r.expires_at,
-          used_at: r.used_at,
-          created_at: r.created_at,
-          is_expired: r.expires_at < new Date(),
-          is_used: r.used_at !== null
-        })));
-        return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
+      if (!token && !code) {
+        return sendError(res, 'Either `token` or `code` (with identifier) is required', BAD_REQUEST);
       }
-      
-      const tokenRecord = allTokensResult.rows[0];
-      console.log('[Password Reset] Token found:', {
-        id: tokenRecord.id,
-        email: tokenRecord.email,
-        expires_at: tokenRecord.expires_at,
-        used_at: tokenRecord.used_at,
-        is_valid: tokenRecord.is_valid,
-        is_unused: tokenRecord.is_unused,
-        now: new Date()
-      });
-      
-      // Check if token exists and is valid
-      const result = await pool.query(
-        `SELECT pr.*, u.id as user_id, u.email, p.first_name 
-         FROM password_resets pr 
-         JOIN users u ON pr.user_id = u.id 
-         LEFT JOIN profiles p ON u.id = p.user_id
-         WHERE pr.token_hash = $1 AND pr.expires_at > NOW() AND pr.used_at IS NULL`,
-        [tokenHash]
-      );
-      
-      const resetRecord = result.rows[0];
-      
-      if (!resetRecord) {
-        if (tokenRecord.used_at) {
-          console.log('[Password Reset] Token has already been used');
-          return sendError(res, 'This password reset link has already been used. Please request a new one.', BAD_REQUEST);
-        }
-        if (tokenRecord.expires_at <= new Date()) {
-          console.log('[Password Reset] Token has expired. Expires at:', tokenRecord.expires_at, 'Now:', new Date());
-          return sendError(res, 'This password reset link has expired. Please request a new one.', BAD_REQUEST);
-        }
-        return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
+
+      let result;
+      if (token) {
+        result = await passwordReset.redeemToken(token, new_password);
+      } else {
+        result = await passwordReset.redeemOtp({ identifier, code, newPassword: new_password });
       }
-      
-      // Validate new password
-      if (new_password.length < 8) {
-        return sendError(res, 'Password must be at least 8 characters', UNPROCESSABLE_ENTITY);
-      }
-      
-      // Update password
-      const newHash = await bcrypt.hash(new_password, 10);
-      await pool.query(
-        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-        [newHash, resetRecord.user_id]
-      );
-      
-      // Mark reset token as used
-      await pool.query(
-        'UPDATE password_resets SET used_at = NOW() WHERE id = $1',
-        [resetRecord.id]
-      );
-      
-      // Send password reset success email asynchronously
-      if (resetRecord.email) {
+
+      // Best-effort success email (token flow already had this; we
+      // surface it for the OTP flow too so the user gets a confirmation).
+      if (result.email) {
         const appName = process.env.APP_NAME || 'our app';
         const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const loginUrl = `${frontendUrl}/auth/login`;
@@ -755,32 +670,32 @@ class AuthController {
           month: 'long',
           day: 'numeric',
           hour: '2-digit',
-          minute: '2-digit'
+          minute: '2-digit',
         });
-
         setImmediate(() => {
           sendEmail({
-            to: resetRecord.email,
+            to: result.email,
             subject: `Password Reset Successful - ${appName}`,
             templateFile: 'password-reset-success.html',
             placeholders: [
-              resetRecord.first_name || 'User',
+              result.first_name || 'User',
               resetDate,
               loginUrl,
               resetDate,
-              resetRecord.email
-            ]
+              result.email,
+            ],
           }).catch((err) => {
             // eslint-disable-next-line no-console
             console.warn('[auth.resetPassword] success email failed:', err && err.message);
           });
         });
       }
-      
-      sendSuccess(res, null, 'Password reset successfully', OK);
+
+      return sendSuccess(res, null, 'Password reset successfully', OK);
     } catch (error) {
-      console.error('Reset password error:', error);
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
   }
 

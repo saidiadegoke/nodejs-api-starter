@@ -2,16 +2,22 @@ const router = require('express').Router();
 const AuthController = require('./controllers/auth.controller');
 const { body } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
-const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../shared/middleware/rbac.middleware');
 const oauthRoutes = require('./routes/oauth.routes');
 
 /**
  * @route   POST /api/auth/register
- * @desc    Register new user
- * @access  Public
+ * @desc    Admin-side user creation. Public student signup goes through
+ *          POST /auth/complete-registration (claims an institution code);
+ *          social login goes through /auth/oauth/*. Both remain public.
+ * @access  Authenticated + `users.create` permission. Granted to admin /
+ *          super_admin via roles; can also be granted to any other user
+ *          directly via user_permissions.
  */
 router.post(
   '/register',
+  requireAuth,
+  requirePermission('users.create'),
   [
     body('email').optional().isEmail().withMessage('Valid email is required'),
     body('phone')
@@ -196,13 +202,17 @@ router.post(
 
 /**
  * @route   POST /api/auth/forgot-password
- * @desc    Initiate password reset
+ * @desc    Initiate password reset. Body: { identifier, delivery?, channel? }.
+ *          delivery defaults to 'token' (existing email-link flow);
+ *          'otp' issues a 6-digit code (mobile-friendly).
  * @access  Public
  */
 router.post(
   '/forgot-password',
   [
     body('identifier').notEmpty().withMessage('Email or phone is required'),
+    body('delivery').optional().isIn(['token', 'otp']).withMessage("delivery must be 'token' or 'otp'"),
+    body('channel').optional().isIn(['email', 'sms', 'both']).withMessage("channel must be 'email', 'sms', or 'both'"),
     validate,
   ],
   AuthController.forgotPassword
@@ -210,14 +220,28 @@ router.post(
 
 /**
  * @route   POST /api/auth/reset-password
- * @desc    Reset password with token
+ * @desc    Reset password. Two body shapes:
+ *            - Token (link) flow: { token, new_password }
+ *            - OTP flow:          { identifier, code, new_password }
  * @access  Public
  */
 router.post(
   '/reset-password',
   [
-    body('token').notEmpty().withMessage('Reset token is required'),
     body('new_password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+    body('token').optional().isString().notEmpty(),
+    body('code').optional().matches(/^\d{6}$/).withMessage('code must be a 6-digit number'),
+    body('identifier').optional().isString().notEmpty(),
+    body().custom((_v, { req }) => {
+      const b = req.body || {};
+      if (!b.token && !b.code) {
+        throw new Error('Either `token` or `code` (with identifier) is required');
+      }
+      if (b.code && !b.identifier) {
+        throw new Error('identifier is required when redeeming with `code`');
+      }
+      return true;
+    }),
     validate,
   ],
   AuthController.resetPassword

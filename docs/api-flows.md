@@ -21,15 +21,29 @@ Roles below are abbreviated:
 
 ## 0. Auth: create user, log in, manage tokens
 
-Every other flow starts here. The auth module supports email-or-phone
-identifiers, JWT access + refresh tokens, OTP phone verification, and
-password reset.
+The auth module supports email-or-phone identifiers, JWT access +
+refresh tokens, OTP phone verification, and password reset.
 
-### Create user (sign-up)
+**Where signup happens:**
+- **Admin-created users** → `POST /auth/register` (gated, below) or
+  `POST /admin/users` (creates the user *and* binds them to a
+  university — see §0b).
+- **Public student signup** → the institution-code flow:
+  `GET /auth/code-status` → `POST /auth/register-with-code` /
+  `POST /auth/complete-registration`. These stay public.
+- **Social login** → `/auth/{provider}` OAuth routes.
+
+### Create user (admin)
 
 ```
-POST /auth/register     (public)
+POST /auth/register     (authenticated — requires the `users.create` permission)
 ```
+
+> **Access change.** `/auth/register` is no longer public. It now
+> requires a logged-in caller holding the `users.create` permission
+> (granted to `admin` / `super_admin` via roles; can also be granted
+> to any other user directly through `user_permissions`). Public
+> student onboarding moved to the institution-code flow listed above.
 
 `req`
 ```json
@@ -66,6 +80,7 @@ Validation:
   }
 }
 ```
+- `401` if unauthenticated; `403` if the caller lacks `users.create`.
 - `409` on duplicate email/phone.
 - `422` on validation failures (each issue under `errors[]`).
 
@@ -253,29 +268,72 @@ this session. Client should drop both tokens locally.
 
 ### Forgot password / reset
 
+A reset can be delivered two ways — pick per request:
+
+- **`token`** (default) — a long random token emailed as a clickable
+  reset link. The original/desktop flow.
+- **`otp`** — a 6-digit numeric code delivered by email and/or SMS.
+  Better for mobile, where typing a code beats round-tripping a link.
+
+Both are backed by the same `password_resets` table (discriminated by
+the `kind` column) and either can be used at any time.
+
 ```
 POST /auth/forgot-password     (public)
 ```
 
 `req`
 ```json
-{ "identifier": "candidate@example.com" }
+{ "identifier": "candidate@example.com", "delivery": "otp", "channel": "sms" }
 ```
 
-`res 200` — always returns success (does not leak account existence);
-when the identifier matches, a reset token is dispatched via email/SMS.
+- `identifier` — email or phone (required).
+- `delivery` — `token` (default) or `otp`.
+- `channel` — only used when `delivery: "otp"`: `email` | `sms` |
+  `both`. Defaults to env `OTP_CHANNEL`, else `email` when the user has
+  one, else `sms`.
+
+`res 200` — always success-shaped (does not leak account existence):
+```json
+{
+  "data": {
+    "reset_initiated": true,
+    "delivery": "otp",
+    "method": "otp",
+    "channels": ["sms"],
+    "expires_at": "2026-05-16T10:15:00.000Z",
+    "masked_recipient": "+234803***5678"
+  }
+}
+```
+`method` is a legacy alias for `delivery`. Token TTL is 15 min; OTP TTL
+is `OTP_TTL_MINUTES` (default 10).
 
 ```
 POST /auth/reset-password     (public)
 ```
 
-`req`
+Accepts **either** redemption shape:
+
+`req` — token (link) flow
 ```json
 { "token": "<reset-token>", "new_password": "Newpass123!" }
 ```
 
-`res 200` — password is rotated; existing refresh tokens are revoked,
-forcing re-login.
+`req` — OTP flow
+```json
+{ "identifier": "candidate@example.com", "code": "374921", "new_password": "Newpass123!" }
+```
+
+`res 200` — password is rotated; a `password-reset-success.html` email
+fires for both flows.
+
+Error shapes (carry `details.error_code`):
+- `400 invalid_or_expired_token` — token flow, bad/expired/used token
+- `400 invalid_or_expired_otp` — OTP flow, wrong code (`attempt_count` increments)
+- `410 otp_expired` / `otp_expired_or_missing` — no active code / past TTL
+- `429 too_many_attempts` — 5 wrong OTP attempts; the row is burned, request a fresh code
+- `422 weak_password` / `otp_invalid_format` — body validation
 
 ### Change password (logged-in)
 
@@ -338,7 +396,61 @@ GET /auth/code-status?code=ABC123     (public)
 
 The mobile / web client calls this when the student types their
 institution-issued code. The response tells the client which UI to
-show next:
+show next.
+
+**Claimable code** — `valid: true`. The response now carries the full
+candidate preview (same shape as `POST /auth/register-with-code`), so
+the verify-info screen renders without a second round-trip:
+
+```json
+{
+  "data": {
+    "valid": true,
+    "expires_at": "2026-09-30T23:59:59Z",
+    "university": { "id": "uuid", "name": "University of Lagos", "short_name": "UNILAG" },
+    "candidate": {
+      "registration_id": "uuid",
+      "full_name": "Adebayo Salami",
+      "jupeb_reg_no": "270010001",
+      "provisional_candidate_code": "270010001",
+      "photo_url": null,
+      "status": "code_issued"
+    },
+    "basic_information": {
+      "date_of_birth": "1999-01-01",
+      "gender": "male",
+      "residential_address": "12 Marina Road, Lagos",
+      "country": { "id": 1, "name": "Nigeria" },
+      "state_of_origin": { "id": 27, "name": "Ondo", "code": "OND" },
+      "lga": { "id": 412, "name": "Ondo West" },
+      "place_of_birth": "Lagos State"
+    },
+    "contact_information": { "email": "adesalam@example.com", "phone": "+2348000000000" },
+    "next_of_kin": {
+      "name": "Jane Johnson", "relationship": "Mother",
+      "contact_no": "+2348023456789", "phone": "+2348023456789",
+      "email": null, "address": null, "source": "nin"
+    },
+    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "..." },
+    "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" }
+  }
+}
+```
+
+- `country` / `state_of_origin` / `lga` are resolved to `{ id, name }`
+  references against the `countries` / `states` / `lgas` tables. When a
+  NIN-supplied name can't be matched, the field falls back to
+  `{ id: null, name: "<raw string>" }`.
+- `jupeb_reg_no` is the final `jupeb_candidate_number` once assigned,
+  otherwise the `provisional_candidate_code`.
+- `next_of_kin` prefers the `jupeb_next_of_kin` record when one exists
+  (`source: student | institution`), falling back to the NIN payload
+  (`source: nin`). `null` when neither is present.
+
+**Not-claimable code** — `valid: false` with an `error_code`. The
+candidate preview is omitted; for an already-claimed code an `account`
+block with masked identifiers is returned instead so the client can
+route to the log-in screen:
 
 ```json
 {
@@ -360,13 +472,13 @@ show next:
 }
 ```
 
-| State | `valid` | `error_code` | `account` | Client behaviour |
+| State | `valid` | `error_code` | Extra block | Client behaviour |
 |---|---|---|---|---|
 | Unknown code | `false` | `code_not_found` | — | "Invalid code" error |
 | Expired code | `false` | `code_expired` | — | "Expired — contact institution" |
-| Claimable | `true` | — | — | Route to **Create account** screen (`/auth/register-with-code`) |
-| Used, account active | `false` | `code_already_claimed` | populated | Route to **Log in** screen; prefill identifier with `email_masked` |
-| Used, account suspended | `false` | `code_already_claimed` | `active: false` | "Account disabled — contact support" |
+| Claimable | `true` | — | `candidate` + full preview | Route to **Create account** screen (`/auth/register-with-code`) |
+| Used, account active | `false` | `code_already_claimed` | `account` populated | Route to **Log in** screen; prefill identifier with `email_masked` |
+| Used, account suspended | `false` | `code_already_claimed` | `account.active: false` | "Account disabled — contact support" |
 
 Raw email / phone never leak — only masked values.
 
@@ -611,6 +723,108 @@ assignments are filtered out).
 The `assigned_by` column is automatically set to the calling admin's
 user id for audit. Each call is transactional (replace) or per-row
 idempotent (add/remove).
+
+### Create a user + associate to a university
+
+```
+POST /admin/users     (authenticated — requires the `users.create` permission)
+```
+
+Creates a user **and** binds them to a JUPEB university in one atomic
+call. Use this instead of `POST /auth/register` when the new user
+belongs to an institution (registrar, program director, institution
+admin, student, …).
+
+`req`
+```json
+{
+  "email": "registrar@unilag.edu.ng",
+  "phone": "+2348000000000",
+  "password": "S3curePass!",
+  "first_name": "Adebayo",
+  "last_name": "Salami",
+  "role": "registrar",
+  "university_id": "uuid",
+  "is_primary": true,
+  "country_id": 566
+}
+```
+
+- At least one of `email` / `phone`; `password` ≥ 8; `first_name`,
+  `last_name`, `role`, `university_id` all required.
+- `role` — any of the system roles (`super_admin`, `admin`, `agent`,
+  `user`, `registrar`, `program_director`, `institution_admin`,
+  `financial_admin`, `student`).
+- `is_primary` — default `true`. The primary binding is mirrored onto
+  `profiles.jupeb_university_id` so existing institution-scope code
+  keeps working.
+
+`res 201`
+```json
+{
+  "success": true,
+  "message": "User created and associated with university",
+  "data": {
+    "user": { "user_id": "uuid", "email": "...", "phone": "...",
+              "first_name": "Adebayo", "last_name": "Salami",
+              "role": "registrar", "status": "active", "created_at": "..." },
+    "university": { "id": "uuid", "name": "University of Lagos", "short_name": "UNILAG" },
+    "binding": { "id": "uuid", "is_primary": true, "role": "registrar" }
+  }
+}
+```
+
+- `401` / `403` — unauthenticated / missing `users.create`.
+- `404` — `university_id` not found or inactive.
+- `409` — duplicate email/phone.
+- `422` — validation failures.
+
+**Association model.** Bindings live in the `user_universities` join
+table (many-to-many). A partial unique index enforces **one active
+primary university per user**; `profiles.jupeb_university_id` is kept
+as the denormalized primary pointer. To bind/clear a university for an
+*existing* user, use `PATCH /admin/users/{userId}/jupeb-university`
+(next).
+
+### Assign an institution to an existing user
+
+```
+PATCH /admin/users/{userId}/jupeb-university     (admin / super_admin / registrar)
+```
+
+Sets (or clears) a user's **primary** JUPEB institution. Use this when
+the user already exists but has no institution yet — e.g. created via
+`POST /auth/register`, or re-assigned to a different institution.
+
+`req`
+```json
+{ "jupeb_university_id": "uuid" }
+```
+- `jupeb_university_id` — the university to assign, or `null` to clear
+  the scope. The field must be present (omitting it → `422`).
+
+`res 200`
+```json
+{
+  "success": true,
+  "message": "JUPEB institution scope updated",
+  "data": { "user_id": "uuid", "jupeb_university_id": "uuid" }
+}
+```
+
+- `404` — user not found, or `jupeb_university_id` not found / inactive.
+- `422` — `userId` or `jupeb_university_id` is a malformed UUID, or the
+  body omits `jupeb_university_id`.
+
+**Stays in sync.** The write is transactional and updates **both**
+representations together:
+- `profiles.jupeb_university_id` — the denormalized primary pointer.
+- `user_universities` — the join-table source of truth. Assigning
+  upserts a primary binding (demoting any prior primary); passing
+  `null` soft-deletes the current primary binding.
+
+So `POST /admin/users` and this endpoint produce identical state — the
+join table never drifts from the denormalized pointer.
 
 ---
 
