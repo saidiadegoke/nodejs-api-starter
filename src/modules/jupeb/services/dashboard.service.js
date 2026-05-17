@@ -27,6 +27,24 @@ function assertUuid(value, label) {
   if (value && !isUuid(value)) throw httpError(422, `${label} must be a valid UUID`);
 }
 
+// Inclusive list of { year, month } buckets from `start` to `end`. A
+// session window can straddle a calendar-year boundary (e.g. Sep→Aug),
+// so buckets carry the year too. Always terminates — the DB CHECK
+// `opens_at < closes_at` guarantees start ≤ end.
+function monthBuckets(start, end) {
+  const buckets = [];
+  let y = start.getUTCFullYear();
+  let m = start.getUTCMonth() + 1;
+  const endY = end.getUTCFullYear();
+  const endM = end.getUTCMonth() + 1;
+  while (y < endY || (y === endY && m <= endM)) {
+    buckets.push({ year: y, month: m });
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return buckets;
+}
+
 async function resolveUniversityId(userId, rawUniversityId) {
   assertUuid(rawUniversityId, 'university_id');
   return effectiveInstitutionListUniversityId(userId, rawUniversityId || null);
@@ -36,19 +54,19 @@ async function resolveSession(sessionId) {
   if (sessionId) {
     assertUuid(sessionId, 'session_id');
     const r = await pool.query(
-      `SELECT id, academic_year, status, opens_at FROM jupeb_registration_sessions WHERE id = $1`,
+      `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions WHERE id = $1`,
       [sessionId]
     );
     if (!r.rows[0]) throw httpError(404, 'Session not found');
     return r.rows[0];
   }
   const open = await pool.query(
-    `SELECT id, academic_year, status, opens_at FROM jupeb_registration_sessions
+    `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions
      WHERE status = 'open' ORDER BY opens_at DESC LIMIT 1`
   );
   if (open.rows[0]) return open.rows[0];
   const fallback = await pool.query(
-    `SELECT id, academic_year, status, opens_at FROM jupeb_registration_sessions
+    `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions
      ORDER BY opens_at DESC LIMIT 1`
   );
   return fallback.rows[0] || null;
@@ -300,8 +318,55 @@ class DashboardService {
     return r.rows[0];
   }
 
-  async getRegistrationTrends({ universityId, year }, userId) {
+  async getRegistrationTrends({ universityId, sessionId, year }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
+
+    // Optional per-session scoping. resolveSession validates the UUID and
+    // 404s on an unknown id.
+    const session = sessionId ? await resolveSession(sessionId) : null;
+
+    // ── Session-scoped: a single series spanning ONLY the months inside
+    // the session's window (opens_at → closes_at). The window can cross
+    // a calendar-year boundary, so points carry { year, month }. The
+    // `year` param and the previous-year comparison don't apply here.
+    if (session) {
+      const params = [session.id];
+      let where = `session_id = $1 AND status <> 'withdrawn'`;
+      let i = 2;
+      if (scopedUniversityId) {
+        where += ` AND university_id = $${i++}`;
+        params.push(scopedUniversityId);
+      }
+      const r = await pool.query(
+        `SELECT EXTRACT(YEAR FROM created_at)::int AS y,
+                EXTRACT(MONTH FROM created_at)::int AS m,
+                COUNT(*)::int AS c
+         FROM jupeb_registrations
+         WHERE ${where}
+         GROUP BY 1, 2`,
+        params
+      );
+      const map = new Map(r.rows.map((row) => [`${row.y}-${row.m}`, row.c]));
+      const points = monthBuckets(
+        new Date(session.opens_at),
+        new Date(session.closes_at)
+      ).map((b) => ({
+        year: b.year,
+        month: b.month,
+        count: map.get(`${b.year}-${b.month}`) || 0,
+      }));
+      return {
+        session: {
+          id: session.id,
+          academic_year: session.academic_year,
+          opens_at: session.opens_at,
+          closes_at: session.closes_at,
+        },
+        series: [{ key: 'current', points }],
+      };
+    }
+
+    // ── Calendar-year mode: current + previous year, full Jan–Dec.
     const y = parseInt(year, 10);
     const targetYear = Number.isFinite(y) ? y : new Date().getUTCFullYear();
     const previousYear = targetYear - 1;
@@ -327,6 +392,7 @@ class DashboardService {
 
     return {
       year: targetYear,
+      session: null,
       series: [
         { key: 'current', year: targetYear, points: await monthlyForYear(targetYear) },
         { key: 'previous', year: previousYear, points: await monthlyForYear(previousYear) },

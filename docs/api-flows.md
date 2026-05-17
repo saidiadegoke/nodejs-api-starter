@@ -1774,7 +1774,7 @@ program_director / institution_admin) and accept optional
 | KPI · Candidates with Biometrics | `GET /dashboard/stat-cards` | `data.with_biometrics` |
 | KPI · Candidates without Biometrics | `GET /dashboard/stat-cards` | `data.without_biometrics` |
 | KPI · Approved/Pending/Rejected counts | `GET /dashboard/students-status` | `approved`, `pending`, `rejected` |
-| Line · Registration Trends (current vs prior year) | `GET /dashboard/registration-trends?year=YYYY` | `series[].points[].count` |
+| Line · Registration Trends (current vs prior year) | `GET /dashboard/registration-trends?year=YYYY&session_id=…` | `series[].points[].count` |
 | Bar · Subject Combination Enrollment (top N) | `GET /dashboard/subject-enrollment?session_id=…&limit=6` | `[{code, label, count}]` |
 | Bar · Top Institutions (Registration Mgmt page) | `GET /registration/institution/overview/by-university?session_id=…&limit=12` | `[{university_id, university_name, registered_count}]` |
 | Donut · Institution Distribution by type | `GET /dashboard/institution-distribution` | `total`, `slices[].{type, count, pct}` |
@@ -1838,6 +1838,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 ```jsonc
 {
   "year": 2026,
+  "session": null,
   "series": [
     { "key": "current",  "year": 2026,
       "points": [ { "month": 1, "count": 200 }, ..., { "month": 12, "count": 0 } ] },
@@ -1846,6 +1847,53 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   ]
 }
 ```
+
+**Query params.** `year` is a plain calendar year (4 digits) — it
+filters `jupeb_registrations` by `EXTRACT(YEAR FROM created_at)`, *not*
+by a session's `academic_year`. Both series are monthly Jan–Dec; the
+`previous` series is `year − 1`.
+
+`session_id` (optional) switches to **per-session mode** — a single
+series spanning only the months inside that session's window
+(`opens_at → closes_at`):
+
+```bash
+# trends for one session — only the session's own months
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/registration-trends?session_id=$SESSION_ID" | jq '.data'
+```
+
+```jsonc
+{
+  "session": {
+    "id": "uuid",
+    "academic_year": "2026/2027",
+    "opens_at": "2026-09-01T00:00:00.000Z",
+    "closes_at": "2027-08-31T23:59:59.000Z"
+  },
+  "series": [
+    { "key": "current", "points": [
+      { "year": 2026, "month": 9,  "count": 120 },
+      { "year": 2026, "month": 10, "count": 340 },
+      { "...": "..." },
+      { "year": 2027, "month": 8,  "count": 12 }
+    ] }
+  ]
+}
+```
+
+Per-session mode differs from calendar-year mode:
+- **Points span only the session window.** Buckets run from the
+  `opens_at` month to the `closes_at` month, inclusive — a window that
+  crosses New Year just keeps going, so each point carries `year` *and*
+  `month` (not just `month`).
+- **One series, no `previous`.** The calendar-year comparison doesn't
+  apply to a session window.
+- **No top-level `year`.** The `year` query param is ignored when
+  `session_id` is supplied; the window is defined entirely by the
+  session.
+- `404` if `session_id` doesn't match a session; `422` if it's a
+  malformed UUID.
 
 ```bash
 # 4) Bar: subject combinations
