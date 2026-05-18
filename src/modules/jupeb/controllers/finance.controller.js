@@ -56,6 +56,39 @@ class FinanceController {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
   }
+
+  // Chart — projected exam fee per institution.
+  static async examFeeByInstitution(req, res) {
+    try {
+      const data = await financeService.examFeeByInstitution(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Exam fee by institution');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // Line chart — collected payment totals over time.
+  static async paymentTrends(req, res) {
+    try {
+      const data = await financeService.paymentTrends(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Payment trends');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // Table — per-institution fee records (projected + collected).
+  static async institutionFeeRecords(req, res) {
+    try {
+      const { rows, page, limit, total } = await financeService.institutionFeeRecords(
+        req.query,
+        req.user.user_id
+      );
+      return sendPaginated(res, rows, page, limit, total);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
 }
 
 module.exports = FinanceController;

@@ -2,9 +2,11 @@ const pool = require('../../../db/pool');
 const registrationModel = require('../models/registration.model');
 const sessionModel = require('../models/session.model');
 const paymentModel = require('../../payments/models/payment.model');
-const paymentService = require('../../payments/services/payment.service');
+const paymentProcessorService = require('../../payments/services/paymentProcessor.service');
 const { mapPaymentStatusToJupebProjection } = require('../utils/finance-projection');
 const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+
+const SUPPORTED_PROCESSORS = ['paystack', 'flutterwave', 'direct_transfer'];
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -49,12 +51,33 @@ class FinanceService {
     return reg;
   }
 
+  /**
+   * Start a JUPEB registration-fee checkout. Validates the registration /
+   * session / fee, then hands off to paymentProcessorService so the
+   * chosen method actually initializes:
+   *   - paystack / flutterwave → returns a gateway `payment_link`
+   *   - direct_transfer        → returns `bank_account` + emails instructions
+   *
+   * Body: { amount, currency?, registration_id?, payment_method, redirect_url? }
+   * `payment_method` is required and must be one of the supported
+   * processors. paystack / flutterwave additionally need an email on the
+   * student's account.
+   */
   async createCheckout(userId, body) {
     const amount = body && body.amount !== undefined ? Number(body.amount) : NaN;
     if (!Number.isFinite(amount) || amount <= 0) {
       throw httpError(422, 'amount must be a positive number');
     }
     const currency = (body && body.currency) || 'NGN';
+
+    const processor = body && body.payment_method;
+    if (!processor || !SUPPORTED_PROCESSORS.includes(processor)) {
+      throw httpError(
+        422,
+        `payment_method is required and must be one of: ${SUPPORTED_PROCESSORS.join(', ')}`
+      );
+    }
+
     const registration = await this.resolveRegistrationForCheckout(userId, body.registration_id || null);
     const session = await sessionModel.findById(registration.session_id);
     if (!session) throw httpError(404, 'Session not found');
@@ -80,22 +103,48 @@ class FinanceService {
     if (pending > 0) {
       throw httpError(409, 'An unpaid payment already exists for this registration');
     }
-    const metadata = {
-      jupeb: true,
-      registration_id: registration.id,
-      session_id: registration.session_id,
-    };
-    const created = await paymentService.createPayment({
-      amount,
-      currency,
-      type: 'other',
-      payment_type: 'checkout',
-      user_id: userId,
-      registration_id: registration.id,
-      purpose: 'JUPEB registration fee',
-      metadata,
-      payment_method: body.payment_method || undefined,
-    });
+
+    // The gateways need the payer's email (paystack / flutterwave) and
+    // name (flutterwave). Pull them off the student's account.
+    const contact = await pool.query(
+      `SELECT u.email, p.first_name, p.last_name
+         FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+        WHERE u.id = $1`,
+      [userId]
+    );
+    const student = contact.rows[0] || {};
+    if (processor !== 'direct_transfer' && !student.email) {
+      throw httpError(422, 'A card payment requires an email on the student account');
+    }
+
+    const redirectUrl =
+      (body && body.redirect_url) ||
+      `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payments/callback`;
+
+    // paymentProcessorService.initializePayment creates the payments row
+    // itself (via paymentService.createPayment) and then initializes the
+    // gateway — so we hand it the full payload rather than pre-creating.
+    const processorResult = await paymentProcessorService.initializePayment(
+      {
+        amount,
+        currency,
+        type: 'other',
+        payment_type: 'checkout',
+        user_id: userId,
+        registration_id: registration.id,
+        purpose: 'JUPEB registration fee',
+        email: student.email || null,
+        first_name: student.first_name || null,
+        redirect_url: redirectUrl,
+        metadata: {
+          jupeb: true,
+          registration_id: registration.id,
+          session_id: registration.session_id,
+        },
+      },
+      processor
+    );
+
     try {
       await pool.query(
         `UPDATE jupeb_registrations SET payment_projection = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
@@ -104,7 +153,19 @@ class FinanceService {
     } catch {
       /* column may be absent before migration 009 */
     }
-    return created;
+
+    return {
+      payment: processorResult.payment,
+      payment_method: processor,
+      // paystack/flutterwave → gateway checkout URL; direct_transfer → null.
+      payment_link:
+        processorResult.authorization_url ||
+        processorResult.paymentLink ||
+        processorResult.redirect_url ||
+        null,
+      // direct_transfer only.
+      bank_account: processorResult.bank_account || null,
+    };
   }
 
   async listMyPayments(userId, query) {
@@ -257,6 +318,224 @@ class FinanceService {
       total_completed_amount: parseFloat(row.total_completed_amount) || 0,
       pending_payment_count: row.pending_payment_count,
       partial_payment_registration_count: row.partial_payment_registration_count,
+    };
+  }
+
+  /**
+   * Per-institution fee rows for a session. One row per institution that
+   * has registrations in the session, carrying:
+   *   - the projected side (session fee config × candidate count)
+   *   - the collected side (actual `payments` rows, status = completed)
+   *
+   * Affiliation rate: an institution pays `affiliation_fee_new` for the
+   * FIRST session it ever has registrations in (earliest `opens_at`),
+   * `affiliation_fee_existing` for every later session — `is_new_affiliate`
+   * captures that. The `payments` table doesn't tag a payment as
+   * affiliation-vs-exam, so `collected` is a single total, not split.
+   *
+   * Shared by examFeeByInstitution + institutionFeeRecords.
+   */
+  async _institutionFeeRows(sessionId) {
+    const r = await pool.query(
+      `WITH sess AS (
+         SELECT id, opens_at,
+                COALESCE(affiliation_fee_existing, 0)::numeric AS aff_existing,
+                COALESCE(affiliation_fee_new, 0)::numeric      AS aff_new,
+                COALESCE(exam_fee_per_candidate, 0)::numeric   AS exam_per
+         FROM jupeb_registration_sessions WHERE id = $1
+       ),
+       inst AS (
+         SELECT r.university_id,
+                COUNT(*) FILTER (WHERE r.status <> 'withdrawn')::int AS number_of_candidates
+         FROM jupeb_registrations r
+         WHERE r.session_id = $1
+         GROUP BY r.university_id
+       )
+       SELECT
+         u.id   AS institution_id,
+         u.name AS institution_name,
+         u.code AS institution_code,
+         inst.number_of_candidates,
+         NOT EXISTS (
+           SELECT 1 FROM jupeb_registrations r2
+           JOIN jupeb_registration_sessions s2 ON s2.id = r2.session_id
+           WHERE r2.university_id = u.id AND s2.opens_at < sess.opens_at
+         ) AS is_new_affiliate,
+         sess.aff_existing, sess.aff_new, sess.exam_per,
+         COALESCE(coll.collected_total, 0)::numeric AS collected_total,
+         COALESCE(coll.collected_count, 0)::int     AS collected_count,
+         COALESCE(coll.pending_total, 0)::numeric   AS pending_total
+       FROM inst
+       JOIN jupeb_universities u ON u.id = inst.university_id
+       CROSS JOIN sess
+       LEFT JOIN LATERAL (
+         SELECT
+           SUM(p.amount) FILTER (WHERE p.status = 'completed')        AS collected_total,
+           COUNT(*)      FILTER (WHERE p.status = 'completed')        AS collected_count,
+           SUM(p.amount) FILTER (
+             WHERE p.status IN ('pending', 'pending_transfer', 'processing', 'pending_verification')
+           )                                                          AS pending_total
+         FROM payments p
+         JOIN jupeb_registrations r3 ON r3.id = p.registration_id
+         WHERE r3.session_id = sess.id AND r3.university_id = u.id
+       ) coll ON true
+       ORDER BY u.name ASC`,
+      [sessionId]
+    );
+    return r.rows.map((row) => {
+      const affiliationFee = row.is_new_affiliate
+        ? Number(row.aff_new)
+        : Number(row.aff_existing);
+      const examFee = Number(row.exam_per) * row.number_of_candidates;
+      const projectedTotal = affiliationFee + examFee;
+      const collectedTotal = Number(row.collected_total) || 0;
+      return {
+        institution_id: row.institution_id,
+        institution_name: row.institution_name,
+        institution_code: row.institution_code,
+        number_of_candidates: row.number_of_candidates,
+        is_new_affiliate: row.is_new_affiliate,
+        projected: {
+          affiliation_fee: affiliationFee,
+          exam_fee: examFee,
+          total: projectedTotal,
+        },
+        collected: {
+          total: collectedTotal,
+          payment_count: row.collected_count,
+        },
+        pending: { total: Number(row.pending_total) || 0 },
+        outstanding: projectedTotal - collectedTotal,
+      };
+    });
+  }
+
+  /**
+   * Exam-fee-by-institution chart: projected exam fee per institution
+   * (`exam_fee_per_candidate × candidates`) for plotting fee against
+   * institutions, with collected total alongside. Ordered by projected
+   * exam fee, biggest first.
+   */
+  async examFeeByInstitution(query, userId) {
+    await assertFinanceRole(userId);
+    const sessionId = query.session_id;
+    if (!sessionId || !isUuid(sessionId)) {
+      throw httpError(422, 'session_id is required and must be a valid UUID');
+    }
+    const session = await sessionModel.findById(sessionId);
+    if (!session) throw httpError(404, 'Session not found');
+
+    const rows = await this._institutionFeeRows(sessionId);
+    const institutions = rows
+      .map((row) => ({
+        institution_id: row.institution_id,
+        institution_name: row.institution_name,
+        institution_code: row.institution_code,
+        number_of_candidates: row.number_of_candidates,
+        exam_fee: row.projected.exam_fee,
+        collected: row.collected.total,
+      }))
+      .sort((a, b) => b.exam_fee - a.exam_fee);
+
+    return {
+      session_id: sessionId,
+      academic_year: session.academic_year,
+      exam_fee_per_candidate: Number(session.exam_fee_per_candidate) || 0,
+      total_projected_exam_fee: institutions.reduce((s, i) => s + i.exam_fee, 0),
+      institutions,
+    };
+  }
+
+  /**
+   * Paginated list of per-institution fee records — projected (affiliation
+   * + exam) and collected side by side. `q` filters by institution name
+   * or code (case-insensitive substring).
+   */
+  async institutionFeeRecords(query, userId) {
+    await assertFinanceRole(userId);
+    const sessionId = query.session_id;
+    if (!sessionId || !isUuid(sessionId)) {
+      throw httpError(422, 'session_id is required and must be a valid UUID');
+    }
+    const session = await sessionModel.findById(sessionId);
+    if (!session) throw httpError(404, 'Session not found');
+
+    const safePage = Math.max(1, parseInt(query.page, 10) || 1);
+    const safeLimit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
+
+    let rows = await this._institutionFeeRows(sessionId);
+    const q = query.q ? String(query.q).trim().toLowerCase() : '';
+    if (q) {
+      rows = rows.filter(
+        (row) =>
+          row.institution_name.toLowerCase().includes(q) ||
+          (row.institution_code || '').toLowerCase().includes(q)
+      );
+    }
+    const total = rows.length;
+    const offset = (safePage - 1) * safeLimit;
+    return {
+      rows: rows.slice(offset, offset + safeLimit),
+      page: safePage,
+      limit: safeLimit,
+      total,
+    };
+  }
+
+  /**
+   * Payment trends: monthly collected payment totals (status=completed)
+   * for JUPEB-linked payments. Current + previous calendar year, Jan–Dec,
+   * bucketed by `paid_at` (falling back to `created_at`). `session_id`
+   * optionally scopes to one session's registrations.
+   */
+  async paymentTrends(query, userId) {
+    await assertFinanceRole(userId);
+    const sessionId = query.session_id || null;
+    if (sessionId && !isUuid(sessionId)) {
+      throw httpError(422, 'session_id must be a valid UUID');
+    }
+    const y = parseInt(query.year, 10);
+    const targetYear = Number.isFinite(y) ? y : new Date().getUTCFullYear();
+    const previousYear = targetYear - 1;
+
+    const monthlyForYear = async (yy) => {
+      const params = [yy];
+      let join = '';
+      let where = `p.status = 'completed' AND p.registration_id IS NOT NULL
+                   AND EXTRACT(YEAR FROM COALESCE(p.paid_at, p.created_at)) = $1`;
+      if (sessionId) {
+        join = 'JOIN jupeb_registrations r ON r.id = p.registration_id';
+        params.push(sessionId);
+        where += ` AND r.session_id = $${params.length}`;
+      }
+      const r = await pool.query(
+        `SELECT EXTRACT(MONTH FROM COALESCE(p.paid_at, p.created_at))::int AS m,
+                COUNT(*)::int AS cnt,
+                COALESCE(SUM(p.amount), 0)::numeric AS amt
+         FROM payments p
+         ${join}
+         WHERE ${where}
+         GROUP BY 1`,
+        params
+      );
+      const map = new Map(r.rows.map((row) => [row.m, row]));
+      return Array.from({ length: 12 }, (_, idx) => {
+        const hit = map.get(idx + 1);
+        return {
+          month: idx + 1,
+          amount: hit ? Number(hit.amt) : 0,
+          count: hit ? hit.cnt : 0,
+        };
+      });
+    };
+
+    return {
+      year: targetYear,
+      session_id: sessionId,
+      series: [
+        { key: 'current', year: targetYear, points: await monthlyForYear(targetYear) },
+        { key: 'previous', year: previousYear, points: await monthlyForYear(previousYear) },
+      ],
     };
   }
 }

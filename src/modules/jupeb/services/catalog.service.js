@@ -29,11 +29,14 @@ class CatalogService {
     return universityModel.findPublicActive({ universityType: type || null });
   }
 
-  listSubjectCombinationsPublic({ universityId }) {
+  async listSubjectCombinationsPublic({ universityId }) {
     if (universityId && !isUuid(universityId)) {
       throw httpError(422, 'university_id must be a valid UUID');
     }
-    return subjectCombinationModel.findPublicActive({ universityId: universityId || null });
+    const rows = await subjectCombinationModel.findPublicActive({
+      universityId: universityId || null,
+    });
+    return this._embedSubjectItemsBatch(rows);
   }
 
   async listUniversitiesAdmin({ page, limit, status, q }) {
@@ -169,7 +172,8 @@ class CatalogService {
       university_id: university_id || null,
       q,
     });
-    return { rows, page: safePage, limit: safeLimit, total };
+    const enriched = await this._embedSubjectItemsBatch(rows, { withEnrolled: true });
+    return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
   async getSubjectCombinationById(id, { embedItems = false } = {}) {
@@ -335,6 +339,26 @@ class CatalogService {
     if (!row || !row.id) return row;
     const items = await subjectCombinationModel.listItems(row.id);
     return { ...row, subject_items: items };
+  }
+
+  /**
+   * Embed subject_items[] onto a list of combinations in one batched
+   * query (no N+1). With { withEnrolled: true } also attaches
+   * enrolled_count — the non-withdrawn registration count per
+   * combination (the "NUMBER OF CANDIDATE ENROLLED" column).
+   */
+  async _embedSubjectItemsBatch(rows, { withEnrolled = false } = {}) {
+    if (!rows || !rows.length) return rows || [];
+    const ids = rows.map((r) => r.id);
+    const itemsMap = await subjectCombinationModel.listItemsForCombinations(ids);
+    const enrolledMap = withEnrolled
+      ? await subjectCombinationModel.enrolledCountsForCombinations(ids)
+      : null;
+    return rows.map((row) => ({
+      ...row,
+      subject_items: itemsMap.get(row.id) || [],
+      ...(withEnrolled ? { enrolled_count: enrolledMap.get(row.id) || 0 } : {}),
+    }));
   }
 
   async setSubjectCombinationStatus(id, status) {

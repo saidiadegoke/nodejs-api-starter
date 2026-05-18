@@ -135,8 +135,8 @@ async function kpiCounts(universityId, sessionId) {
 }
 
 // Count active (non-deleted) universities. Optional filter by type so
-// the same helper drives both the "Institutions Onboarded" card and
-// the donut-chart slices.
+// the same helper drives both the quick-stats count and the donut-chart
+// slices.
 async function institutionsCount({ universityType } = {}) {
   const params = [];
   let where = `deleted_at IS NULL AND status = 'active'`;
@@ -149,6 +149,39 @@ async function institutionsCount({ universityType } = {}) {
     params
   );
   return r.rows[0].c;
+}
+
+// Onboarded / active / inactive university counts in one pass.
+// `onboarded` is every non-deleted institution (active + inactive) —
+// an institution stays "onboarded" even after it's deactivated.
+async function institutionStatusCounts() {
+  const r = await pool.query(
+    `SELECT
+       COUNT(*)::int AS onboarded,
+       COUNT(*) FILTER (WHERE status = 'active')::int   AS active,
+       COUNT(*) FILTER (WHERE status = 'inactive')::int AS inactive
+     FROM jupeb_universities
+     WHERE deleted_at IS NULL`
+  );
+  return r.rows[0];
+}
+
+// Catalog-wide subject metrics for the stat cards. `total_subjects`
+// counts every non-deleted subject (active + inactive); `inactive_subjects`
+// is the inactive subset; `total_subject_combinations` is every
+// non-deleted combination. Not session- or institution-scoped — the
+// subject catalog is global.
+async function subjectCatalogCounts() {
+  const r = await pool.query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM jupeb_subjects
+         WHERE deleted_at IS NULL) AS total_subjects,
+       (SELECT COUNT(*)::int FROM jupeb_subjects
+         WHERE deleted_at IS NULL AND status = 'inactive') AS inactive_subjects,
+       (SELECT COUNT(*)::int FROM jupeb_subject_combinations
+         WHERE deleted_at IS NULL) AS total_subject_combinations`
+  );
+  return r.rows[0];
 }
 
 class DashboardService {
@@ -186,20 +219,26 @@ class DashboardService {
       delta_pct: previous ? deltaPct(curVal, prevVal) : null,
     });
 
-    // Institution counts — derived from the universities catalog,
-    // not the per-session registration table. We don't have a notion
-    // of "institutions in previous session" (universities aren't
-    // session-scoped), so delta_pct here is always null. The frontend
-    // can still show the value without the comparison arrow.
-    const institutions_onboarded = await institutionsCount();
+    // Institution + subject counts — derived from the catalog tables,
+    // not the per-session registration table. There's no notion of a
+    // "previous session" for catalog data (universities / subjects
+    // aren't session-scoped), so delta_pct is always null here. The
+    // frontend shows the value without the comparison arrow.
+    const institutions = await institutionStatusCounts();
+    const subjectCounts = await subjectCatalogCounts();
 
     return {
-      institutions_onboarded: { value: institutions_onboarded, delta_pct: null },
+      institutions_onboarded: { value: institutions.onboarded, delta_pct: null },
+      active_institutions: { value: institutions.active, delta_pct: null },
+      inactive_institutions: { value: institutions.inactive, delta_pct: null },
       total_registered: card(current.total, previous?.total),
       approved: card(current.approved, previous?.approved),
       pending: card(current.pending, previous?.pending),
       with_biometrics: card(current.biometric, previous?.biometric),
       without_biometrics: card(current.without_biometric, previous?.without_biometric),
+      total_subjects: { value: subjectCounts.total_subjects, delta_pct: null },
+      total_subject_combinations: { value: subjectCounts.total_subject_combinations, delta_pct: null },
+      inactive_subjects: { value: subjectCounts.inactive_subjects, delta_pct: null },
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year }
         : null,
@@ -246,6 +285,80 @@ class DashboardService {
     const total = r.rows.reduce((sum, row) => sum + row.count, 0);
     const slices = r.rows.map((row) => ({
       type: row.type,
+      count: row.count,
+      pct: total ? Number(((row.count / total) * 100).toFixed(1)) : 0,
+    }));
+    return { total, slices };
+  }
+
+  /**
+   * Line chart: institutions onboarded over time. Counts universities by
+   * the calendar month of `created_at` — current + previous year, full
+   * Jan–Dec — so the "Institution onboarding Trends" chart can plot the
+   * two series. `deleted_at IS NULL` only; status is ignored (an
+   * institution counts as onboarded even once deactivated).
+   */
+  async getInstitutionTrends({ year }) {
+    const y = parseInt(year, 10);
+    const targetYear = Number.isFinite(y) ? y : new Date().getUTCFullYear();
+    const previousYear = targetYear - 1;
+
+    const monthlyForYear = async (yy) => {
+      const r = await pool.query(
+        `SELECT EXTRACT(MONTH FROM created_at)::int AS m, COUNT(*)::int AS c
+           FROM jupeb_universities
+          WHERE deleted_at IS NULL AND EXTRACT(YEAR FROM created_at) = $1
+          GROUP BY 1`,
+        [yy]
+      );
+      const map = new Map(r.rows.map((row) => [row.m, row.c]));
+      return Array.from({ length: 12 }, (_, idx) => ({ month: idx + 1, count: map.get(idx + 1) || 0 }));
+    };
+
+    return {
+      year: targetYear,
+      series: [
+        { key: 'current', year: targetYear, points: await monthlyForYear(targetYear) },
+        { key: 'previous', year: previousYear, points: await monthlyForYear(previousYear) },
+      ],
+    };
+  }
+
+  /**
+   * Donut / distribution: enrollment share across subject combinations.
+   * Like getInstitutionDistribution but keyed by combination — counts
+   * non-withdrawn registrations per combination, plus percent shares.
+   * Optionally scoped by university + session.
+   */
+  async getSubjectCombinationDistribution({ universityId, sessionId }, userId) {
+    const scopedUniversityId = await resolveUniversityId(userId, universityId);
+    assertUuid(sessionId, 'session_id');
+
+    const params = [];
+    const filters = [`r.subject_combination_id IS NOT NULL`, `r.status <> 'withdrawn'`];
+    let i = 1;
+    if (scopedUniversityId) {
+      filters.push(`r.university_id = $${i++}`);
+      params.push(scopedUniversityId);
+    }
+    if (sessionId) {
+      filters.push(`r.session_id = $${i++}`);
+      params.push(sessionId);
+    }
+    const r = await pool.query(
+      `SELECT sc.id, sc.code, sc.title, COUNT(r.id)::int AS count
+         FROM jupeb_registrations r
+         JOIN jupeb_subject_combinations sc ON sc.id = r.subject_combination_id
+        WHERE ${filters.join(' AND ')}
+        GROUP BY sc.id, sc.code, sc.title
+        ORDER BY count DESC, sc.code ASC`,
+      params
+    );
+    const total = r.rows.reduce((sum, row) => sum + row.count, 0);
+    const slices = r.rows.map((row) => ({
+      subject_combination_id: row.id,
+      code: row.code,
+      title: row.title,
       count: row.count,
       pct: total ? Number(((row.count / total) * 100).toFixed(1)) : 0,
     }));
@@ -418,11 +531,11 @@ class DashboardService {
     }
     params.push(lim);
     const result = await pool.query(
-      `SELECT sc.id, sc.code, sc.name, COUNT(r.id)::int AS count
+      `SELECT sc.id, sc.code, sc.title, COUNT(r.id)::int AS count
        FROM jupeb_registrations r
        JOIN jupeb_subject_combinations sc ON sc.id = r.subject_combination_id
        WHERE ${filters.join(' AND ')}
-       GROUP BY sc.id, sc.code, sc.name
+       GROUP BY sc.id, sc.code, sc.title
        ORDER BY count DESC, sc.code ASC
        LIMIT $${i}`,
       params
@@ -430,7 +543,7 @@ class DashboardService {
     return result.rows.map((row) => ({
       subject_combination_id: row.id,
       code: row.code,
-      label: row.name,
+      label: row.title,
       count: row.count,
     }));
   }

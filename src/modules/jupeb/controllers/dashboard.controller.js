@@ -86,6 +86,29 @@ class DashboardController {
     }
   }
 
+  // Line chart — institutions onboarded over time (current + prev year).
+  static async getInstitutionTrends(req, res) {
+    try {
+      const data = await dashboardService.getInstitutionTrends(pickParams(req));
+      return sendSuccess(res, data, 'Institution onboarding trends');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // Distribution — enrollment share across subject combinations.
+  static async getSubjectCombinationDistribution(req, res) {
+    try {
+      const data = await dashboardService.getSubjectCombinationDistribution(
+        pickParams(req),
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Subject combination distribution');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   // Registration timeline — opens / closes / cutoffs / now-marker
   // for the Registration Management header card.
   static async getSessionTimeline(req, res) {

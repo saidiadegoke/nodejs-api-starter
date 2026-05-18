@@ -17,4 +17,10 @@ router.get('/registrations/:registrationId/payment-summary', financeAdmin, Finan
 router.post('/registrations/:registrationId/reconcile', financeAdmin, FinanceController.reconcile);
 router.get('/reports/session/:sessionId', financeAdmin, FinanceController.sessionReport);
 
+// Analytics — exam fee per institution (chart), payment trends over time
+// (line), and the per-institution fee records table (projected + collected).
+router.get('/analytics/exam-fee-by-institution', financeAdmin, FinanceController.examFeeByInstitution);
+router.get('/analytics/payment-trends', financeAdmin, FinanceController.paymentTrends);
+router.get('/analytics/institution-fee-records', financeAdmin, FinanceController.institutionFeeRecords);
+
 module.exports = router;

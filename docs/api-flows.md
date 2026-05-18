@@ -1344,12 +1344,21 @@ subjects,is_global
 
 | Verb | Path | Notes |
 |---|---|---|
-| `GET` | `/catalog/subject-combinations/public` | **public** — supports `?university_id` |
-| `GET` | `/catalog/subject-combinations` | Paginated |
+| `GET` | `/catalog/subject-combinations/public` | **public** — supports `?university_id`; each row includes `subject_items[]` |
+| `GET` | `/catalog/subject-combinations` | Paginated; each row includes `subject_items[]` + `enrolled_count` |
 | `GET` | `/catalog/subject-combinations/{id}` | Includes `subject_items[]` |
 | `PATCH` | `/catalog/subject-combinations/{id}` | Sending `subjects` re-resolves and replaces the join rows in lockstep |
 | `POST` | `/catalog/subject-combinations/{id}/activate` | |
 | `POST` | `/catalog/subject-combinations/{id}/deactivate` | |
+
+Every read above resolves the combination's subjects via the
+`jupeb_subject_combination_items` join table into a `subject_items[]`
+array — `[{ id, position, subject_id, code, name }, …]` ordered by
+`position`. The paginated admin list additionally carries
+`enrolled_count`: the number of non-withdrawn registrations on that
+combination (the "Number of Candidates Enrolled" column). Both are
+batch-loaded — one query for all items, one for all counts — so the
+list stays a fixed 3 queries regardless of page size.
 
 ---
 
@@ -1770,12 +1779,16 @@ program_director / institution_admin) and accept optional
 | Widget | Endpoint | Field(s) |
 |---|---|---|
 | KPI · Institutions Onboarded | `GET /dashboard/stat-cards` | `data.institutions_onboarded` |
+| KPI · Active / Inactive Institutions | `GET /dashboard/stat-cards` | `data.active_institutions`, `data.inactive_institutions` |
 | KPI · Total Candidates Registered | `GET /dashboard/stat-cards` | `data.total_registered` |
 | KPI · Candidates with Biometrics | `GET /dashboard/stat-cards` | `data.with_biometrics` |
 | KPI · Candidates without Biometrics | `GET /dashboard/stat-cards` | `data.without_biometrics` |
+| KPI · Total Subjects / Combinations / Inactive Subjects | `GET /dashboard/stat-cards` | `data.total_subjects`, `data.total_subject_combinations`, `data.inactive_subjects` |
 | KPI · Approved/Pending/Rejected counts | `GET /dashboard/students-status` | `approved`, `pending`, `rejected` |
 | Line · Registration Trends (current vs prior year) | `GET /dashboard/registration-trends?year=YYYY&session_id=…` | `series[].points[].count` |
+| Line · Institution Onboarding Trends | `GET /dashboard/institution-trends?year=YYYY` | `series[].points[].count` |
 | Bar · Subject Combination Enrollment (top N) | `GET /dashboard/subject-enrollment?session_id=…&limit=6` | `[{code, label, count}]` |
+| Donut · Subject Combination Enrollment distribution | `GET /dashboard/subject-combination-distribution?session_id=…` | `total`, `slices[].{code, title, count, pct}` |
 | Bar · Top Institutions (Registration Mgmt page) | `GET /registration/institution/overview/by-university?session_id=…&limit=12` | `[{university_id, university_name, registered_count}]` |
 | Donut · Institution Distribution by type | `GET /dashboard/institution-distribution` | `total`, `slices[].{type, count, pct}` |
 | Card · Registration Timeline (opens/now/closes) | `GET /dashboard/session-timeline?session_id=…` | `opens_at`, `closes_at`, `now`, `within_window`, cutoffs |
@@ -1793,19 +1806,33 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```jsonc
 {
-  "institutions_onboarded": { "value": 117, "delta_pct": null },
-  "total_registered":       { "value": 3671, "delta_pct": -0.03 },
-  "approved":               { "value": 2800, "delta_pct": 6.08 },
-  "pending":                { "value": 800,  "delta_pct": 1.50 },
-  "with_biometrics":        { "value": 3600, "delta_pct": 11.01 },
-  "without_biometrics":     { "value": 71,   "delta_pct": 11.01 },
+  "institutions_onboarded":     { "value": 121,  "delta_pct": null },
+  "active_institutions":        { "value": 117,  "delta_pct": null },
+  "inactive_institutions":      { "value": 4,    "delta_pct": null },
+  "total_registered":           { "value": 3671, "delta_pct": -0.03 },
+  "approved":                   { "value": 2800, "delta_pct": 6.08 },
+  "pending":                    { "value": 800,  "delta_pct": 1.50 },
+  "with_biometrics":            { "value": 3600, "delta_pct": 11.01 },
+  "without_biometrics":         { "value": 71,   "delta_pct": 11.01 },
+  "total_subjects":             { "value": 142,  "delta_pct": null },
+  "total_subject_combinations": { "value": 36,   "delta_pct": null },
+  "inactive_subjects":          { "value": 4,    "delta_pct": null },
   "compared_to": { "session_id": "uuid", "label": "2024/2025" }
 }
 ```
 
 `delta_pct` compares against the chronologically prior session by
-`opens_at`. `institutions_onboarded.delta_pct` is always `null` —
-universities aren't session-scoped, so there's no notion of prior.
+`opens_at`. The catalog-derived cards — the three `*_institutions`
+cards, `total_subjects`, `total_subject_combinations`,
+`inactive_subjects` — always have `delta_pct: null`: universities and
+subjects aren't session-scoped, so there's no prior to compare against.
+
+Card definitions (all exclude soft-deleted rows):
+- `institutions_onboarded` — **every** institution (active + inactive).
+- `active_institutions` / `inactive_institutions` — split by `status`.
+- `total_subjects` — every subject (active + inactive);
+  `inactive_subjects` is the inactive subset.
+- `total_subject_combinations` — every combination.
 
 ```bash
 # 2) Donut: institution distribution by type
@@ -1828,6 +1855,31 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 Slice `pct` values sum to ~100 (one-decimal rounding may leave a
 tenth off). `unspecified` rolls up universities without
 `university_type` set.
+
+```bash
+# 2b) Line: institution onboarding trends (Institution Mgmt screen)
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/institution-trends?year=2026" | jq '.data'
+```
+
+```jsonc
+{
+  "year": 2026,
+  "series": [
+    { "key": "current",  "year": 2026,
+      "points": [ { "month": 1, "count": 8 }, ..., { "month": 12, "count": 0 } ] },
+    { "key": "previous", "year": 2025,
+      "points": [ ... ] }
+  ]
+}
+```
+
+Counts universities by the calendar month of `created_at` —
+"institutions onboarded over time". `year` defaults to the current
+calendar year; both series are monthly Jan–Dec, `previous` is
+`year − 1`. Soft-deleted institutions are excluded; status (active /
+inactive) is **not** filtered — an institution counts as onboarded
+even after it's deactivated.
 
 ```bash
 # 3) Line: registration trends, current + previous year
@@ -1908,6 +1960,31 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   ...
 ]
 ```
+
+`label` is the combination `title`. `limit` caps the bar count
+(default 6, max 20); `session_id` / `university_id` scope the counts.
+
+```bash
+# 4b) Donut: subject combination enrollment distribution
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/subject-combination-distribution?session_id=$SESSION_ID" | jq '.data'
+```
+
+```jsonc
+{
+  "total": 3671,
+  "slices": [
+    { "subject_combination_id": "uuid", "code": "JUPEB SC-004", "title": "...", "count": 980, "pct": 26.7 },
+    { "subject_combination_id": "uuid", "code": "JUPEB SC-002", "title": "...", "count": 870, "pct": 23.7 },
+    { "...": "..." }
+  ]
+}
+```
+
+Same counting as `subject-enrollment`, but returns **every** combination
+with enrollments (no `limit`) plus percent shares — so `pct` sums to
+~100 for a true distribution. `session_id` / `university_id` scope the
+counts.
 
 ```bash
 # 5) Bar: top 12 institutions (Registration page)
@@ -2004,11 +2081,18 @@ Anonymous calls → `401`. Wrong role → `403`. Bad UUID → `422`.
 
 Every list page on the registrar / institution dashboards is backed
 by a paginated endpoint with the **same query-param vocabulary**.
-`q` is a case-insensitive `ILIKE '%…%'` substring match — what
-columns it searches depends on the entity. All endpoints also accept
-`page` (default 1) and `limit` (default 20, max 100) for pagination
-and return a `pagination: { page, limit, total, totalPages }`
-envelope alongside `data`.
+
+**The search parameter is `q`.** A case-insensitive `ILIKE '%…%'`
+substring match — what columns it searches depends on the entity.
+`search` and `query` are accepted as **aliases**: if you pass either
+(and not `q`), the server maps it onto `q`. So `?q=ada`,
+`?search=ada`, and `?query=ada` all behave identically. An explicit
+`q` takes precedence if more than one is supplied.
+
+All endpoints also accept `page` (default 1) and `limit` (default 20,
+max 100) for pagination and return a
+`pagination: { page, limit, total, totalPages }` envelope alongside
+`data`.
 
 ### Quick reference
 
@@ -2047,6 +2131,38 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   "$BASE/sessions?q=2025/&status=closed" | jq '.data[].academic_year'
 ```
 
+#### Search param aliases — `q`, `search`, `query`
+
+The canonical param is `q`, but `search` and `query` are accepted as
+aliases. These three requests are **identical** — pick whichever your
+client already uses:
+
+```bash
+# all three return the same result set
+curl -s -H "Authorization: Bearer $ADMIN" "$BASE/catalog/universities?q=UNILAG"
+curl -s -H "Authorization: Bearer $ADMIN" "$BASE/catalog/universities?search=UNILAG"
+curl -s -H "Authorization: Bearer $ADMIN" "$BASE/catalog/universities?query=UNILAG"
+```
+
+The alias resolves the same way on every list endpoint, combined with
+any other filters:
+
+```bash
+# `search` alias + other filters — works exactly like `q`
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations?search=ada&bucket=pending&limit=20" \
+  | jq '.data[].name'
+
+# `query` alias on the sessions list
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/sessions?query=2025/&status=closed" | jq '.data[].academic_year'
+```
+
+Resolution rule: an explicit `q` always wins; otherwise the server
+copies `search` (or, failing that, `query`) into `q` before the
+request reaches the handler. Passing `?q=ada&search=bob` searches for
+`ada`.
+
 ### Notes
 
 - **Search is always combinable with the other filters.** `q=ada&bucket=pending` returns
@@ -2055,7 +2171,11 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 - **Pagination `total` reflects the filtered count**, not the table total — the frontend
   pager should use it directly. `totalPages = ceil(total / limit)`.
 - **Trim and ignore empty `q`.** The server treats `q=""` / `q="   "` as "no filter"
-  so a client can keep the param in the URL when the search box is empty.
+  so a client can keep the param in the URL when the search box is empty. The same
+  applies to the `search` / `query` aliases — an empty alias is ignored, not copied.
+- **`search` / `query` are aliases for `q`** on every list endpoint (resolved by a
+  global middleware before routing). Use whichever your client prefers; an explicit
+  `q` takes precedence when more than one is supplied.
 - **All endpoints share the same auth gating** as their unfiltered counterparts
   (`/registration/institution/*` → instReg role set; `/catalog/*` and `/sessions` →
   admin / super_admin / registrar). Public read endpoints (`/catalog/*/public`)
@@ -2142,3 +2262,157 @@ requirement on the student's registration.
   (status → `pending_institution_review`).
 - `GET /registration/me/registration-form.pdf` — render the registration
   PDF (only after submit).
+
+### Payment / checkout
+
+- `POST /finance/me/checkout` — start a registration-fee payment.
+- `GET /finance/me/payments` — the student's own payment history.
+
+`POST /finance/me/checkout` body:
+```json
+{
+  "amount": 50000,
+  "currency": "NGN",
+  "payment_method": "paystack",
+  "registration_id": "uuid",
+  "redirect_url": "https://app.example.com/payments/callback"
+}
+```
+
+- `payment_method` is **required** — one of `paystack`, `flutterwave`,
+  `direct_transfer`. The checkout initializes that gateway directly.
+- `paystack` / `flutterwave` need an email on the student's account
+  (→ `422` if absent). `redirect_url` is the gateway callback; it
+  defaults to `FRONTEND_URL/payments/callback` when omitted.
+- `registration_id` is optional — defaults to the caller's latest
+  claimed registration.
+
+`res 201`
+```json
+{
+  "data": {
+    "payment": { "payment_id": "PAY_…", "amount": 50000, "currency": "NGN", "status": "pending" },
+    "payment_method": "paystack",
+    "payment_link": "https://checkout.paystack.com/…",
+    "bank_account": null
+  }
+}
+```
+
+- `payment_link` — the gateway checkout URL for `paystack` /
+  `flutterwave`; `null` for `direct_transfer`.
+- `bank_account` — populated for `direct_transfer` (the student is also
+  emailed transfer instructions); `null` otherwise.
+- `409` if an unpaid payment already exists for the registration;
+  `422` for a closed/archived session or a fee/amount mismatch.
+
+---
+
+## 10. Finance analytics — fees, trends, per-institution records
+
+Three reporting endpoints under `/finance/analytics/*`, all gated by the
+`financeAdmin` role set (`financial_admin` / `registrar` / `admin` /
+`super_admin`).
+
+**Projected vs collected.** "Projected" is computed from the session's
+fee config (`affiliation_fee_existing` / `affiliation_fee_new` /
+`exam_fee_per_candidate`) × candidate counts — what an institution
+*owes*. "Collected" sums real `payments` rows with `status='completed'`
+— what's actually *been paid*. The `payments` table doesn't tag a
+payment as affiliation-vs-exam, so `collected` is a single total, not
+split by fee type.
+
+**Affiliation rate.** An institution pays `affiliation_fee_new` for the
+**first** session it ever has registrations in (earliest `opens_at`),
+and `affiliation_fee_existing` for every later session. The
+`is_new_affiliate` flag on each record captures which rate was applied.
+
+### Exam fee by institution
+
+```
+GET /finance/analytics/exam-fee-by-institution?session_id=…     (financeAdmin)
+```
+
+Projected exam fee per institution — for plotting fee against
+institutions. `session_id` is required.
+
+`res 200`
+```json
+{
+  "data": {
+    "session_id": "uuid",
+    "academic_year": "2026/2027",
+    "exam_fee_per_candidate": 50000,
+    "total_projected_exam_fee": 18350000,
+    "institutions": [
+      { "institution_id": "uuid", "institution_name": "University of Lagos",
+        "institution_code": "UNILAG", "number_of_candidates": 120,
+        "exam_fee": 6000000, "collected": 4200000 }
+    ]
+  }
+}
+```
+`institutions` is ordered by `exam_fee` descending. `exam_fee` is
+projected (`exam_fee_per_candidate × number_of_candidates`); `collected`
+is the institution's total completed payments.
+
+### Payment trends
+
+```
+GET /finance/analytics/payment-trends?year=YYYY&session_id=…     (financeAdmin)
+```
+
+Monthly collected-payment totals — completed JUPEB payments bucketed by
+`paid_at` (falling back to `created_at`). Current + previous calendar
+year, Jan–Dec. `year` defaults to the current year; `session_id`
+optionally scopes to one session's registrations.
+
+`res 200`
+```json
+{
+  "data": {
+    "year": 2026,
+    "session_id": null,
+    "series": [
+      { "key": "current", "year": 2026,
+        "points": [ { "month": 1, "amount": 1500000, "count": 30 }, ..., { "month": 12, "amount": 0, "count": 0 } ] },
+      { "key": "previous", "year": 2025, "points": [ ... ] }
+    ]
+  }
+}
+```
+
+### Institution fee records
+
+```
+GET /finance/analytics/institution-fee-records?session_id=…&page=1&limit=20&q=     (financeAdmin)
+```
+
+Paginated table — one row per institution in the session, projected and
+collected side by side. `session_id` required; `q` filters by
+institution name or code.
+
+`res 200` (paginated envelope)
+```json
+{
+  "data": [
+    {
+      "institution_id": "uuid",
+      "institution_name": "University of Lagos",
+      "institution_code": "UNILAG",
+      "number_of_candidates": 120,
+      "is_new_affiliate": false,
+      "projected": { "affiliation_fee": 250000, "exam_fee": 6000000, "total": 6250000 },
+      "collected": { "total": 4200000, "payment_count": 84 },
+      "pending": { "total": 900000 },
+      "outstanding": 2050000
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 117, "totalPages": 6 }
+}
+```
+`outstanding` = `projected.total − collected.total` (may be negative if
+an institution has overpaid).
+
+All three return `404` for an unknown `session_id`, `422` for a
+malformed one.
