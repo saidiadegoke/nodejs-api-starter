@@ -12,10 +12,41 @@ class FinanceController {
     }
   }
 
+  // Available payment methods for the checkout UI (configured + active).
+  static async listPaymentMethods(req, res) {
+    try {
+      const data = await financeService.listPaymentMethods();
+      return sendSuccess(res, data, 'Available payment methods');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async listMyPayments(req, res) {
     try {
       const { rows, page, limit, total } = await financeService.listMyPayments(req.user.user_id, req.query);
       return sendPaginated(res, rows, page, limit, total);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async feePreview(req, res) {
+    try {
+      const data = await financeService.getFeePreview(req.user.user_id, req.query);
+      return sendSuccess(res, data, 'Fee preview');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async paymentReceipt(req, res) {
+    try {
+      const data = await financeService.getPaymentReceipt(
+        req.params.paymentId,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Transaction receipt');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

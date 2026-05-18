@@ -1,5 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
+const pool = require('../../../db/pool');
 const PaymentMethod = require('../models/paymentMethod.model');
 const PaymentService = require('./payment.service');
 const sendEmail = require('../../../shared/utils/sendEmail');
@@ -27,6 +28,8 @@ class PaymentProcessorService {
         return this.paystackInitialize(paymentData, payment);
       case 'flutterwave':
         return this.flutterwaveInitialize(paymentData, payment);
+      case 'remita':
+        return this.remitaInitialize(paymentData, payment);
       case 'direct_transfer': {
         const BankAccount = require('../models/bankAccount.model');
         const bankAccount = await BankAccount.getActive();
@@ -102,6 +105,8 @@ class PaymentProcessorService {
         return this.paystackVerify(reference);
       case 'flutterwave':
         return this.flutterwaveVerify(reference, transactionId);
+      case 'remita':
+        return this.remitaVerify(reference);
       case 'direct_transfer':
         throw new Error('Direct transfer verification is manual');
       default:
@@ -115,6 +120,10 @@ class PaymentProcessorService {
         return this.paystackRefund(transactionRef, amount);
       case 'flutterwave':
         return this.flutterwaveRefund(transactionRef, amount);
+      case 'remita':
+        throw new Error('Refunds are not supported for Remita payments');
+      case 'direct_transfer':
+        throw new Error('Refunds are not supported for direct transfer payments');
       default:
         throw new Error('Unsupported processor for refund');
     }
@@ -128,6 +137,9 @@ class PaymentProcessorService {
     }
     if (processor === 'flutterwave') {
       return this.flutterwaveVerifyWebhook(payload, signature, paymentMethod.webhook_secret);
+    }
+    if (processor === 'remita') {
+      return this.remitaVerifyWebhook(payload, signature, paymentMethod.webhook_secret);
     }
     throw new Error('Unsupported processor for webhook');
   }
@@ -341,6 +353,171 @@ class PaymentProcessorService {
     if (!secret) return false;
     const hash = crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
     return hash === signature;
+  }
+
+  // ── Remita (RRR flow) ──────────────────────────────────────────────
+  //
+  // Credentials live on the payment_methods row:
+  //   api_public_key → merchantId   api_secret_key → apiKey
+  //   base_url       → Remita base  (default https://login.remita.net)
+  // The serviceTypeId comes from env REMITA_SERVICE_TYPE_ID.
+
+  /**
+   * Remita responses are sometimes wrapped in a `jsonp (...)` envelope
+   * rather than raw JSON — pull the `{...}` body out either way.
+   */
+  _parseRemitaPayload(data) {
+    if (data && typeof data === 'object') return data;
+    if (typeof data === 'string') {
+      const start = data.indexOf('{');
+      const end = data.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        try {
+          return JSON.parse(data.slice(start, end + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  _remitaConfig() {
+    return this.paymentMethodModel.findByCode('remita').then((pm) => {
+      const merchantId = pm && pm.api_public_key;
+      const apiKey = pm && pm.api_secret_key;
+      const serviceTypeId = process.env.REMITA_SERVICE_TYPE_ID;
+      const base = ((pm && pm.base_url) || 'https://login.remita.net').replace(/\/+$/, '');
+      if (!merchantId || !apiKey) throw new Error('Remita merchantId / apiKey not configured');
+      return { merchantId, apiKey, serviceTypeId, base, paymentMethod: pm };
+    });
+  }
+
+  async remitaInitialize(paymentData, payment) {
+    const { merchantId, apiKey, serviceTypeId, base } = await this._remitaConfig();
+    if (!serviceTypeId) throw new Error('REMITA_SERVICE_TYPE_ID env var is not set');
+
+    const email =
+      paymentData.email || paymentData.anonymous_donor_email || paymentData.donor_email;
+    if (!email) throw new Error('Email is required for Remita payment initialization');
+
+    const orderId = payment.payment_id;
+    const amount = Number(paymentData.amount).toFixed(2);
+    // RRR-init hash: SHA512(merchantId + serviceTypeId + orderId + amount + apiKey).
+    const initHash = crypto
+      .createHash('sha512')
+      .update(`${merchantId}${serviceTypeId}${orderId}${amount}${apiKey}`)
+      .digest('hex');
+
+    const body = {
+      serviceTypeId,
+      amount,
+      orderId,
+      payerName:
+        paymentData.first_name || paymentData.anonymous_donor_first_name || 'Customer',
+      payerEmail: email,
+      payerPhone: paymentData.phone || paymentData.anonymous_donor_phone || '',
+      description: paymentData.purpose || `Payment ${orderId}`,
+      responseurl: paymentData.redirect_url || '',
+    };
+
+    const response = await axios.post(
+      `${base}/remita/exapp/api/v1/send/api/echannelsvc/merchant/api/payment/init`,
+      body,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `remitaConsumerKey=${merchantId},remitaConsumerToken=${initHash}`,
+        },
+      }
+    );
+
+    const data = this._parseRemitaPayload(response.data);
+    const rrr = data && (data.RRR || data.rrr);
+    if (!rrr) {
+      throw new Error((data && data.status) || 'Failed to generate Remita RRR');
+    }
+
+    // Persist the RRR — verification is keyed by RRR, so the payment must
+    // be findable by it later.
+    try {
+      await pool.query(
+        `UPDATE payments SET transaction_ref = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [rrr, payment.id]
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[PaymentProcessor] Could not persist Remita RRR:', e && e.message);
+    }
+
+    // RRR-bearing hosted page — covers card / USSD and also lets the
+    // payer walk into any bank branch and pay the RRR ("pay at bank").
+    const paymentLink =
+      `${base}/remita/ecomm/finalize.reg?merchantId=${merchantId}` +
+      `&rrr=${rrr}&hash=${initHash}` +
+      `&responseurl=${encodeURIComponent(paymentData.redirect_url || '')}`;
+
+    return {
+      success: true,
+      rrr,
+      reference: rrr,
+      authorization_url: paymentLink,
+      payment_link: paymentLink,
+      payment,
+    };
+  }
+
+  async remitaVerify(reference) {
+    const { merchantId, apiKey, base } = await this._remitaConfig();
+    const rrr = reference; // for Remita the reference IS the RRR
+    // Status hash: SHA512(rrr + apiKey + merchantId).
+    const statusHash = crypto
+      .createHash('sha512')
+      .update(`${rrr}${apiKey}${merchantId}`)
+      .digest('hex');
+
+    const response = await axios.get(
+      `${base}/remita/exapp/api/v1/send/api/echannelsvc/${merchantId}/${rrr}/${statusHash}/status.reg`,
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+    const data = this._parseRemitaPayload(response.data) || {};
+    // Remita status '00' = payment received/settled.
+    const paid = String(data.status) === '00';
+    return {
+      success: paid,
+      status: paid ? 'successful' : data.status || 'pending',
+      amount: data.amount != null ? Number(data.amount) : undefined,
+      reference: rrr,
+      gateway_ref: data.transactionId || data.orderId || rrr,
+      paid_at: data.paymentDate || null,
+      metadata: data,
+      message: data.message,
+    };
+  }
+
+  /**
+   * Remita doesn't HMAC-sign webhooks like Paystack/Flutterwave — its
+   * notification carries the RRR. When a `hash` is present we check it
+   * against SHA512(rrr + apiKey + merchantId); otherwise we accept and
+   * the webhook handler must re-confirm via remitaVerify(rrr).
+   */
+  async remitaVerifyWebhook(payload, signature, secret) {
+    try {
+      const body = typeof payload === 'string' ? JSON.parse(payload) : payload || {};
+      const rrr = body.rrr || body.RRR;
+      if (!rrr) return false;
+      if (body.hash) {
+        const { merchantId, apiKey } = await this._remitaConfig();
+        const expected = crypto
+          .createHash('sha512')
+          .update(`${rrr}${apiKey}${merchantId}`)
+          .digest('hex');
+        return expected === body.hash;
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

@@ -2265,46 +2265,227 @@ requirement on the student's registration.
 
 ### Payment / checkout
 
-- `POST /finance/me/checkout` — start a registration-fee payment.
-- `GET /finance/me/payments` — the student's own payment history.
+The "Make Payment" flow has three catalogs the UI reads, then a
+checkout call, then a receipt:
+
+- `GET /finance/payment-methods` — *how money moves* (Paystack, Remita, …).
+- `GET /finance/payment-items` — *what is being paid for* (Affiliation Fee, Examination).
+- `GET /finance/payment-structures` — *full vs partial*.
+- `GET /finance/me/fee-preview` — outstanding balance before checkout.
+- `POST /finance/me/checkout` — start a payment.
+- `GET /finance/me/payments` — the student's payment history.
+- `GET /finance/me/payments/{id}/receipt` — one transaction's receipt.
+
+#### Catalogs
+
+```
+GET /finance/payment-methods       (any authenticated user)
+GET /finance/payment-items         (any authenticated user)
+GET /finance/payment-structures    (any authenticated user)
+```
+
+`payment-methods` returns only methods an admin has **configured and
+activated** — a `gateway` method with no API secret key is treated as
+not configured and omitted. No secrets are ever returned. Each method
+carries a `group` so the UI can render the three "Make Payment" cards
+without hard-coding a code→card mapping:
+
+| `group` | Card | Methods |
+|---|---|---|
+| `bank_transfer` | Bank Transfer | `direct_transfer` |
+| `online` | Online Payment (card / USSD) | `paystack`, `flutterwave` |
+| `pay_at_bank` | Pay at Bank (generate teller) | `remita` |
+
+```json
+{ "data": [
+  { "code": "direct_transfer", "group": "bank_transfer", "type": "manual", "...": "..." },
+  { "code": "paystack", "group": "online", "type": "gateway", "...": "..." },
+  { "code": "remita", "group": "pay_at_bank", "type": "gateway", "...": "..." }
+] }
+```
+
+`payment-items` / `payment-structures` return the active rows of the
+admin-managed catalog (migration 017). The checkout dropdowns render
+exactly these lists.
+
+`res 200` (payment-items)
+```json
+{
+  "data": [
+    { "id": "uuid", "code": "affiliation_fee", "name": "Affiliation Fee",
+      "fee_source": "affiliation", "fixed_amount": null, "sort_order": 1 },
+    { "id": "uuid", "code": "examination_fee", "name": "Examination",
+      "fee_source": "examination", "fixed_amount": null, "sort_order": 2 }
+  ]
+}
+```
+
+`res 200` (payment-structures)
+```json
+{
+  "data": [
+    { "id": "uuid", "code": "full",    "name": "Full Payment",    "allows_partial": false },
+    { "id": "uuid", "code": "partial", "name": "Partial Payment",  "allows_partial": true }
+  ]
+}
+```
+
+`fee_source` tells the server how to price the item: `affiliation` →
+the session affiliation fee (new-affiliate rate for the institution's
+first session, existing rate after); `examination` → the session exam
+fee per candidate; `fixed` → the item's own `fixed_amount`.
+
+#### Fee preview
+
+```
+GET /finance/me/fee-preview?payment_item=…&registration_id=…     (student)
+```
+
+Pre-checkout quote — what the student owes *before* committing. Powers
+the "Amount to pay" figure on the "Make Payment" screens and lets the
+client validate a partial-payment entry. Both query params are
+optional: omit `payment_item` to preview **every** active item; omit
+`registration_id` to use the caller's latest claimed registration.
+
+`res 200`
+```json
+{
+  "data": {
+    "registration_id": "uuid",
+    "session_id": "uuid",
+    "currency": "NGN",
+    "items": [
+      { "payment_item": { "id": "uuid", "code": "examination_fee", "name": "Examination" },
+        "full_fee": 250000, "already_paid": 100000, "outstanding": 150000, "fully_paid": false }
+    ]
+  }
+}
+```
+
+`outstanding` is what a **full** payment would charge, and the ceiling
+for a **partial** one. `fully_paid: true` ⇒ the item needs no further
+payment.
+
+#### Start a checkout
 
 `POST /finance/me/checkout` body:
 ```json
 {
+  "payment_method": "remita",
+  "payment_item": "examination_fee",
+  "payment_structure": "partial",
   "amount": 50000,
   "currency": "NGN",
-  "payment_method": "paystack",
+  "description": "Q2 2026 Payment",
   "registration_id": "uuid",
   "redirect_url": "https://app.example.com/payments/callback"
 }
 ```
 
-- `payment_method` is **required** — one of `paystack`, `flutterwave`,
-  `direct_transfer`. The checkout initializes that gateway directly.
-- `paystack` / `flutterwave` need an email on the student's account
-  (→ `422` if absent). `redirect_url` is the gateway callback; it
-  defaults to `FRONTEND_URL/payments/callback` when omitted.
-- `registration_id` is optional — defaults to the caller's latest
-  claimed registration.
+- `payment_method` — `paystack` | `flutterwave` | `remita` |
+  `direct_transfer`; must be active per `GET /finance/payment-methods`.
+- `payment_item` / `payment_structure` — a catalog **id or code**
+  (required). Online methods need an email on the account.
+- `amount` — for a **partial** structure, any amount `> 0` up to the
+  outstanding balance. For a **full** structure it's optional and, if
+  sent, must equal the outstanding balance (the server uses the balance
+  either way).
+- `description` — free text shown on the receipt; defaults to the
+  item name.
+- `registration_id` defaults to the caller's latest claimed registration.
+
+The server computes the item's full fee, subtracts completed payments
+for that item, and validates `amount` against the **outstanding
+balance**. Multiple partial payments are allowed until the item is
+cleared.
 
 `res 201`
 ```json
 {
   "data": {
     "payment": { "payment_id": "PAY_…", "amount": 50000, "currency": "NGN", "status": "pending" },
-    "payment_method": "paystack",
-    "payment_link": "https://checkout.paystack.com/…",
+    "payment_method": "remita",
+    "payment_item": { "id": "uuid", "code": "examination_fee", "name": "Examination" },
+    "payment_structure": { "id": "uuid", "code": "partial", "name": "Partial Payment" },
+    "amount": 50000,
+    "full_fee": 250000,
+    "outstanding_before": 200000,
+    "outstanding_after": 150000,
+    "payment_link": "https://login.remita.net/remita/ecomm/finalize.reg?merchantId=…&rrr=…",
     "bank_account": null
   }
 }
 ```
 
-- `payment_link` — the gateway checkout URL for `paystack` /
-  `flutterwave`; `null` for `direct_transfer`.
-- `bank_account` — populated for `direct_transfer` (the student is also
-  emailed transfer instructions); `null` otherwise.
-- `409` if an unpaid payment already exists for the registration;
-  `422` for a closed/archived session or a fee/amount mismatch.
+- `payment_link` — gateway checkout URL for `paystack` / `flutterwave` /
+  `remita`; `null` for `direct_transfer`.
+- `bank_account` — populated for `direct_transfer` (transfer
+  instructions are also emailed); `null` otherwise.
+- `404` for an unknown/inactive item, structure, or method.
+- `409` if the item is already fully paid, or an unpaid payment already
+  exists for the registration.
+- `422` for a closed/archived session, or an `amount` over the
+  outstanding balance (partial) / not equal to it (full).
+
+**Remita (RRR).** `payment_method: "remita"` generates a Remita
+Retrieval Reference — the `payment_link` carries it, and the same RRR
+can be paid online (card/USSD) **or** at any bank branch ("pay at
+bank"). Credentials live on the `remita` `payment_methods` row
+(`api_public_key` = merchantId, `api_secret_key` = apiKey, `base_url` =
+Remita base); the `serviceTypeId` comes from the
+`REMITA_SERVICE_TYPE_ID` env var. Remita seeds **inactive** — an admin
+configures the credentials and activates it before it appears at
+checkout.
+
+#### Transaction receipt
+
+```
+GET /finance/me/payments/{paymentId}/receipt     (payment owner)
+```
+
+`paymentId` accepts the payment UUID or the `PAY_…` reference.
+
+`res 200`
+```json
+{
+  "data": {
+    "transaction_id": "PAY_…",
+    "amount": 50000,
+    "currency": "NGN",
+    "status": "completed",
+    "jupeb_projection": "paid",
+    "payment_method": "remita",
+    "payment_item": { "code": "affiliation_fee", "name": "Affiliation Fee" },
+    "payment_structure": { "code": "partial", "name": "Partial Payment" },
+    "description": "Q1 2026 Payment",
+    "institution": {
+      "id": "uuid", "name": "University Of Lagos",
+      "address": "123, Aboderin Street, Ikeja Lagos State",
+      "phone": "+2348176345276", "email": "registry@unilag.edu.ng"
+    },
+    "registration_id": "uuid",
+    "date": "2026-03-01T10:00:00.000Z"
+  }
+}
+```
+
+#### Admin: payment catalog CRUD
+
+Manage the catalogs (registrar / financial_admin / admin / super_admin):
+
+```
+GET    /finance/admin/payment-items            POST   /finance/admin/payment-items
+PATCH  /finance/admin/payment-items/{id}        DELETE /finance/admin/payment-items/{id}
+GET    /finance/admin/payment-structures        POST   /finance/admin/payment-structures
+PATCH  /finance/admin/payment-structures/{id}   DELETE /finance/admin/payment-structures/{id}
+```
+
+`POST /finance/admin/payment-items` body:
+`{ code, name, description?, fee_source, fixed_amount?, sort_order? }` —
+`fee_source` is `affiliation` | `examination` | `fixed`; `fixed_amount`
+is required when `fee_source` is `fixed`. `DELETE` is a soft-delete.
+Structure bodies take `{ code, name, description?, allows_partial?,
+sort_order? }`.
 
 ---
 

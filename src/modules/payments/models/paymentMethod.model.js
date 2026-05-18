@@ -62,6 +62,24 @@ class PaymentMethod {
     return result.rows;
   }
 
+  /**
+   * Payment methods to offer at checkout: active, and — for `gateway`
+   * methods — actually configured with an API secret key. A gateway
+   * with no credentials can't collect money, so it isn't "available".
+   * Returns safe fields only — never the api keys / webhook secret.
+   */
+  async getAvailableForCheckout() {
+    const result = await pool.query(
+      `SELECT code, name, display_name, description, type, icon_url,
+              supported_currencies, processing_fee, processing_fee_type
+       FROM payment_methods
+       WHERE is_active = true
+         AND (type <> 'gateway' OR (api_secret_key IS NOT NULL AND api_secret_key <> ''))
+       ORDER BY name`
+    );
+    return result.rows;
+  }
+
   async findAll(options = {}) {
     const { limit = 50, offset = 0, is_active, type } = options;
     const values = [];
