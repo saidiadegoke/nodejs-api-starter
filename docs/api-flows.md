@@ -1522,7 +1522,7 @@ NIN row is `pending`, NIN-derived fields fall back to the cached
 ```json
 {
   "data": {
-    "candidate": { "id": "uuid", "full_name": "Adebayo Salami",
+    "candidate": { "id": "uuid", "title": "Mr", "full_name": "Adebayo Salami",
                    "provisional_candidate_code": "270010001", "photo_url": null, "status": "claimed" },
     "basic_information": { "date_of_birth": "1999-01-01", "gender": "male",
                            "residential_address": "...", "state_of_origin": "Ondo State",
@@ -2098,7 +2098,14 @@ max 100) for pagination and return a
 
 | Endpoint | Tab on the portal | `q` matches against | Other filters |
 |---|---|---|---|
-| `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` (`approved`/`pending`/`rejected`), `status`, `university_id`, `session_id` |
+| `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` / `status`, `university_id`, `session_id` |
+
+**Status vs bucket.** Each row carries both the raw `status` (e.g.
+`code_issued`, `pending_documents`, `approved`) **and** a coarse
+`bucket` — `pending` \| `approved` \| `rejected` \| `withdrawn` —
+translated from it (`pending` = any non-terminal status). Filter by
+either: `?bucket=pending` or `?status=pending` apply the bucket
+grouping; `?status=code_issued` (a raw status) does an exact match.
 | `GET /catalog/universities` | Institutions | `code`, `name`, `short_name` | `status` |
 | `GET /catalog/subjects` | Subjects | `code`, `name`, `description` | `status` |
 | `GET /catalog/subject-combinations` | Subject Combinations | `code`, `title` | `status`, `university_id` |
@@ -2210,8 +2217,10 @@ endpoint below is gated by the `jupebStudent` auth middleware — pass
 - `GET /registration/me/profile` — full bio + contact + NoK composite
   (same shape as the `register-with-code` preview).
 - `PATCH /registration/me/profile` — bio-data edit (M.2). Edits go to the
-  `profiles` table. NIN-derived fields are immutable when a verified NIN
-  payload is present.
+  `profiles` table. Editable: `title` (honorific — Mr/Mrs/Dr/…),
+  `residential_address`, `state_of_origin`, `lga`, `place_of_birth`,
+  `phone`, `email`. NIN-derived fields (name, DOB, gender) are immutable
+  when a verified NIN payload is present.
 - `PATCH /registration/me/academic-intake` — academic intake fields.
 - `POST /registration/me/confirm-subjects` — confirm subject combination
   (the "Confirm Subject Combinations" modal).

@@ -59,6 +59,18 @@ async function assertComboForUniversity(subjectCombinationId, universityId) {
 }
 
 /**
+ * Translate a raw registration status into the coarse bucket the
+ * frontend filters / displays by. The raw `status` is always kept
+ * alongside this on responses.
+ */
+function statusBucket(status) {
+  if (status === 'approved') return 'approved';
+  if (status === 'rejected') return 'rejected';
+  if (status === 'withdrawn') return 'withdrawn';
+  return 'pending';
+}
+
+/**
  * Shape an enriched institution-list row for the dashboard. Joins are done
  * in the model query; here we just project to a compact response shape.
  */
@@ -98,6 +110,7 @@ function enrichListRow(row) {
     provisional_candidate_code: row.provisional_candidate_code,
     jupeb_candidate_number: row.jupeb_candidate_number,
     status: row.status,
+    bucket: statusBucket(row.status),
     sittings_count: row.sittings_count,
     result_types: row.result_types,
     claimed_at: row.claimed_at,
@@ -997,7 +1010,7 @@ class RegistrationService {
     const displays = await loadDisplayObjects(reg);
     const nin_verification = await loadNinVerificationSummary(reg);
     const userRow = await pool.query(
-      `SELECT u.email, u.phone, p.first_name, p.last_name, p.display_name,
+      `SELECT u.email, u.phone, p.title, p.first_name, p.last_name, p.display_name,
               p.date_of_birth, p.gender, p.profile_photo_url,
               p.residential_address, p.state_of_origin, p.lga, p.place_of_birth
        FROM users u
@@ -1032,6 +1045,7 @@ class RegistrationService {
     return {
       candidate: {
         id: reg.id,
+        title: u.title || null,
         full_name: fullName,
         provisional_candidate_code: reg.provisional_candidate_code,
         jupeb_candidate_number: reg.jupeb_candidate_number,
@@ -1099,6 +1113,8 @@ class RegistrationService {
     }
 
     const editable = {
+      // `title` is a free-text honorific — not NIN-derived, freely editable.
+      title: body.title !== undefined ? String(body.title || '').trim() : undefined,
       residential_address:
         body.residential_address !== undefined ? String(body.residential_address || '').trim() : undefined,
       state_of_origin:

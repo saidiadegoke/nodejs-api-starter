@@ -174,27 +174,22 @@ class RegistrationModel {
       where.push(`r.session_id = $${idx++}`);
       values.push(session_id);
     }
-    if (status) {
+    // Status filtering. `bucket` — or a `status` that is itself a bucket
+    // word — filters by the coarse pending / approved / rejected /
+    // withdrawn grouping; any other `status` is an exact raw-status match.
+    // `pending` is "not yet decided" — every status that isn't terminal.
+    const BUCKET_WORDS = ['pending', 'approved', 'rejected', 'withdrawn'];
+    const bucketFilter = bucket || (BUCKET_WORDS.includes(status) ? status : null);
+    const rawStatus = bucketFilter ? null : status;
+    if (rawStatus) {
       where.push(`r.status = $${idx++}`);
-      values.push(status);
+      values.push(rawStatus);
     }
-    if (bucket) {
-      const map = {
-        approved: ['approved'],
-        rejected: ['rejected'],
-        pending: [
-          'code_issued',
-          'claimed',
-          'pending_student_confirm',
-          'pending_documents',
-          'pending_institution_review',
-        ],
-      };
-      const list = map[bucket];
-      if (list && list.length) {
-        where.push(`r.status = ANY($${idx++}::varchar[])`);
-        values.push(list);
-      }
+    if (bucketFilter === 'pending') {
+      where.push(`r.status NOT IN ('approved', 'rejected', 'withdrawn')`);
+    } else if (bucketFilter) {
+      where.push(`r.status = $${idx++}`);
+      values.push(bucketFilter);
     }
     if (q) {
       const term = `%${String(q).trim()}%`;
