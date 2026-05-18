@@ -78,6 +78,12 @@ function publicVerifyResponse(row) {
   if (row.status === 'pending') {
     out.retry_after = row.retry_after;
     out.last_error_code = row.last_error_code;
+    // Surface the upstream message verbatim — operators need to see e.g.
+    // "Your Identity balance is empty. Top up at /dashboard/identity/plans."
+    // instead of the generic "provider unavailable" we used to send.
+    if (row.error_payload && (row.error_payload.message || row.error_payload.error_message)) {
+      out.error_message = row.error_payload.message || row.error_payload.error_message;
+    }
   }
   if (row.status === 'failed' && row.error_payload && Object.keys(row.error_payload).length) {
     out.error = row.error_payload;
@@ -96,7 +102,7 @@ function pickIntake(input) {
 }
 
 class IdentityService {
-  async verifyNin({ nin, idempotency_key, intake_payload }, userId) {
+  async verifyNin({ nin, idempotency_key, intake_payload, provider: providerOverride, force_fresh }, userId) {
     const normalized = normalizeNin(nin);
     if (normalized.length !== 11) {
       throw httpError(422, 'NIN must be exactly 11 digits');
@@ -105,6 +111,9 @@ class IdentityService {
     const last4 = ninLast4(normalized);
     const idemKey = idempotency_key ? String(idempotency_key).trim() : null;
     const intake = pickIntake(intake_payload);
+    const adapterOpts = {};
+    if (providerOverride) adapterOpts.provider = String(providerOverride);
+    if (force_fresh) adapterOpts.force_fresh = true;
 
     if (idemKey) {
       const existing = await ninVerificationModel.findByIdempotencyKey(idemKey);
@@ -127,7 +136,7 @@ class IdentityService {
     }
 
     const provider = ninAdapter.getProvider();
-    const adapterResult = await ninAdapter.verifyNin(normalized);
+    const adapterResult = await ninAdapter.verifyNin(normalized, adapterOpts);
 
     if (adapterResult.outcome === 'unavailable') {
       const seconds = adapterResult.retry_after_seconds || 300;
@@ -140,6 +149,10 @@ class IdentityService {
         intake_payload: intake,
         retry_after,
         last_error_code: adapterResult.error_code || 'provider_unavailable',
+        error_payload: {
+          code: adapterResult.error_code || 'provider_unavailable',
+          message: adapterResult.error_message || null,
+        },
         requested_by: userId,
       });
       return publicVerifyResponse(row);
@@ -252,6 +265,10 @@ class IdentityService {
     const row = await ninVerificationModel.incrementAttempt(verificationId, {
       retry_after,
       last_error_code: adapterResult.error_code || 'provider_unavailable',
+      error_payload: {
+        code: adapterResult.error_code || 'provider_unavailable',
+        message: adapterResult.error_message || null,
+      },
     });
     return publicVerifyResponse(row || existing);
   }

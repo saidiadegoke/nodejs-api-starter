@@ -75,9 +75,18 @@ paths:
         resolving to them — only matric works. Admins / registrars /
         institution_admins bypass the lockdown.
 
+        **Re-entry exception.** The lockdown is automatically released
+        while the candidate has an in-progress registration without a
+        matric yet (status code_issued / claimed / pending_*). This
+        re-opens email / phone / code login when a returning student
+        picks up a fresh code in a new session.
+
         **Response carries a `registration` block** when the user has any
         JUPEB registration, including a `next_step` hint the mobile client
-        can route on without a follow-up call.
+        can route on without a follow-up call. When the student has rows
+        in multiple sessions, the embedded `registration` is the one in
+        the currently-open session (falling back to the most recently
+        updated row if no open session matches).
       tags: [Auth]
       security: []
       requestBody:

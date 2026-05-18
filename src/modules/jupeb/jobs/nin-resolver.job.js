@@ -53,6 +53,10 @@ async function resolveOne(row) {
   await ninVerificationModel.incrementAttempt(row.id, {
     retry_after: nextRetryAfter(row.attempt_count + 1),
     last_error_code: adapterResult.error_code || 'provider_unavailable',
+    error_payload: {
+      code: adapterResult.error_code || 'provider_unavailable',
+      message: adapterResult.error_message || null,
+    },
   });
   return 'pending';
 }

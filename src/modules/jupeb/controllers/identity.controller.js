@@ -10,12 +10,18 @@ class IdentityController {
           nin: req.body.nin,
           idempotency_key: req.body.idempotency_key,
           intake_payload: req.body.intake_payload,
+          // Pass-through to SpeedySMS (the underlying gateway): `provider:
+          // 'mock'` switches to their free test pool (10 sample NINs,
+          // 00000000001..00000000010); `force_fresh: true` bypasses their
+          // cache. Ignored when our env's provider is `mock`.
+          provider: req.body.provider,
+          force_fresh: req.body.force_fresh,
         },
         req.user.user_id
       );
       let message = 'NIN verified';
       if (data.status === 'failed') message = 'NIN verification failed';
-      else if (data.status === 'pending') message = 'NIN verification pending — provider unavailable';
+      else if (data.status === 'pending') message = data.error_message || 'NIN verification pending — provider unavailable';
       return sendSuccess(res, data, message, 200);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -30,7 +36,7 @@ class IdentityController {
       );
       let message = 'NIN verified';
       if (data.status === 'failed') message = 'NIN verification failed';
-      else if (data.status === 'pending') message = 'NIN verification still pending';
+      else if (data.status === 'pending') message = data.error_message || 'NIN verification still pending';
       return sendSuccess(res, data, message, 200);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

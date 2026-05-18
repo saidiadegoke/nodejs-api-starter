@@ -30,6 +30,8 @@ class Payment {
       notes,
       internal_notes,
       registration_id,
+      payment_item_id,
+      payment_structure_id,
     } = data;
 
     const result = await pool.query(
@@ -38,11 +40,12 @@ class Payment {
         transaction_ref, processor_response, user_id,
         anonymous_donor_first_name, anonymous_donor_last_name, anonymous_donor_email, anonymous_donor_phone,
         campaign_id, subscription_id, purpose, metadata, user_agent, ip_address,
-        source, is_recurring, recurring_interval, notes, internal_notes, registration_id
+        source, is_recurring, recurring_interval, notes, internal_notes, registration_id,
+        payment_item_id, payment_structure_id
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,
         $12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::inet,
-        $22,$23,$24,$25,$26,$27
+        $22,$23,$24,$25,$26,$27,$28,$29
       ) RETURNING *`,
       [
         payment_id,
@@ -72,6 +75,8 @@ class Payment {
         notes || null,
         internal_notes || null,
         registration_id || null,
+        payment_item_id || null,
+        payment_structure_id || null,
       ]
     );
     return result.rows[0];

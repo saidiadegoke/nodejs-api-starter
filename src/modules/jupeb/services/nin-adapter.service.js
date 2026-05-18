@@ -40,13 +40,16 @@ function getProvider() {
  *   retry_after_seconds?: number,
  * }>}
  */
-async function verifyNin(normalizedNin) {
+async function verifyNin(normalizedNin, opts = {}) {
   if (process.env.JUPEB_NIN_FORCE_UNAVAILABLE === '1') {
     const u = unavailable();
     return { ...u, ok: false };
   }
   const provider = registry.get(getProvider());
-  const result = await provider.verifyNin(normalizedNin);
+  // Per-request overrides (e.g. `provider: 'mock'` to hit SpeedySMS's free
+  // test pool, `force_fresh: true` to bypass their cache). The mock adapter
+  // ignores these; the speedysms adapter forwards them to the upstream POST.
+  const result = await provider.verifyNin(normalizedNin, opts);
   return { ...result, ok: result.outcome === 'verified' };
 }
 

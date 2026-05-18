@@ -55,7 +55,13 @@ class AuthController {
   }
 
   /**
-   * M.3 — Register with institution code (single-shot signup for figma `log in 11`)
+   * Preview the candidate behind a code without claiming it. Powers the
+   * figma `log in 11` → `log in 12` transition: code entry returns the
+   * student-information payload for the verify-info screen. The code
+   * stays in `code_issued`; only `completeRegistration` invalidates it.
+   *
+   * Accepts the code on either the body (POST) or query string (GET),
+   * so the same handler covers both verbs.
    */
   static async registerWithCode(req, res) {
     try {
@@ -63,7 +69,30 @@ class AuthController {
       if (req.body && (req.body.website || req.body.url || req.body.homepage)) {
         return sendError(res, 'Registration failed. Please try again later.', BAD_REQUEST);
       }
-      const result = await AuthService.registerWithCode(req.body);
+      const code = (req.body && req.body.code) || (req.query && req.query.code);
+      const result = await AuthService.previewByCode(code);
+      return sendSuccess(res, result, 'Code preview', OK);
+    } catch (error) {
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code
+        ? { error_code: error.error_code, ...(error.details || {}) }
+        : (error.details || null);
+      return sendError(res, error.message, status, details);
+    }
+  }
+
+  /**
+   * Complete the registration wizard. Takes the code + password (set on
+   * the Bio Data Update step) plus any editable bio overrides, mints
+   * the user account, and atomically claims the registration. This is
+   * the call that invalidates the code as used.
+   */
+  static async completeRegistration(req, res) {
+    try {
+      if (req.body && (req.body.website || req.body.url || req.body.homepage)) {
+        return sendError(res, 'Registration failed. Please try again later.', BAD_REQUEST);
+      }
+      const result = await AuthService.completeRegistration(req.body);
       return sendSuccess(res, result, 'Registration successful', CREATED);
     } catch (error) {
       const status = error.status || BAD_REQUEST;
@@ -78,31 +107,40 @@ class AuthController {
    * Public code-status lookup (M.9 — figma `log in 11` pre-validation).
    *
    * Tells the mobile / web app, given a code typed by the student:
-   *   1. Is the code valid and still claimable? → show "create account"
+   *   1. Is the code valid and still claimable? → show "create account",
+   *      with the full candidate preview (mirrors /auth/register-with-code)
+   *      so the verify-info screen can render without a second round-trip.
    *   2. Has it already been used to create an account? → show "log in"
    *      (with the account's masked email/phone so the client can
-   *      prefill the identifier field)
-   *   3. Is it expired / unknown? → show error
+   *      prefill the identifier field).
+   *   3. Is it expired / unknown? → show error.
    *
-   * Response shape:
+   * Response shape (claimable):
    *   {
-   *     valid: boolean,         // can this code still be used to claim?
-   *     error_code?: string,    // present when valid === false
-   *     expires_at?: ISO,
-   *     university?: { id, name, short_name },
-   *     account?: {             // present when error_code === 'code_already_claimed'
-   *       exists: true,
-   *       active: boolean,      // users.status === 'active'
-   *       email_masked: string|null,
-   *       phone_masked: string|null,
-   *       email_verified: boolean,
-   *       phone_verified: boolean,
-   *       can_login: boolean,   // true ⇔ active === true
-   *     }
+   *     valid: true,
+   *     expires_at: ISO|null,
+   *     university: { id, name, short_name },
+   *     candidate: { registration_id, full_name, jupeb_reg_no, provisional_candidate_code, photo_url, status },
+   *     basic_information: {
+   *       date_of_birth, gender,
+   *       residential_address,
+   *       country: { id, name }|null,
+   *       state_of_origin: { id, name, code }|null,
+   *       lga: { id, name }|null,
+   *       place_of_birth,
+   *     },
+   *     contact_information: { email, phone },
+   *     next_of_kin: { name, contact_no, ... }|null,
+   *     subject_combination: { id, code, title }|null,
+   *     session: { id, academic_year, year_short }|null,
    *   }
    *
-   * Public endpoint — no auth required. Account identifiers are masked
-   * so the response can't be used for enumeration.
+   * Response shape (not claimable): same as before — { valid:false, error_code, ... }.
+   *
+   * Public endpoint — no auth required. Account identifiers are masked so
+   * the response can't be used for enumeration. Candidate preview is only
+   * returned for claimable codes (post-claim, the masked-account block
+   * carries everything the log-in UI needs).
    */
   static async codeStatus(req, res) {
     try {
@@ -113,6 +151,7 @@ class AuthController {
         });
       }
       const pool = require('../../../db/pool');
+      const GeoModel = require('../../../shared/models/geo.model');
       // JOIN users too so a single round-trip carries everything we need
       // to decide between "claim" and "log in" UIs on the client.
       const result = await pool.query(
@@ -178,11 +217,48 @@ class AuthController {
         return sendSuccess(res, out);
       }
 
-      // Claimable.
+      // Claimable — assemble the full candidate preview. previewByCode
+      // already does the heavy lifting (NIN intake + display-object
+      // resolution); we add the geo id resolution + jupeb_reg_no on top.
+      const preview = await AuthService.previewByCode(code);
+      const geo = await GeoModel.resolveBundle({
+        country: 'Nigeria',
+        stateOfOrigin: preview.basic_information && preview.basic_information.state_of_origin,
+        lga: preview.basic_information && preview.basic_information.lga,
+      });
+
+      const regExtra = await pool.query(
+        `SELECT jupeb_candidate_number FROM jupeb_registrations WHERE id = $1`,
+        [row.id]
+      );
+
+      // Prefer the dedicated jupeb_next_of_kin row (student-captured /
+      // institution-edited); fall back to whatever NIN returned.
+      const NextOfKinModel = require('../../jupeb/models/next-of-kin.model');
+      const nokRow = await NextOfKinModel.findActiveByRegistration(row.id);
+      const nextOfKin = AuthController._normalizeNextOfKin(nokRow, preview.next_of_kin);
+
       return sendSuccess(res, {
         valid: true,
         expires_at: row.institution_code_expires_at,
         university,
+        candidate: {
+          ...preview.candidate,
+          jupeb_reg_no:
+            (regExtra.rows[0] && regExtra.rows[0].jupeb_candidate_number) ||
+            preview.candidate.provisional_candidate_code ||
+            null,
+        },
+        basic_information: {
+          ...preview.basic_information,
+          country: geo.country,
+          state_of_origin: geo.state_of_origin,
+          lga: geo.lga,
+        },
+        contact_information: preview.contact_information,
+        next_of_kin: nextOfKin,
+        subject_combination: preview.subject_combination,
+        session: preview.session,
       });
     } catch (err) {
       return sendError(res, err.message, 500);
@@ -419,6 +495,41 @@ class AuthController {
   }
 
   /**
+   * Resolve next-of-kin for the codeStatus preview. Prefers the
+   * jupeb_next_of_kin row (student- or institution-captured); falls back
+   * to whatever the NIN provider returned. Returns a normalized shape
+   * regardless of source so the client renders one way.
+   *
+   * Output: { name, relationship, contact_no, phone, email, address, source } | null
+   */
+  static _normalizeNextOfKin(jupebRow, ninPayload) {
+    if (jupebRow) {
+      return {
+        name: jupebRow.name || null,
+        relationship: jupebRow.relationship || null,
+        contact_no: jupebRow.phone || jupebRow.email || null,
+        phone: jupebRow.phone || null,
+        email: jupebRow.email || null,
+        address: jupebRow.address || null,
+        source: jupebRow.source || 'student',
+      };
+    }
+    if (ninPayload && typeof ninPayload === 'object') {
+      const phone = ninPayload.phone || ninPayload.contact || ninPayload.contact_no || null;
+      return {
+        name: ninPayload.name || ninPayload.full_name || null,
+        relationship: ninPayload.relationship || null,
+        contact_no: phone || ninPayload.email || null,
+        phone,
+        email: ninPayload.email || null,
+        address: ninPayload.address || null,
+        source: 'nin',
+      };
+    }
+    return null;
+  }
+
+  /**
    * Mask an email or phone for safe response logging. Email: keep first
    * 2 + last 1 of local part. Phone: keep first 4 + last 2.
    */
@@ -437,205 +548,120 @@ class AuthController {
   /**
    * Forgot password
    */
+  /**
+   * Initiate a password reset.
+   *
+   * Body:
+   *   identifier: email | phone (required)
+   *   delivery?: 'token' | 'otp'        (default 'token' — existing email-link flow)
+   *   channel?:  'email' | 'sms' | 'both'  (only used when delivery='otp';
+   *              default: env OTP_CHANNEL, else email when present, else sms)
+   *
+   * Response (always shape-stable to avoid leaking account existence):
+   *   { reset_initiated: true, delivery, channels[], expires_at, masked_recipient }
+   *
+   * Back-compat note: legacy callers that didn't pass `delivery` get the
+   * existing email-link flow. The response also still includes a `method`
+   * field (= delivery) for older clients.
+   */
   static async forgotPassword(req, res) {
     try {
-      const { identifier } = req.body;
-      
+      const { identifier, delivery, channel } = req.body || {};
       if (!identifier) {
         return sendError(res, 'Email or phone is required', BAD_REQUEST);
       }
-      
-      const AuthModel = require('../models/auth.model');
-      const pool = require('../../../db/pool');
-      const crypto = require('crypto');
-      const sendEmail = require('../../../shared/utils/sendEmail');
-      
-      const user = await AuthModel.findByIdentifier(identifier);
-      if (!user) {
-        // Don't reveal if user exists - still return success
-        return sendSuccess(res, { 
-          reset_initiated: true,
-          method: 'email',
-          masked_recipient: '***@***.***'
-        }, 'If an account with that email exists, we have sent a password reset link', OK);
-      }
-      
-      // Generate reset token
-      const resetToken = crypto.randomBytes(32).toString('hex');
-      const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-      
-      // Store reset token in database
-      await pool.query(
-        `INSERT INTO password_resets (user_id, token_hash, email, phone, method, ip_address, user_agent, expires_at) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          user.id, 
-          tokenHash, 
-          user.email, 
-          user.phone, 
-          user.email ? 'email' : 'sms',
-          req.ip,
-          req.headers['user-agent'],
-          expiresAt
-        ]
-      );
-      
-      // Send email if user has email
-      if (user.email) {
-        const appName = process.env.APP_NAME || 'our app';
-        const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-        const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+      const requestedDelivery = delivery === 'otp' ? 'otp' : 'token';
+      const passwordReset = require('../services/password-reset.service');
 
-        setImmediate(() => {
-          sendEmail({
-            to: user.email,
-            subject: `Reset Your ${appName} Password`,
-            templateFile: 'forgot-password.html',
-            placeholders: [
-              user.first_name || user.display_name || 'User',
-              resetUrl,
-              resetUrl,
-              user.email
-            ]
-          }).catch((err) => {
-            // eslint-disable-next-line no-console
-            console.warn('[auth.forgotPassword] reset email failed:', err && err.message);
-          });
-        });
-        
-        const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
-        sendSuccess(res, { 
-          reset_initiated: true,
-          method: 'email',
-          masked_recipient: maskedEmail
-        }, 'Password reset link sent to your email', OK);
-      } else {
-        // For phone-only users, would send SMS in production
-        const maskedPhone = user.phone.replace(/(\+\d{3})(.*)(\d{4})/, '$1***$3');
-        sendSuccess(res, { 
-          reset_initiated: true,
-          method: 'sms',
-          masked_recipient: maskedPhone
-        }, 'Password reset code sent to your phone', OK);
+      const user = await passwordReset.loadUserForReset(identifier);
+      if (!user) {
+        // Account-enumeration guard: same shape whether the user exists.
+        const fakeChannels = requestedDelivery === 'otp'
+          ? (channel ? [channel] : ['email'])
+          : ['email'];
+        const ttlMs = (Number(process.env.OTP_TTL_MINUTES) || 15) * 60 * 1000;
+        return sendSuccess(
+          res,
+          {
+            reset_initiated: true,
+            delivery: requestedDelivery,
+            method: requestedDelivery, // legacy alias
+            channels: fakeChannels,
+            expires_at: new Date(Date.now() + ttlMs).toISOString(),
+            masked_recipient: AuthController._maskRecipient(identifier),
+          },
+          requestedDelivery === 'otp'
+            ? 'If an account exists, a reset code has been sent'
+            : 'If an account exists, a reset link has been sent',
+          OK
+        );
       }
+
+      const issued = await passwordReset.issueReset({
+        user,
+        delivery: requestedDelivery,
+        channel,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      return sendSuccess(
+        res,
+        {
+          reset_initiated: true,
+          delivery: issued.delivery,
+          method: issued.delivery, // legacy alias
+          channels: issued.channels,
+          expires_at: issued.expires_at,
+          masked_recipient: issued.masked_recipient,
+          ...(issued.token ? { token: issued.token } : {}),
+          ...(issued.code ? { code: issued.code } : {}),
+        },
+        issued.delivery === 'otp'
+          ? 'Password reset code sent'
+          : 'Password reset link sent',
+        OK
+      );
     } catch (error) {
-      console.error('Forgot password error:', error);
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
   }
 
   /**
-   * Reset password
+   * Reset password. Accepts either redemption shape:
+   *
+   *   Token (link) flow:  { token, new_password }
+   *   OTP flow:           { identifier, code, new_password }
+   *
+   * Token flow is unchanged; OTP flow is the new mobile-friendly variant
+   * powered by migration 015 + password-reset.service. Both produce the
+   * same success email.
    */
   static async resetPassword(req, res) {
     try {
-      const { token, new_password } = req.body;
+      const { token, code, identifier, new_password } = req.body || {};
+      const passwordReset = require('../services/password-reset.service');
       const sendEmail = require('../../../shared/utils/sendEmail');
-      
-      if (!token || !new_password) {
-        return sendError(res, 'Reset token and new password are required', BAD_REQUEST);
+
+      if (!new_password) {
+        return sendError(res, 'New password is required', BAD_REQUEST);
       }
-      
-      const bcrypt = require('bcryptjs');
-      const crypto = require('crypto');
-      const pool = require('../../../db/pool');
-      
-      // Hash the provided token to match against stored hash
-      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-      
-      // console.log('[Password Reset] Token provided:', token);
-      // console.log('[Password Reset] Token hash:', tokenHash);
-      
-      // First, check if token exists (without expiration/used checks for debugging)
-      const allTokensResult = await pool.query(
-        `SELECT pr.*, u.id as user_id, u.email, p.first_name,
-                pr.expires_at > NOW() as is_valid,
-                pr.used_at IS NULL as is_unused
-         FROM password_resets pr 
-         JOIN users u ON pr.user_id = u.id 
-         LEFT JOIN profiles p ON u.id = p.user_id
-         WHERE pr.token_hash = $1`,
-        [tokenHash]
-      );
-      
-      if (allTokensResult.rows.length === 0) {
-        console.log('[Password Reset] No token found with hash:', tokenHash);
-        // Check if there are any recent password resets for debugging
-        const recentResets = await pool.query(
-          `SELECT pr.id, pr.token_hash, pr.expires_at, pr.used_at, pr.created_at, u.email
-           FROM password_resets pr
-           JOIN users u ON pr.user_id = u.id
-           ORDER BY pr.created_at DESC
-           LIMIT 5`
-        );
-        console.log('[Password Reset] Recent password resets:', recentResets.rows.map(r => ({
-          id: r.id,
-          email: r.email,
-          expires_at: r.expires_at,
-          used_at: r.used_at,
-          created_at: r.created_at,
-          is_expired: r.expires_at < new Date(),
-          is_used: r.used_at !== null
-        })));
-        return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
+      if (!token && !code) {
+        return sendError(res, 'Either `token` or `code` (with identifier) is required', BAD_REQUEST);
       }
-      
-      const tokenRecord = allTokensResult.rows[0];
-      console.log('[Password Reset] Token found:', {
-        id: tokenRecord.id,
-        email: tokenRecord.email,
-        expires_at: tokenRecord.expires_at,
-        used_at: tokenRecord.used_at,
-        is_valid: tokenRecord.is_valid,
-        is_unused: tokenRecord.is_unused,
-        now: new Date()
-      });
-      
-      // Check if token exists and is valid
-      const result = await pool.query(
-        `SELECT pr.*, u.id as user_id, u.email, p.first_name 
-         FROM password_resets pr 
-         JOIN users u ON pr.user_id = u.id 
-         LEFT JOIN profiles p ON u.id = p.user_id
-         WHERE pr.token_hash = $1 AND pr.expires_at > NOW() AND pr.used_at IS NULL`,
-        [tokenHash]
-      );
-      
-      const resetRecord = result.rows[0];
-      
-      if (!resetRecord) {
-        if (tokenRecord.used_at) {
-          console.log('[Password Reset] Token has already been used');
-          return sendError(res, 'This password reset link has already been used. Please request a new one.', BAD_REQUEST);
-        }
-        if (tokenRecord.expires_at <= new Date()) {
-          console.log('[Password Reset] Token has expired. Expires at:', tokenRecord.expires_at, 'Now:', new Date());
-          return sendError(res, 'This password reset link has expired. Please request a new one.', BAD_REQUEST);
-        }
-        return sendError(res, 'Invalid or expired reset token/code', BAD_REQUEST);
+
+      let result;
+      if (token) {
+        result = await passwordReset.redeemToken(token, new_password);
+      } else {
+        result = await passwordReset.redeemOtp({ identifier, code, newPassword: new_password });
       }
-      
-      // Validate new password
-      if (new_password.length < 8) {
-        return sendError(res, 'Password must be at least 8 characters', UNPROCESSABLE_ENTITY);
-      }
-      
-      // Update password
-      const newHash = await bcrypt.hash(new_password, 10);
-      await pool.query(
-        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-        [newHash, resetRecord.user_id]
-      );
-      
-      // Mark reset token as used
-      await pool.query(
-        'UPDATE password_resets SET used_at = NOW() WHERE id = $1',
-        [resetRecord.id]
-      );
-      
-      // Send password reset success email asynchronously
-      if (resetRecord.email) {
+
+      // Best-effort success email (token flow already had this; we
+      // surface it for the OTP flow too so the user gets a confirmation).
+      if (result.email) {
         const appName = process.env.APP_NAME || 'our app';
         const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const loginUrl = `${frontendUrl}/auth/login`;
@@ -644,32 +670,32 @@ class AuthController {
           month: 'long',
           day: 'numeric',
           hour: '2-digit',
-          minute: '2-digit'
+          minute: '2-digit',
         });
-
         setImmediate(() => {
           sendEmail({
-            to: resetRecord.email,
+            to: result.email,
             subject: `Password Reset Successful - ${appName}`,
             templateFile: 'password-reset-success.html',
             placeholders: [
-              resetRecord.first_name || 'User',
+              result.first_name || 'User',
               resetDate,
               loginUrl,
               resetDate,
-              resetRecord.email
-            ]
+              result.email,
+            ],
           }).catch((err) => {
             // eslint-disable-next-line no-console
             console.warn('[auth.resetPassword] success email failed:', err && err.message);
           });
         });
       }
-      
-      sendSuccess(res, null, 'Password reset successfully', OK);
+
+      return sendSuccess(res, null, 'Password reset successfully', OK);
     } catch (error) {
-      console.error('Reset password error:', error);
-      sendError(res, error.message, BAD_REQUEST);
+      const status = error.status || BAD_REQUEST;
+      const details = error.error_code ? { error_code: error.error_code } : null;
+      return sendError(res, error.message, status, details);
     }
   }
 

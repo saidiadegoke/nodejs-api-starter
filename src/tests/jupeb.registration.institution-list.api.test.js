@@ -96,7 +96,7 @@ describe('Institution registrations — list / stats / by-university / export (0
     expect(created.status).toBe(201);
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: created.body.data.institution_issued_code,
         password: 'Strong@Password1',

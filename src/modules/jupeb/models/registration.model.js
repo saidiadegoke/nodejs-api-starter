@@ -23,8 +23,20 @@ class RegistrationModel {
   }
 
   async findLatestForUser(userId) {
+    // Prefer a registration in the currently-open session — that's the
+    // one the student is actively working on. If they don't have one in
+    // the open session (or no session is open), fall back to whichever
+    // row was touched most recently. Tie-breaker on created_at keeps
+    // the ordering deterministic when nothing has been updated yet.
     const result = await pool.query(
-      `SELECT * FROM jupeb_registrations WHERE user_id = $1 ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+      `SELECT r.*
+         FROM jupeb_registrations r
+         LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
+        WHERE r.user_id = $1
+        ORDER BY (s.status = 'open') DESC,
+                 r.updated_at DESC NULLS LAST,
+                 r.created_at DESC
+        LIMIT 1`,
       [userId]
     );
     return result.rows[0] || null;
@@ -162,27 +174,22 @@ class RegistrationModel {
       where.push(`r.session_id = $${idx++}`);
       values.push(session_id);
     }
-    if (status) {
+    // Status filtering. `bucket` — or a `status` that is itself a bucket
+    // word — filters by the coarse pending / approved / rejected /
+    // withdrawn grouping; any other `status` is an exact raw-status match.
+    // `pending` is "not yet decided" — every status that isn't terminal.
+    const BUCKET_WORDS = ['pending', 'approved', 'rejected', 'withdrawn'];
+    const bucketFilter = bucket || (BUCKET_WORDS.includes(status) ? status : null);
+    const rawStatus = bucketFilter ? null : status;
+    if (rawStatus) {
       where.push(`r.status = $${idx++}`);
-      values.push(status);
+      values.push(rawStatus);
     }
-    if (bucket) {
-      const map = {
-        approved: ['approved'],
-        rejected: ['rejected'],
-        pending: [
-          'code_issued',
-          'claimed',
-          'pending_student_confirm',
-          'pending_documents',
-          'pending_institution_review',
-        ],
-      };
-      const list = map[bucket];
-      if (list && list.length) {
-        where.push(`r.status = ANY($${idx++}::varchar[])`);
-        values.push(list);
-      }
+    if (bucketFilter === 'pending') {
+      where.push(`r.status NOT IN ('approved', 'rejected', 'withdrawn')`);
+    } else if (bucketFilter) {
+      where.push(`r.status = $${idx++}`);
+      values.push(bucketFilter);
     }
     if (q) {
       const term = `%${String(q).trim()}%`;

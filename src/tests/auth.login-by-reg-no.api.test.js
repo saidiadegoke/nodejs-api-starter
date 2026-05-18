@@ -1,7 +1,7 @@
 /**
  * Login by registration / matric number.
  *
- * After a student claims a code via /auth/register-with-code, they end
+ * After a student claims a code via /auth/complete-registration, they end
  * up with three identifiers usable on /auth/login:
  *   1. email (always)
  *   2. phone (when supplied at signup)
@@ -81,7 +81,7 @@ describe('Login by reg/matric number', () => {
     const phone = `+234801${String(stamp).slice(-7)}`;
     const password = 'Strong@Password1';
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password, email, phone,
@@ -238,6 +238,93 @@ describe('Login by reg/matric number', () => {
       expect(r.status).toBe(200);
       expect(r.body.data.user.email).toBe(email);
       expect(r.body.data.registration.jupeb_candidate_number).toBe(matric);
+    });
+  });
+
+  describe('matric lockdown — re-entry exception for a new session', () => {
+    // Seeds a user who:
+    //   - has a matric in session A (lockdown would normally apply)
+    //   - has an in-progress (claimed) registration in a NEW session B
+    // → the in-progress no-matric row should release the lockdown so the
+    //   user can log in by email / phone again to keep working on B.
+    async function seedReEntryStudent(tag) {
+      const seedA = await seedFixturesAndStudent(tag);
+      const matric = `26${String(Math.floor(Math.random() * 900) + 100)}${String(Date.now()).slice(-5)}`;
+      await pool.query(
+        `UPDATE jupeb_registrations SET jupeb_candidate_number = $2 WHERE id = $1`,
+        [seedA.registrationId, matric]
+      );
+
+      // Find the (just-created) user_id by email so we can attach a 2nd reg.
+      const userRow = await pool.query(
+        `SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+        [seedA.email]
+      );
+      const userId = userRow.rows[0].id;
+
+      // Build a 2nd session + uni + combo and attach a fresh claimed
+      // registration to the same user — no matric yet.
+      const adminToken = await getAdminToken();
+      const uniB = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: nextJupebTestUniversityCode(`${tag}B`), name: `${tag}B U`, jupeb_prefix: nextJupebTestPrefix() });
+      const scB = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: nextJupebTestUniversityCode(`${tag}SCB`), title: `${tag}B Combo`, subjects: ['M','P','C'], is_global: true });
+      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      const sessB = await request(app)
+        .post('/sessions')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          academic_year: academicYear, year_short: yearShort,
+          opens_at: new Date(`${y1}-01-01T00:00:00Z`).toISOString(),
+          closes_at: new Date(`${y1}-12-01T00:00:00Z`).toISOString(),
+        });
+      await closeAllOpenJupebSessions(adminToken);
+      await request(app).post(`/sessions/${sessB.body.data.id}/open`).set('Authorization', `Bearer ${adminToken}`);
+
+      // Insert the in-progress registration directly — we only need the
+      // row to exist with status=claimed and a null candidate number.
+      const reg = await pool.query(
+        `INSERT INTO jupeb_registrations
+            (session_id, university_id, user_id, subject_combination_id,
+             provisional_serial, provisional_candidate_code, status, claimed_at)
+         VALUES ($1, $2, $3, $4, 1, $5, 'claimed', CURRENT_TIMESTAMP)
+         RETURNING *`,
+        [
+          sessB.body.data.id,
+          uniB.body.data.id,
+          userId,
+          scB.body.data.id,
+          // Unique provisional code to satisfy any downstream queries.
+          `${yearShort}${uniB.body.data.jupeb_prefix}${String(Math.floor(1000 + Math.random() * 8999))}`,
+        ]
+      );
+      return { ...seedA, matric, sessionBRegId: reg.rows[0].id };
+    }
+
+    it('login by email is ALLOWED again when an in-progress no-matric reg exists', async () => {
+      if (!registrationMigrated) return;
+      const { email, password } = await seedReEntryStudent('RE1');
+      const r = await request(app).post('/auth/login').send({ identifier: email, password });
+      expect(r.status).toBe(200);
+      expect(r.body.data.access_token).toBeDefined();
+    });
+
+    it('login by phone is ALLOWED again during re-entry', async () => {
+      if (!registrationMigrated) return;
+      const { phone, password } = await seedReEntryStudent('RE2');
+      const r = await request(app).post('/auth/login').send({ identifier: phone, password });
+      expect(r.status).toBe(200);
+    });
+
+    it('matric still resolves during re-entry (both identifiers work)', async () => {
+      if (!registrationMigrated) return;
+      const { matric, password } = await seedReEntryStudent('RE3');
+      const r = await request(app).post('/auth/login').send({ identifier: matric, password });
+      expect(r.status).toBe(200);
     });
   });
 });

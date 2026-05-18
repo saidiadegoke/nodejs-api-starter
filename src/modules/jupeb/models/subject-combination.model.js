@@ -31,6 +31,53 @@ class SubjectCombinationModel {
     return r.rows;
   }
 
+  /**
+   * Batch variant of listItems — fetches the ordered subject items for
+   * many combinations in one query. Returns a Map<combinationId, items[]>.
+   * Avoids the N+1 of calling listItems per row when embedding into a list.
+   */
+  async listItemsForCombinations(combinationIds) {
+    const map = new Map();
+    if (!combinationIds || !combinationIds.length) return map;
+    const r = await pool.query(
+      `SELECT i.combination_id, i.id, i.position, i.subject_id, s.code, s.name
+       FROM jupeb_subject_combination_items i
+       JOIN jupeb_subjects s ON s.id = i.subject_id
+       WHERE i.combination_id = ANY($1::uuid[])
+       ORDER BY i.combination_id, i.position ASC`,
+      [combinationIds]
+    );
+    for (const row of r.rows) {
+      if (!map.has(row.combination_id)) map.set(row.combination_id, []);
+      map.get(row.combination_id).push({
+        id: row.id,
+        position: row.position,
+        subject_id: row.subject_id,
+        code: row.code,
+        name: row.name,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Non-withdrawn registration counts ("candidates enrolled") for many
+   * combinations in one query. Returns a Map<combinationId, count>.
+   */
+  async enrolledCountsForCombinations(combinationIds) {
+    const map = new Map();
+    if (!combinationIds || !combinationIds.length) return map;
+    const r = await pool.query(
+      `SELECT subject_combination_id, COUNT(*)::int AS c
+       FROM jupeb_registrations
+       WHERE subject_combination_id = ANY($1::uuid[]) AND status <> 'withdrawn'
+       GROUP BY subject_combination_id`,
+      [combinationIds]
+    );
+    for (const row of r.rows) map.set(row.subject_combination_id, row.c);
+    return map;
+  }
+
   async replaceItems(combinationId, subjectIdsInOrder) {
     await pool.query(`DELETE FROM jupeb_subject_combination_items WHERE combination_id = $1`, [combinationId]);
     for (let i = 0; i < subjectIdsInOrder.length; i += 1) {

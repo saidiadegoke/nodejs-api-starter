@@ -21,15 +21,29 @@ Roles below are abbreviated:
 
 ## 0. Auth: create user, log in, manage tokens
 
-Every other flow starts here. The auth module supports email-or-phone
-identifiers, JWT access + refresh tokens, OTP phone verification, and
-password reset.
+The auth module supports email-or-phone identifiers, JWT access +
+refresh tokens, OTP phone verification, and password reset.
 
-### Create user (sign-up)
+**Where signup happens:**
+- **Admin-created users** → `POST /auth/register` (gated, below) or
+  `POST /admin/users` (creates the user *and* binds them to a
+  university — see §0b).
+- **Public student signup** → the institution-code flow:
+  `GET /auth/code-status` → `POST /auth/register-with-code` /
+  `POST /auth/complete-registration`. These stay public.
+- **Social login** → `/auth/{provider}` OAuth routes.
+
+### Create user (admin)
 
 ```
-POST /auth/register     (public)
+POST /auth/register     (authenticated — requires the `users.create` permission)
 ```
+
+> **Access change.** `/auth/register` is no longer public. It now
+> requires a logged-in caller holding the `users.create` permission
+> (granted to `admin` / `super_admin` via roles; can also be granted
+> to any other user directly through `user_permissions`). Public
+> student onboarding moved to the institution-code flow listed above.
 
 `req`
 ```json
@@ -66,6 +80,7 @@ Validation:
   }
 }
 ```
+- `401` if unauthenticated; `403` if the caller lacks `users.create`.
 - `409` on duplicate email/phone.
 - `422` on validation failures (each issue under `errors[]`).
 
@@ -158,6 +173,15 @@ assigned to any of their registrations, **email / phone / reg-code
 stop resolving** to them — only matric works. Admins, registrars,
 program-directors and institution-admins bypass the lockdown.
 
+**Re-entry exception.** The lockdown is automatically released as
+soon as the candidate has an *in-progress* registration without a
+matric yet (status one of `code_issued`, `claimed`,
+`pending_student_confirm`, `pending_documents`, or
+`pending_institution_review`). This lets a returning student claim
+a new session's code via email/phone after a prior session
+finalized — the prior matric still works too, so both identifiers
+resolve while a fresh registration is in flight.
+
 `res 200`
 ```json
 {
@@ -244,29 +268,72 @@ this session. Client should drop both tokens locally.
 
 ### Forgot password / reset
 
+A reset can be delivered two ways — pick per request:
+
+- **`token`** (default) — a long random token emailed as a clickable
+  reset link. The original/desktop flow.
+- **`otp`** — a 6-digit numeric code delivered by email and/or SMS.
+  Better for mobile, where typing a code beats round-tripping a link.
+
+Both are backed by the same `password_resets` table (discriminated by
+the `kind` column) and either can be used at any time.
+
 ```
 POST /auth/forgot-password     (public)
 ```
 
 `req`
 ```json
-{ "identifier": "candidate@example.com" }
+{ "identifier": "candidate@example.com", "delivery": "otp", "channel": "sms" }
 ```
 
-`res 200` — always returns success (does not leak account existence);
-when the identifier matches, a reset token is dispatched via email/SMS.
+- `identifier` — email or phone (required).
+- `delivery` — `token` (default) or `otp`.
+- `channel` — only used when `delivery: "otp"`: `email` | `sms` |
+  `both`. Defaults to env `OTP_CHANNEL`, else `email` when the user has
+  one, else `sms`.
+
+`res 200` — always success-shaped (does not leak account existence):
+```json
+{
+  "data": {
+    "reset_initiated": true,
+    "delivery": "otp",
+    "method": "otp",
+    "channels": ["sms"],
+    "expires_at": "2026-05-16T10:15:00.000Z",
+    "masked_recipient": "+234803***5678"
+  }
+}
+```
+`method` is a legacy alias for `delivery`. Token TTL is 15 min; OTP TTL
+is `OTP_TTL_MINUTES` (default 10).
 
 ```
 POST /auth/reset-password     (public)
 ```
 
-`req`
+Accepts **either** redemption shape:
+
+`req` — token (link) flow
 ```json
 { "token": "<reset-token>", "new_password": "Newpass123!" }
 ```
 
-`res 200` — password is rotated; existing refresh tokens are revoked,
-forcing re-login.
+`req` — OTP flow
+```json
+{ "identifier": "candidate@example.com", "code": "374921", "new_password": "Newpass123!" }
+```
+
+`res 200` — password is rotated; a `password-reset-success.html` email
+fires for both flows.
+
+Error shapes (carry `details.error_code`):
+- `400 invalid_or_expired_token` — token flow, bad/expired/used token
+- `400 invalid_or_expired_otp` — OTP flow, wrong code (`attempt_count` increments)
+- `410 otp_expired` / `otp_expired_or_missing` — no active code / past TTL
+- `429 too_many_attempts` — 5 wrong OTP attempts; the row is burned, request a fresh code
+- `422 weak_password` / `otp_invalid_format` — body validation
 
 ### Change password (logged-in)
 
@@ -329,7 +396,61 @@ GET /auth/code-status?code=ABC123     (public)
 
 The mobile / web client calls this when the student types their
 institution-issued code. The response tells the client which UI to
-show next:
+show next.
+
+**Claimable code** — `valid: true`. The response now carries the full
+candidate preview (same shape as `POST /auth/register-with-code`), so
+the verify-info screen renders without a second round-trip:
+
+```json
+{
+  "data": {
+    "valid": true,
+    "expires_at": "2026-09-30T23:59:59Z",
+    "university": { "id": "uuid", "name": "University of Lagos", "short_name": "UNILAG" },
+    "candidate": {
+      "registration_id": "uuid",
+      "full_name": "Adebayo Salami",
+      "jupeb_reg_no": "270010001",
+      "provisional_candidate_code": "270010001",
+      "photo_url": null,
+      "status": "code_issued"
+    },
+    "basic_information": {
+      "date_of_birth": "1999-01-01",
+      "gender": "male",
+      "residential_address": "12 Marina Road, Lagos",
+      "country": { "id": 1, "name": "Nigeria" },
+      "state_of_origin": { "id": 27, "name": "Ondo", "code": "OND" },
+      "lga": { "id": 412, "name": "Ondo West" },
+      "place_of_birth": "Lagos State"
+    },
+    "contact_information": { "email": "adesalam@example.com", "phone": "+2348000000000" },
+    "next_of_kin": {
+      "name": "Jane Johnson", "relationship": "Mother",
+      "contact_no": "+2348023456789", "phone": "+2348023456789",
+      "email": null, "address": null, "source": "nin"
+    },
+    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "..." },
+    "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" }
+  }
+}
+```
+
+- `country` / `state_of_origin` / `lga` are resolved to `{ id, name }`
+  references against the `countries` / `states` / `lgas` tables. When a
+  NIN-supplied name can't be matched, the field falls back to
+  `{ id: null, name: "<raw string>" }`.
+- `jupeb_reg_no` is the final `jupeb_candidate_number` once assigned,
+  otherwise the `provisional_candidate_code`.
+- `next_of_kin` prefers the `jupeb_next_of_kin` record when one exists
+  (`source: student | institution`), falling back to the NIN payload
+  (`source: nin`). `null` when neither is present.
+
+**Not-claimable code** — `valid: false` with an `error_code`. The
+candidate preview is omitted; for an already-claimed code an `account`
+block with masked identifiers is returned instead so the client can
+route to the log-in screen:
 
 ```json
 {
@@ -351,13 +472,13 @@ show next:
 }
 ```
 
-| State | `valid` | `error_code` | `account` | Client behaviour |
+| State | `valid` | `error_code` | Extra block | Client behaviour |
 |---|---|---|---|---|
 | Unknown code | `false` | `code_not_found` | — | "Invalid code" error |
 | Expired code | `false` | `code_expired` | — | "Expired — contact institution" |
-| Claimable | `true` | — | — | Route to **Create account** screen (`/auth/register-with-code`) |
-| Used, account active | `false` | `code_already_claimed` | populated | Route to **Log in** screen; prefill identifier with `email_masked` |
-| Used, account suspended | `false` | `code_already_claimed` | `active: false` | "Account disabled — contact support" |
+| Claimable | `true` | — | `candidate` + full preview | Route to **Create account** screen (`/auth/register-with-code`) |
+| Used, account active | `false` | `code_already_claimed` | `account` populated | Route to **Log in** screen; prefill identifier with `email_masked` |
+| Used, account suspended | `false` | `code_already_claimed` | `account.active: false` | "Account disabled — contact support" |
 
 Raw email / phone never leak — only masked values.
 
@@ -603,6 +724,108 @@ The `assigned_by` column is automatically set to the calling admin's
 user id for audit. Each call is transactional (replace) or per-row
 idempotent (add/remove).
 
+### Create a user + associate to a university
+
+```
+POST /admin/users     (authenticated — requires the `users.create` permission)
+```
+
+Creates a user **and** binds them to a JUPEB university in one atomic
+call. Use this instead of `POST /auth/register` when the new user
+belongs to an institution (registrar, program director, institution
+admin, student, …).
+
+`req`
+```json
+{
+  "email": "registrar@unilag.edu.ng",
+  "phone": "+2348000000000",
+  "password": "S3curePass!",
+  "first_name": "Adebayo",
+  "last_name": "Salami",
+  "role": "registrar",
+  "university_id": "uuid",
+  "is_primary": true,
+  "country_id": 566
+}
+```
+
+- At least one of `email` / `phone`; `password` ≥ 8; `first_name`,
+  `last_name`, `role`, `university_id` all required.
+- `role` — any of the system roles (`super_admin`, `admin`, `agent`,
+  `user`, `registrar`, `program_director`, `institution_admin`,
+  `financial_admin`, `student`).
+- `is_primary` — default `true`. The primary binding is mirrored onto
+  `profiles.jupeb_university_id` so existing institution-scope code
+  keeps working.
+
+`res 201`
+```json
+{
+  "success": true,
+  "message": "User created and associated with university",
+  "data": {
+    "user": { "user_id": "uuid", "email": "...", "phone": "...",
+              "first_name": "Adebayo", "last_name": "Salami",
+              "role": "registrar", "status": "active", "created_at": "..." },
+    "university": { "id": "uuid", "name": "University of Lagos", "short_name": "UNILAG" },
+    "binding": { "id": "uuid", "is_primary": true, "role": "registrar" }
+  }
+}
+```
+
+- `401` / `403` — unauthenticated / missing `users.create`.
+- `404` — `university_id` not found or inactive.
+- `409` — duplicate email/phone.
+- `422` — validation failures.
+
+**Association model.** Bindings live in the `user_universities` join
+table (many-to-many). A partial unique index enforces **one active
+primary university per user**; `profiles.jupeb_university_id` is kept
+as the denormalized primary pointer. To bind/clear a university for an
+*existing* user, use `PATCH /admin/users/{userId}/jupeb-university`
+(next).
+
+### Assign an institution to an existing user
+
+```
+PATCH /admin/users/{userId}/jupeb-university     (admin / super_admin / registrar)
+```
+
+Sets (or clears) a user's **primary** JUPEB institution. Use this when
+the user already exists but has no institution yet — e.g. created via
+`POST /auth/register`, or re-assigned to a different institution.
+
+`req`
+```json
+{ "jupeb_university_id": "uuid" }
+```
+- `jupeb_university_id` — the university to assign, or `null` to clear
+  the scope. The field must be present (omitting it → `422`).
+
+`res 200`
+```json
+{
+  "success": true,
+  "message": "JUPEB institution scope updated",
+  "data": { "user_id": "uuid", "jupeb_university_id": "uuid" }
+}
+```
+
+- `404` — user not found, or `jupeb_university_id` not found / inactive.
+- `422` — `userId` or `jupeb_university_id` is a malformed UUID, or the
+  body omits `jupeb_university_id`.
+
+**Stays in sync.** The write is transactional and updates **both**
+representations together:
+- `profiles.jupeb_university_id` — the denormalized primary pointer.
+- `user_universities` — the join-table source of truth. Assigning
+  upserts a primary binding (demoting any prior primary); passing
+  `null` soft-deletes the current primary binding.
+
+So `POST /admin/users` and this endpoint produce identical state — the
+join table never drifts from the denormalized pointer.
+
 ---
 
 ## 1. Generating a candidate number
@@ -720,7 +943,9 @@ the endpoint is a no-op for already-numbered rows.
   matric-lockdown rule.
 - From now on the student's **only valid login identifier** is the
   matric. Email / phone / provisional reg-code stop resolving via
-  `findByIdentifier` (see §0 Log in for the lockdown rule).
+  `findByIdentifier` (see §0 Log in for the lockdown rule, and for
+  the re-entry exception that re-opens email/phone login as soon as
+  the student picks up a fresh code in a new session).
 
 **Format note.** The DB `CHECK` on `jupeb_candidate_number` was
 relaxed in migration `012_jupeb_candidate_number_format.sql` from
@@ -1119,12 +1344,21 @@ subjects,is_global
 
 | Verb | Path | Notes |
 |---|---|---|
-| `GET` | `/catalog/subject-combinations/public` | **public** — supports `?university_id` |
-| `GET` | `/catalog/subject-combinations` | Paginated |
+| `GET` | `/catalog/subject-combinations/public` | **public** — supports `?university_id`; each row includes `subject_items[]` |
+| `GET` | `/catalog/subject-combinations` | Paginated; each row includes `subject_items[]` + `enrolled_count` |
 | `GET` | `/catalog/subject-combinations/{id}` | Includes `subject_items[]` |
 | `PATCH` | `/catalog/subject-combinations/{id}` | Sending `subjects` re-resolves and replaces the join rows in lockstep |
 | `POST` | `/catalog/subject-combinations/{id}/activate` | |
 | `POST` | `/catalog/subject-combinations/{id}/deactivate` | |
+
+Every read above resolves the combination's subjects via the
+`jupeb_subject_combination_items` join table into a `subject_items[]`
+array — `[{ id, position, subject_id, code, name }, …]` ordered by
+`position`. The paginated admin list additionally carries
+`enrolled_count`: the number of non-withdrawn registrations on that
+combination (the "Number of Candidates Enrolled" column). Both are
+batch-loaded — one query for all items, one for all counts — so the
+list stays a fixed 3 queries regardless of page size.
 
 ---
 
@@ -1288,7 +1522,7 @@ NIN row is `pending`, NIN-derived fields fall back to the cached
 ```json
 {
   "data": {
-    "candidate": { "id": "uuid", "full_name": "Adebayo Salami",
+    "candidate": { "id": "uuid", "title": "Mr", "full_name": "Adebayo Salami",
                    "provisional_candidate_code": "270010001", "photo_url": null, "status": "claimed" },
     "basic_information": { "date_of_birth": "1999-01-01", "gender": "male",
                            "residential_address": "...", "state_of_origin": "Ondo State",
@@ -1545,12 +1779,16 @@ program_director / institution_admin) and accept optional
 | Widget | Endpoint | Field(s) |
 |---|---|---|
 | KPI · Institutions Onboarded | `GET /dashboard/stat-cards` | `data.institutions_onboarded` |
+| KPI · Active / Inactive Institutions | `GET /dashboard/stat-cards` | `data.active_institutions`, `data.inactive_institutions` |
 | KPI · Total Candidates Registered | `GET /dashboard/stat-cards` | `data.total_registered` |
 | KPI · Candidates with Biometrics | `GET /dashboard/stat-cards` | `data.with_biometrics` |
 | KPI · Candidates without Biometrics | `GET /dashboard/stat-cards` | `data.without_biometrics` |
+| KPI · Total Subjects / Combinations / Inactive Subjects | `GET /dashboard/stat-cards` | `data.total_subjects`, `data.total_subject_combinations`, `data.inactive_subjects` |
 | KPI · Approved/Pending/Rejected counts | `GET /dashboard/students-status` | `approved`, `pending`, `rejected` |
-| Line · Registration Trends (current vs prior year) | `GET /dashboard/registration-trends?year=YYYY` | `series[].points[].count` |
+| Line · Registration Trends (current vs prior year) | `GET /dashboard/registration-trends?year=YYYY&session_id=…` | `series[].points[].count` |
+| Line · Institution Onboarding Trends | `GET /dashboard/institution-trends?year=YYYY` | `series[].points[].count` |
 | Bar · Subject Combination Enrollment (top N) | `GET /dashboard/subject-enrollment?session_id=…&limit=6` | `[{code, label, count}]` |
+| Donut · Subject Combination Enrollment distribution | `GET /dashboard/subject-combination-distribution?session_id=…` | `total`, `slices[].{code, title, count, pct}` |
 | Bar · Top Institutions (Registration Mgmt page) | `GET /registration/institution/overview/by-university?session_id=…&limit=12` | `[{university_id, university_name, registered_count}]` |
 | Donut · Institution Distribution by type | `GET /dashboard/institution-distribution` | `total`, `slices[].{type, count, pct}` |
 | Card · Registration Timeline (opens/now/closes) | `GET /dashboard/session-timeline?session_id=…` | `opens_at`, `closes_at`, `now`, `within_window`, cutoffs |
@@ -1568,19 +1806,33 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```jsonc
 {
-  "institutions_onboarded": { "value": 117, "delta_pct": null },
-  "total_registered":       { "value": 3671, "delta_pct": -0.03 },
-  "approved":               { "value": 2800, "delta_pct": 6.08 },
-  "pending":                { "value": 800,  "delta_pct": 1.50 },
-  "with_biometrics":        { "value": 3600, "delta_pct": 11.01 },
-  "without_biometrics":     { "value": 71,   "delta_pct": 11.01 },
+  "institutions_onboarded":     { "value": 121,  "delta_pct": null },
+  "active_institutions":        { "value": 117,  "delta_pct": null },
+  "inactive_institutions":      { "value": 4,    "delta_pct": null },
+  "total_registered":           { "value": 3671, "delta_pct": -0.03 },
+  "approved":                   { "value": 2800, "delta_pct": 6.08 },
+  "pending":                    { "value": 800,  "delta_pct": 1.50 },
+  "with_biometrics":            { "value": 3600, "delta_pct": 11.01 },
+  "without_biometrics":         { "value": 71,   "delta_pct": 11.01 },
+  "total_subjects":             { "value": 142,  "delta_pct": null },
+  "total_subject_combinations": { "value": 36,   "delta_pct": null },
+  "inactive_subjects":          { "value": 4,    "delta_pct": null },
   "compared_to": { "session_id": "uuid", "label": "2024/2025" }
 }
 ```
 
 `delta_pct` compares against the chronologically prior session by
-`opens_at`. `institutions_onboarded.delta_pct` is always `null` —
-universities aren't session-scoped, so there's no notion of prior.
+`opens_at`. The catalog-derived cards — the three `*_institutions`
+cards, `total_subjects`, `total_subject_combinations`,
+`inactive_subjects` — always have `delta_pct: null`: universities and
+subjects aren't session-scoped, so there's no prior to compare against.
+
+Card definitions (all exclude soft-deleted rows):
+- `institutions_onboarded` — **every** institution (active + inactive).
+- `active_institutions` / `inactive_institutions` — split by `status`.
+- `total_subjects` — every subject (active + inactive);
+  `inactive_subjects` is the inactive subset.
+- `total_subject_combinations` — every combination.
 
 ```bash
 # 2) Donut: institution distribution by type
@@ -1605,6 +1857,31 @@ tenth off). `unspecified` rolls up universities without
 `university_type` set.
 
 ```bash
+# 2b) Line: institution onboarding trends (Institution Mgmt screen)
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/institution-trends?year=2026" | jq '.data'
+```
+
+```jsonc
+{
+  "year": 2026,
+  "series": [
+    { "key": "current",  "year": 2026,
+      "points": [ { "month": 1, "count": 8 }, ..., { "month": 12, "count": 0 } ] },
+    { "key": "previous", "year": 2025,
+      "points": [ ... ] }
+  ]
+}
+```
+
+Counts universities by the calendar month of `created_at` —
+"institutions onboarded over time". `year` defaults to the current
+calendar year; both series are monthly Jan–Dec, `previous` is
+`year − 1`. Soft-deleted institutions are excluded; status (active /
+inactive) is **not** filtered — an institution counts as onboarded
+even after it's deactivated.
+
+```bash
 # 3) Line: registration trends, current + previous year
 curl -s -H "Authorization: Bearer $ADMIN" \
   "$BASE/dashboard/registration-trends?year=2026" | jq '.data'
@@ -1613,6 +1890,7 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 ```jsonc
 {
   "year": 2026,
+  "session": null,
   "series": [
     { "key": "current",  "year": 2026,
       "points": [ { "month": 1, "count": 200 }, ..., { "month": 12, "count": 0 } ] },
@@ -1621,6 +1899,53 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   ]
 }
 ```
+
+**Query params.** `year` is a plain calendar year (4 digits) — it
+filters `jupeb_registrations` by `EXTRACT(YEAR FROM created_at)`, *not*
+by a session's `academic_year`. Both series are monthly Jan–Dec; the
+`previous` series is `year − 1`.
+
+`session_id` (optional) switches to **per-session mode** — a single
+series spanning only the months inside that session's window
+(`opens_at → closes_at`):
+
+```bash
+# trends for one session — only the session's own months
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/registration-trends?session_id=$SESSION_ID" | jq '.data'
+```
+
+```jsonc
+{
+  "session": {
+    "id": "uuid",
+    "academic_year": "2026/2027",
+    "opens_at": "2026-09-01T00:00:00.000Z",
+    "closes_at": "2027-08-31T23:59:59.000Z"
+  },
+  "series": [
+    { "key": "current", "points": [
+      { "year": 2026, "month": 9,  "count": 120 },
+      { "year": 2026, "month": 10, "count": 340 },
+      { "...": "..." },
+      { "year": 2027, "month": 8,  "count": 12 }
+    ] }
+  ]
+}
+```
+
+Per-session mode differs from calendar-year mode:
+- **Points span only the session window.** Buckets run from the
+  `opens_at` month to the `closes_at` month, inclusive — a window that
+  crosses New Year just keeps going, so each point carries `year` *and*
+  `month` (not just `month`).
+- **One series, no `previous`.** The calendar-year comparison doesn't
+  apply to a session window.
+- **No top-level `year`.** The `year` query param is ignored when
+  `session_id` is supplied; the window is defined entirely by the
+  session.
+- `404` if `session_id` doesn't match a session; `422` if it's a
+  malformed UUID.
 
 ```bash
 # 4) Bar: subject combinations
@@ -1635,6 +1960,31 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   ...
 ]
 ```
+
+`label` is the combination `title`. `limit` caps the bar count
+(default 6, max 20); `session_id` / `university_id` scope the counts.
+
+```bash
+# 4b) Donut: subject combination enrollment distribution
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/subject-combination-distribution?session_id=$SESSION_ID" | jq '.data'
+```
+
+```jsonc
+{
+  "total": 3671,
+  "slices": [
+    { "subject_combination_id": "uuid", "code": "JUPEB SC-004", "title": "...", "count": 980, "pct": 26.7 },
+    { "subject_combination_id": "uuid", "code": "JUPEB SC-002", "title": "...", "count": 870, "pct": 23.7 },
+    { "...": "..." }
+  ]
+}
+```
+
+Same counting as `subject-enrollment`, but returns **every** combination
+with enrollments (no `limit`) plus percent shares — so `pct` sums to
+~100 for a true distribution. `session_id` / `university_id` scope the
+counts.
 
 ```bash
 # 5) Bar: top 12 institutions (Registration page)
@@ -1731,17 +2081,31 @@ Anonymous calls → `401`. Wrong role → `403`. Bad UUID → `422`.
 
 Every list page on the registrar / institution dashboards is backed
 by a paginated endpoint with the **same query-param vocabulary**.
-`q` is a case-insensitive `ILIKE '%…%'` substring match — what
-columns it searches depends on the entity. All endpoints also accept
-`page` (default 1) and `limit` (default 20, max 100) for pagination
-and return a `pagination: { page, limit, total, totalPages }`
-envelope alongside `data`.
+
+**The search parameter is `q`.** A case-insensitive `ILIKE '%…%'`
+substring match — what columns it searches depends on the entity.
+`search` and `query` are accepted as **aliases**: if you pass either
+(and not `q`), the server maps it onto `q`. So `?q=ada`,
+`?search=ada`, and `?query=ada` all behave identically. An explicit
+`q` takes precedence if more than one is supplied.
+
+All endpoints also accept `page` (default 1) and `limit` (default 20,
+max 100) for pagination and return a
+`pagination: { page, limit, total, totalPages }` envelope alongside
+`data`.
 
 ### Quick reference
 
 | Endpoint | Tab on the portal | `q` matches against | Other filters |
 |---|---|---|---|
-| `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` (`approved`/`pending`/`rejected`), `status`, `university_id`, `session_id` |
+| `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` / `status`, `university_id`, `session_id` |
+
+**Status vs bucket.** Each row carries both the raw `status` (e.g.
+`code_issued`, `pending_documents`, `approved`) **and** a coarse
+`bucket` — `pending` \| `approved` \| `rejected` \| `withdrawn` —
+translated from it (`pending` = any non-terminal status). Filter by
+either: `?bucket=pending` or `?status=pending` apply the bucket
+grouping; `?status=code_issued` (a raw status) does an exact match.
 | `GET /catalog/universities` | Institutions | `code`, `name`, `short_name` | `status` |
 | `GET /catalog/subjects` | Subjects | `code`, `name`, `description` | `status` |
 | `GET /catalog/subject-combinations` | Subject Combinations | `code`, `title` | `status`, `university_id` |
@@ -1774,6 +2138,38 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   "$BASE/sessions?q=2025/&status=closed" | jq '.data[].academic_year'
 ```
 
+#### Search param aliases — `q`, `search`, `query`
+
+The canonical param is `q`, but `search` and `query` are accepted as
+aliases. These three requests are **identical** — pick whichever your
+client already uses:
+
+```bash
+# all three return the same result set
+curl -s -H "Authorization: Bearer $ADMIN" "$BASE/catalog/universities?q=UNILAG"
+curl -s -H "Authorization: Bearer $ADMIN" "$BASE/catalog/universities?search=UNILAG"
+curl -s -H "Authorization: Bearer $ADMIN" "$BASE/catalog/universities?query=UNILAG"
+```
+
+The alias resolves the same way on every list endpoint, combined with
+any other filters:
+
+```bash
+# `search` alias + other filters — works exactly like `q`
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/registration/institution/registrations?search=ada&bucket=pending&limit=20" \
+  | jq '.data[].name'
+
+# `query` alias on the sessions list
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/sessions?query=2025/&status=closed" | jq '.data[].academic_year'
+```
+
+Resolution rule: an explicit `q` always wins; otherwise the server
+copies `search` (or, failing that, `query`) into `q` before the
+request reaches the handler. Passing `?q=ada&search=bob` searches for
+`ada`.
+
 ### Notes
 
 - **Search is always combinable with the other filters.** `q=ada&bucket=pending` returns
@@ -1782,7 +2178,11 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 - **Pagination `total` reflects the filtered count**, not the table total — the frontend
   pager should use it directly. `totalPages = ceil(total / limit)`.
 - **Trim and ignore empty `q`.** The server treats `q=""` / `q="   "` as "no filter"
-  so a client can keep the param in the URL when the search box is empty.
+  so a client can keep the param in the URL when the search box is empty. The same
+  applies to the `search` / `query` aliases — an empty alias is ignored, not copied.
+- **`search` / `query` are aliases for `q`** on every list endpoint (resolved by a
+  global middleware before routing). Use whichever your client prefers; an explicit
+  `q` takes precedence when more than one is supplied.
 - **All endpoints share the same auth gating** as their unfiltered counterparts
   (`/registration/institution/*` → instReg role set; `/catalog/*` and `/sessions` →
   admin / super_admin / registrar). Public read endpoints (`/catalog/*/public`)
@@ -1797,3 +2197,412 @@ curl -s -H "Authorization: Bearer $ADMIN" \
   `subject-combination.model.js` and `_where` on `session.model.js` — shared
   WHERE-builder used by `findAll*` and `count*` so the paginated `data` and the
   `pagination.total` never drift out of sync.
+
+---
+
+## 9. Post-claim student endpoint reference
+
+After `POST /auth/complete-registration` returns the access token, every
+endpoint below is gated by the `jupebStudent` auth middleware — pass
+`Authorization: Bearer <access_token>` from the claim response.
+
+### Status / current registration
+
+- `GET /registration/me/current` — current registration state.
+- `GET /registration/me/dashboard-access` — whether the student can enter
+  the post-submit dashboard.
+
+### Profile / bio data edit (figma `log in 13` and any later changes)
+
+- `GET /registration/me/profile` — full bio + contact + NoK composite
+  (same shape as the `register-with-code` preview).
+- `PATCH /registration/me/profile` — bio-data edit (M.2). Edits go to the
+  `profiles` table. Editable: `title` (honorific — Mr/Mrs/Dr/…),
+  `residential_address`, `state_of_origin`, `lga`, `place_of_birth`,
+  `phone`, `email`. NIN-derived fields (name, DOB, gender) are immutable
+  when a verified NIN payload is present.
+- `PATCH /registration/me/academic-intake` — academic intake fields.
+- `POST /registration/me/confirm-subjects` — confirm subject combination
+  (the "Confirm Subject Combinations" modal).
+
+### Next of kin
+
+- `GET /registration/me/next-of-kin` — current NoK.
+- `POST /registration/me/next-of-kin` — create.
+- `PUT /registration/me/next-of-kin` — replace.
+- `GET /registration/me/next-of-kin/history` — prior versions.
+
+### Document upload (figma `log in 14`)
+
+Document attachment is a two-step flow: upload raw bytes via the generic
+`/files` route to get a `file_id`, then link that `file_id` to a
+requirement on the student's registration.
+
+- `GET /submission/me/requirements` — which docs are required for this
+  session / institution.
+- `GET /submission/me/documents` — list student's uploaded docs.
+- `POST /submission/me/documents` — attach a doc (links a previously
+  uploaded `file_id` to a requirement).
+- `PATCH /submission/me/documents/:documentId` — replace / update metadata.
+- `GET /submission/me/documents/:documentId/download-url` — signed URL
+  to download / preview.
+- `POST /submission/me/validate-completeness` — server-side pre-submit
+  completeness check.
+
+### Result entries (WAEC / NECO grades selector at the bottom of `log in 14`)
+
+- `GET /submission/me/result-entries`
+- `POST /submission/me/result-entries` (upsert)
+
+### Identity / biometrics / photo
+
+- `POST /identity/biometrics` — capture.
+- `PUT /identity/biometrics/:captureId` — replace.
+- `DELETE /identity/biometrics/:captureId`
+- `GET /identity/registrations/:registrationId/biometrics`
+- `POST /identity/registrations/:registrationId/biometrics/skip`
+- `GET /identity/registrations/:registrationId/photo`
+
+### Submit + PDF
+
+- `GET /registration/me/submission-preview` — preview composite payload
+  before final submit.
+- `POST /registration/me/submit` — submit for institution review
+  (status → `pending_institution_review`).
+- `GET /registration/me/registration-form.pdf` — render the registration
+  PDF (only after submit).
+
+### Payment / checkout
+
+The "Make Payment" flow has three catalogs the UI reads, then a
+checkout call, then a receipt:
+
+- `GET /finance/payment-methods` — *how money moves* (Paystack, Remita, …).
+- `GET /finance/payment-items` — *what is being paid for* (Affiliation Fee, Examination).
+- `GET /finance/payment-structures` — *full vs partial*.
+- `GET /finance/me/fee-preview` — outstanding balance before checkout.
+- `POST /finance/me/checkout` — start a payment.
+- `GET /finance/me/payments` — the student's payment history.
+- `GET /finance/me/payments/{id}/receipt` — one transaction's receipt.
+
+#### Catalogs
+
+```
+GET /finance/payment-methods       (any authenticated user)
+GET /finance/payment-items         (any authenticated user)
+GET /finance/payment-structures    (any authenticated user)
+```
+
+`payment-methods` returns only methods an admin has **configured and
+activated** — a `gateway` method with no API secret key is treated as
+not configured and omitted. No secrets are ever returned. Each method
+carries a `group` so the UI can render the three "Make Payment" cards
+without hard-coding a code→card mapping:
+
+| `group` | Card | Methods |
+|---|---|---|
+| `bank_transfer` | Bank Transfer | `direct_transfer` |
+| `online` | Online Payment (card / USSD) | `paystack`, `flutterwave` |
+| `pay_at_bank` | Pay at Bank (generate teller) | `remita` |
+
+```json
+{ "data": [
+  { "code": "direct_transfer", "group": "bank_transfer", "type": "manual", "...": "..." },
+  { "code": "paystack", "group": "online", "type": "gateway", "...": "..." },
+  { "code": "remita", "group": "pay_at_bank", "type": "gateway", "...": "..." }
+] }
+```
+
+`payment-items` / `payment-structures` return the active rows of the
+admin-managed catalog (migration 017). The checkout dropdowns render
+exactly these lists.
+
+`res 200` (payment-items)
+```json
+{
+  "data": [
+    { "id": "uuid", "code": "affiliation_fee", "name": "Affiliation Fee",
+      "fee_source": "affiliation", "fixed_amount": null, "sort_order": 1 },
+    { "id": "uuid", "code": "examination_fee", "name": "Examination",
+      "fee_source": "examination", "fixed_amount": null, "sort_order": 2 }
+  ]
+}
+```
+
+`res 200` (payment-structures)
+```json
+{
+  "data": [
+    { "id": "uuid", "code": "full",    "name": "Full Payment",    "allows_partial": false },
+    { "id": "uuid", "code": "partial", "name": "Partial Payment",  "allows_partial": true }
+  ]
+}
+```
+
+`fee_source` tells the server how to price the item: `affiliation` →
+the session affiliation fee (new-affiliate rate for the institution's
+first session, existing rate after); `examination` → the session exam
+fee per candidate; `fixed` → the item's own `fixed_amount`.
+
+#### Fee preview
+
+```
+GET /finance/me/fee-preview?payment_item=…&registration_id=…     (student)
+```
+
+Pre-checkout quote — what the student owes *before* committing. Powers
+the "Amount to pay" figure on the "Make Payment" screens and lets the
+client validate a partial-payment entry. Both query params are
+optional: omit `payment_item` to preview **every** active item; omit
+`registration_id` to use the caller's latest claimed registration.
+
+`res 200`
+```json
+{
+  "data": {
+    "registration_id": "uuid",
+    "session_id": "uuid",
+    "currency": "NGN",
+    "items": [
+      { "payment_item": { "id": "uuid", "code": "examination_fee", "name": "Examination" },
+        "full_fee": 250000, "already_paid": 100000, "outstanding": 150000, "fully_paid": false }
+    ]
+  }
+}
+```
+
+`outstanding` is what a **full** payment would charge, and the ceiling
+for a **partial** one. `fully_paid: true` ⇒ the item needs no further
+payment.
+
+#### Start a checkout
+
+`POST /finance/me/checkout` body:
+```json
+{
+  "payment_method": "remita",
+  "payment_item": "examination_fee",
+  "payment_structure": "partial",
+  "amount": 50000,
+  "currency": "NGN",
+  "description": "Q2 2026 Payment",
+  "registration_id": "uuid",
+  "redirect_url": "https://app.example.com/payments/callback"
+}
+```
+
+- `payment_method` — `paystack` | `flutterwave` | `remita` |
+  `direct_transfer`; must be active per `GET /finance/payment-methods`.
+- `payment_item` / `payment_structure` — a catalog **id or code**
+  (required). Online methods need an email on the account.
+- `amount` — for a **partial** structure, any amount `> 0` up to the
+  outstanding balance. For a **full** structure it's optional and, if
+  sent, must equal the outstanding balance (the server uses the balance
+  either way).
+- `description` — free text shown on the receipt; defaults to the
+  item name.
+- `registration_id` defaults to the caller's latest claimed registration.
+
+The server computes the item's full fee, subtracts completed payments
+for that item, and validates `amount` against the **outstanding
+balance**. Multiple partial payments are allowed until the item is
+cleared.
+
+`res 201`
+```json
+{
+  "data": {
+    "payment": { "payment_id": "PAY_…", "amount": 50000, "currency": "NGN", "status": "pending" },
+    "payment_method": "remita",
+    "payment_item": { "id": "uuid", "code": "examination_fee", "name": "Examination" },
+    "payment_structure": { "id": "uuid", "code": "partial", "name": "Partial Payment" },
+    "amount": 50000,
+    "full_fee": 250000,
+    "outstanding_before": 200000,
+    "outstanding_after": 150000,
+    "payment_link": "https://login.remita.net/remita/ecomm/finalize.reg?merchantId=…&rrr=…",
+    "bank_account": null
+  }
+}
+```
+
+- `payment_link` — gateway checkout URL for `paystack` / `flutterwave` /
+  `remita`; `null` for `direct_transfer`.
+- `bank_account` — populated for `direct_transfer` (transfer
+  instructions are also emailed); `null` otherwise.
+- `404` for an unknown/inactive item, structure, or method.
+- `409` if the item is already fully paid, or an unpaid payment already
+  exists for the registration.
+- `422` for a closed/archived session, or an `amount` over the
+  outstanding balance (partial) / not equal to it (full).
+
+**Remita (RRR).** `payment_method: "remita"` generates a Remita
+Retrieval Reference — the `payment_link` carries it, and the same RRR
+can be paid online (card/USSD) **or** at any bank branch ("pay at
+bank"). Credentials live on the `remita` `payment_methods` row
+(`api_public_key` = merchantId, `api_secret_key` = apiKey, `base_url` =
+Remita base); the `serviceTypeId` comes from the
+`REMITA_SERVICE_TYPE_ID` env var. Remita seeds **inactive** — an admin
+configures the credentials and activates it before it appears at
+checkout.
+
+#### Transaction receipt
+
+```
+GET /finance/me/payments/{paymentId}/receipt     (payment owner)
+```
+
+`paymentId` accepts the payment UUID or the `PAY_…` reference.
+
+`res 200`
+```json
+{
+  "data": {
+    "transaction_id": "PAY_…",
+    "amount": 50000,
+    "currency": "NGN",
+    "status": "completed",
+    "jupeb_projection": "paid",
+    "payment_method": "remita",
+    "payment_item": { "code": "affiliation_fee", "name": "Affiliation Fee" },
+    "payment_structure": { "code": "partial", "name": "Partial Payment" },
+    "description": "Q1 2026 Payment",
+    "institution": {
+      "id": "uuid", "name": "University Of Lagos",
+      "address": "123, Aboderin Street, Ikeja Lagos State",
+      "phone": "+2348176345276", "email": "registry@unilag.edu.ng"
+    },
+    "registration_id": "uuid",
+    "date": "2026-03-01T10:00:00.000Z"
+  }
+}
+```
+
+#### Admin: payment catalog CRUD
+
+Manage the catalogs (registrar / financial_admin / admin / super_admin):
+
+```
+GET    /finance/admin/payment-items            POST   /finance/admin/payment-items
+PATCH  /finance/admin/payment-items/{id}        DELETE /finance/admin/payment-items/{id}
+GET    /finance/admin/payment-structures        POST   /finance/admin/payment-structures
+PATCH  /finance/admin/payment-structures/{id}   DELETE /finance/admin/payment-structures/{id}
+```
+
+`POST /finance/admin/payment-items` body:
+`{ code, name, description?, fee_source, fixed_amount?, sort_order? }` —
+`fee_source` is `affiliation` | `examination` | `fixed`; `fixed_amount`
+is required when `fee_source` is `fixed`. `DELETE` is a soft-delete.
+Structure bodies take `{ code, name, description?, allows_partial?,
+sort_order? }`.
+
+---
+
+## 10. Finance analytics — fees, trends, per-institution records
+
+Three reporting endpoints under `/finance/analytics/*`, all gated by the
+`financeAdmin` role set (`financial_admin` / `registrar` / `admin` /
+`super_admin`).
+
+**Projected vs collected.** "Projected" is computed from the session's
+fee config (`affiliation_fee_existing` / `affiliation_fee_new` /
+`exam_fee_per_candidate`) × candidate counts — what an institution
+*owes*. "Collected" sums real `payments` rows with `status='completed'`
+— what's actually *been paid*. The `payments` table doesn't tag a
+payment as affiliation-vs-exam, so `collected` is a single total, not
+split by fee type.
+
+**Affiliation rate.** An institution pays `affiliation_fee_new` for the
+**first** session it ever has registrations in (earliest `opens_at`),
+and `affiliation_fee_existing` for every later session. The
+`is_new_affiliate` flag on each record captures which rate was applied.
+
+### Exam fee by institution
+
+```
+GET /finance/analytics/exam-fee-by-institution?session_id=…     (financeAdmin)
+```
+
+Projected exam fee per institution — for plotting fee against
+institutions. `session_id` is required.
+
+`res 200`
+```json
+{
+  "data": {
+    "session_id": "uuid",
+    "academic_year": "2026/2027",
+    "exam_fee_per_candidate": 50000,
+    "total_projected_exam_fee": 18350000,
+    "institutions": [
+      { "institution_id": "uuid", "institution_name": "University of Lagos",
+        "institution_code": "UNILAG", "number_of_candidates": 120,
+        "exam_fee": 6000000, "collected": 4200000 }
+    ]
+  }
+}
+```
+`institutions` is ordered by `exam_fee` descending. `exam_fee` is
+projected (`exam_fee_per_candidate × number_of_candidates`); `collected`
+is the institution's total completed payments.
+
+### Payment trends
+
+```
+GET /finance/analytics/payment-trends?year=YYYY&session_id=…     (financeAdmin)
+```
+
+Monthly collected-payment totals — completed JUPEB payments bucketed by
+`paid_at` (falling back to `created_at`). Current + previous calendar
+year, Jan–Dec. `year` defaults to the current year; `session_id`
+optionally scopes to one session's registrations.
+
+`res 200`
+```json
+{
+  "data": {
+    "year": 2026,
+    "session_id": null,
+    "series": [
+      { "key": "current", "year": 2026,
+        "points": [ { "month": 1, "amount": 1500000, "count": 30 }, ..., { "month": 12, "amount": 0, "count": 0 } ] },
+      { "key": "previous", "year": 2025, "points": [ ... ] }
+    ]
+  }
+}
+```
+
+### Institution fee records
+
+```
+GET /finance/analytics/institution-fee-records?session_id=…&page=1&limit=20&q=     (financeAdmin)
+```
+
+Paginated table — one row per institution in the session, projected and
+collected side by side. `session_id` required; `q` filters by
+institution name or code.
+
+`res 200` (paginated envelope)
+```json
+{
+  "data": [
+    {
+      "institution_id": "uuid",
+      "institution_name": "University of Lagos",
+      "institution_code": "UNILAG",
+      "number_of_candidates": 120,
+      "is_new_affiliate": false,
+      "projected": { "affiliation_fee": 250000, "exam_fee": 6000000, "total": 6250000 },
+      "collected": { "total": 4200000, "payment_count": 84 },
+      "pending": { "total": 900000 },
+      "outstanding": 2050000
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 117, "totalPages": 6 }
+}
+```
+`outstanding` = `projected.total − collected.total` (may be negative if
+an institution has overpaid).
+
+All three return `404` for an unknown `session_id`, `422` for a
+malformed one.

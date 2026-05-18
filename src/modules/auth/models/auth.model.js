@@ -69,6 +69,14 @@ class AuthModel {
    * response as a wrong identifier. This mirrors how real Nigerian
    * institutions hand off from interim portals to matric-only access.
    *
+   * Re-entry exception: a student who already has a matric (from a prior
+   * session) needs email / phone / code login to claim a NEW session's
+   * code. We detect re-entry as "the user has an in-progress registration
+   * without a matric yet" — i.e. some row with
+   * `jupeb_candidate_number IS NULL` and a non-terminal status. While
+   * such a row exists, the lockdown is released and any identifier
+   * (including the prior matric) resolves the user.
+   *
    * The JUPEB join is wrapped in a fallback so this still works in
    * environments where `jupeb_registrations` hasn't been migrated (e.g.
    * unit-test setup running against an empty DB).
@@ -83,7 +91,9 @@ class AuthModel {
       //
       // has_matric: true ⇔ the user has ANY registration with a non-null
       // jupeb_candidate_number. When true, the WHERE clause demands the
-      // supplied identifier matches one of the user's matric numbers.
+      // supplied identifier matches one of the user's matric numbers —
+      // unless `in_progress_no_matric` is also true, in which case the
+      // user is mid-re-registration and the lockdown is released.
       const result = await pool.query(
         `WITH candidates AS (
            SELECT u.id AS user_id,
@@ -103,6 +113,16 @@ class AuthModel {
                      WHERE rm.user_id = u.id
                        AND rm.jupeb_candidate_number IS NOT NULL
                   ) AS has_matric,
+                  -- Re-entry signal: user has an in-progress registration
+                  -- (non-terminal, no matric yet). When present alongside
+                  -- has_matric, the user is starting a fresh registration
+                  -- in a new session and needs email/phone/code login.
+                  EXISTS (
+                    SELECT 1 FROM jupeb_registrations rip
+                     WHERE rip.user_id = u.id
+                       AND rip.jupeb_candidate_number IS NULL
+                       AND rip.status NOT IN ('approved', 'rejected', 'withdrawn')
+                  ) AS in_progress_no_matric,
                   EXISTS (
                     SELECT 1 FROM jupeb_registrations rmx
                      WHERE rmx.user_id = u.id
@@ -138,8 +158,18 @@ class AuthModel {
               -- resolves (no lockdown).
               c.has_admin_role = TRUE
            OR
-              -- Candidate with matric assigned: ONLY matric resolves.
-              (c.has_matric = TRUE  AND c.matric_match = TRUE)
+              -- Candidate with matric AND a fresh in-progress registration:
+              -- treat like a candidate without matric — any identifier works.
+              (c.has_matric = TRUE AND c.in_progress_no_matric = TRUE AND (
+                    LOWER(u.email) = LOWER($1)
+                 OR u.phone = $1
+                 OR c.provisional_match = TRUE
+                 OR c.matric_match = TRUE
+              ))
+           OR
+              -- Candidate with matric and no in-progress registration:
+              -- ONLY matric resolves (post-finalization lockdown).
+              (c.has_matric = TRUE AND c.in_progress_no_matric = FALSE AND c.matric_match = TRUE)
            OR
               -- Candidate without matric yet: email / phone / reg-code.
               (c.has_matric = FALSE AND (

@@ -85,8 +85,12 @@ class SessionModel {
   async findAll({ limit, offset, status, q }) {
     const { whereSql, values, nextIdx } = this._where({ status, q });
     values.push(limit, offset);
+    // Latest session first. academic_year is NOT NULL + UNIQUE and fixed
+    // 'YYYY/YYYY' width, so it sorts chronologically with no NULL/tie
+    // edge cases — unlike opens_at, which is NULL for draft sessions
+    // (and Postgres sorts NULLs first under DESC, floating drafts up).
     const sql = `SELECT * FROM jupeb_registration_sessions WHERE ${whereSql}
-                 ORDER BY opens_at DESC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
+                 ORDER BY academic_year DESC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
     const result = await pool.query(sql, values);
     return result.rows;
   }

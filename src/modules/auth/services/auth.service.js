@@ -122,14 +122,143 @@ class AuthService {
    * Register a new student using an institution-issued registration code.
    *
    * Single-shot signup for figma `log in 11`. Creates the user, assigns the
-   * `student` role, claims the registration code, and links the registration
-   * to the new user — all in a single DB transaction.
+   * Preview the student record behind an institution-issued code without
+   * claiming it. Powers the figma "Welcome → Student Information" flow
+   * (`log in 11` → `log in 12`): the candidate types the code, the app
+   * fetches everything it needs to render the verify-info screen, but
+   * the code stays in `code_issued` so they can back out without
+   * burning the code. The claim only happens at `completeRegistration`
+   * once the student sets a password on the Bio Data step.
    *
-   * Body: { code, password, first_name?, last_name?, email?, phone? }
+   * Returns the same shape as `/jupeb/me/profile`, minus auth-scoped
+   * fields. NIN-pending falls back to `intake_payload` so the user
+   * never sees blanks while NIN re-verifies.
+   */
+  static async previewByCode(code) {
+    const pool = require('../../../db/pool');
+    const value = code ? String(code).trim() : '';
+    if (!value) {
+      const err = new Error('code is required');
+      err.status = 422;
+      err.error_code = 'code_required';
+      throw err;
+    }
+
+    const reg = (
+      await pool.query(
+        `SELECT * FROM jupeb_registrations WHERE institution_issued_code = $1 LIMIT 1`,
+        [value]
+      )
+    ).rows[0];
+    if (!reg) {
+      const err = new Error('Registration code not found');
+      err.status = 404;
+      err.error_code = 'code_not_found';
+      throw err;
+    }
+    if (
+      reg.institution_code_expires_at &&
+      new Date(reg.institution_code_expires_at).getTime() < Date.now()
+    ) {
+      const err = new Error('This institution code has expired');
+      err.status = 410;
+      err.error_code = 'code_expired';
+      err.details = { expires_at: reg.institution_code_expires_at };
+      throw err;
+    }
+    if (reg.status !== 'code_issued' || reg.user_id) {
+      const err = new Error('This code is no longer available');
+      err.status = 409;
+      err.error_code = reg.user_id ? 'code_already_claimed' : 'code_unavailable';
+      throw err;
+    }
+
+    // Resolve display objects + NIN intake. Mirrors loadDisplayObjects /
+    // getMeProfile semantics so the client can use a single renderer
+    // for both the pre-auth verify-info screen and the post-auth
+    // profile screen.
+    const subjectCombinationModel = require('../../jupeb/models/subject-combination.model');
+    const universityModel = require('../../jupeb/models/university.model');
+    const sessionModel = require('../../jupeb/models/session.model');
+    const ninVerificationModel = require('../../jupeb/models/nin-verification.model');
+
+    const [combo, university, session, ninRow] = await Promise.all([
+      reg.subject_combination_id ? subjectCombinationModel.findById(reg.subject_combination_id) : null,
+      reg.university_id ? universityModel.findById(reg.university_id) : null,
+      reg.session_id ? sessionModel.findById(reg.session_id) : null,
+      reg.nin_verification_id ? ninVerificationModel.findById(reg.nin_verification_id) : null,
+    ]);
+
+    const intake = (ninRow && ninRow.intake_payload) || {};
+    const ninPayload = (ninRow && ninRow.response_payload) || {};
+
+    const fullName =
+      (intake.name && String(intake.name).trim())
+      || [ninPayload.first_name, ninPayload.last_name].filter(Boolean).join(' ').trim()
+      || null;
+
+    return {
+      candidate: {
+        registration_id: reg.id,
+        full_name: fullName,
+        provisional_candidate_code: reg.provisional_candidate_code,
+        photo_url: ninPayload.photo_url || null,
+        status: reg.status,
+      },
+      basic_information: {
+        date_of_birth: ninPayload.date_of_birth || null,
+        gender: ninPayload.gender || null,
+        residential_address:
+          intake.residential_address || intake.address || ninPayload.address || null,
+        state_of_origin: ninPayload.state_of_origin || null,
+        lga: ninPayload.lga || null,
+        place_of_birth: ninPayload.place_of_birth || null,
+      },
+      contact_information: {
+        email: intake.email || null,
+        phone: intake.phone || ninPayload.phone || null,
+      },
+      next_of_kin: ninPayload.next_of_kin || null,
+      subject_combination: combo
+        ? { id: combo.id, code: combo.code, title: combo.title }
+        : null,
+      university: university
+        ? {
+          id: university.id,
+          name: university.name,
+          short_name: university.short_name,
+          jupeb_prefix: university.jupeb_prefix,
+        }
+        : null,
+      session: session
+        ? { id: session.id, academic_year: session.academic_year, year_short: session.year_short }
+        : null,
+      code: {
+        expires_at: reg.institution_code_expires_at || null,
+      },
+      // Fields the client may submit on completeRegistration. Anything
+      // not listed here is either NIN-immutable or derived from intake.
+      editable_fields: ['password', 'residential_address', 'phone', 'email'],
+      nin_verification: ninRow
+        ? { id: ninRow.id, status: ninRow.status }
+        : null,
+    };
+  }
+
+  /**
+   * Complete the wizard: take the code + the password the student set
+   * on the Bio Data Update step, create the user account, atomically
+   * claim the registration, and return the same auth envelope as
+   * /auth/login. THIS is the call that invalidates the code.
+   *
+   * Body: { code, password, first_name?, last_name?, email?, phone?,
+   *         residential_address? }
    *  - email/phone default to whatever was carried on the registration's NIN
    *    intake when not provided.
+   *  - residential_address overlays the NIN-intake address onto the profile
+   *    (figma "Bio Data Update" step lets the student edit it before claim).
    */
-  static async registerWithCode(body) {
+  static async completeRegistration(body) {
     const pool = require('../../../db/pool');
     const bcryptLib = require('bcryptjs');
     const jwtSign = jwt;
@@ -267,11 +396,18 @@ class AuthService {
       const user = userInsert.rows[0];
 
       const displayName = [first_name, last_name].filter(Boolean).join(' ').trim() || null;
+      // Pre-fill the address from NIN intake; let the student override at
+      // the bio-data step (figma `log in 13`).
+      const residentialAddress = (body.residential_address && String(body.residential_address).trim())
+        || (intakePayload.residential_address && String(intakePayload.residential_address).trim())
+        || (intakePayload.address && String(intakePayload.address).trim())
+        || (ninResponse.address && String(ninResponse.address).trim())
+        || null;
       await client.query(
-        `INSERT INTO profiles (user_id, first_name, last_name, display_name)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO profiles (user_id, first_name, last_name, display_name, residential_address)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (user_id) DO NOTHING`,
-        [user.id, first_name || null, last_name || null, displayName]
+        [user.id, first_name || null, last_name || null, displayName, residentialAddress]
       );
 
       // Prefer 'student' role; fall back to 'user' if 'student' isn't seeded.
@@ -315,7 +451,7 @@ class AuthService {
       await client.query(
         `INSERT INTO jupeb_registration_status_history (registration_id, from_status, to_status, reason, changed_by)
          VALUES ($1, $2, $3, $4, $5)`,
-        [reg.id, 'code_issued', 'claimed', 'register-with-code', user.id]
+        [reg.id, 'code_issued', 'claimed', 'complete-registration', user.id]
       );
 
       await client.query('COMMIT');
@@ -332,7 +468,7 @@ class AuthService {
       const refreshToken = AuthService.generateRefreshToken(user.id);
       const refreshHash = await bcryptLib.hash(refreshToken, 10);
       await AuthModel.createSession(user.id, refreshHash, {
-        source: 'register-with-code',
+        source: 'complete-registration',
         user_agent: 'web'
       });
 

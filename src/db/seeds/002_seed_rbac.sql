@@ -29,7 +29,8 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 ('users.update', 'users', 'update', 'Update user profiles'),
 ('users.delete', 'users', 'delete', 'Delete users'),
 ('jupeb.catalog.manage', 'jupeb', 'catalog', 'Manage JUPEB catalog (universities, subject combinations)'),
-('jupeb.identity.verify', 'jupeb', 'identity_verify', 'Verify NIN and access identity proofs')
+('jupeb.identity.verify', 'jupeb', 'identity_verify', 'Verify NIN and access identity proofs'),
+('profiles.jupeb_university_id', 'profiles', 'jupeb_university_id', 'Owns profiles.jupeb_university_id — institution-scope binding for JUPEB actions')
 ON CONFLICT (resource, action) DO NOTHING;
 
 -- ==================== ROLE PERMISSIONS ====================
@@ -65,6 +66,15 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name IN ('program_director', 'institution_admin', 'registrar')
 AND p.name = 'jupeb.identity.verify'
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- institution_admin owns its profiles.jupeb_university_id binding —
+-- src/modules/jupeb/utils/institution-scope.js refuses every JUPEB action
+-- for a member of this role whose profile has no jupeb_university_id set.
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'institution_admin'
+AND p.name = 'profiles.jupeb_university_id'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- user has no resource permissions by default; add as needed

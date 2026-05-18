@@ -130,7 +130,7 @@ describe('NIN write-through to NoK + profile address (M.12)', () => {
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const studentEmail = `wt-${stamp}@example.com`;
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password: 'Strong@Password1',

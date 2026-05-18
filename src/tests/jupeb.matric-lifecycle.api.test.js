@@ -97,7 +97,7 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     const email = `matric-${stamp}@example.com`;
     const password = 'Strong@Password1';
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({ code, password, email, first_name: 'Adunni', last_name: 'Yusuf' });
     expect(reg.status).toBe(201);
     const studentToken = reg.body.data.access_token;

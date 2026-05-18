@@ -73,6 +73,19 @@ app.use((req, res, next) => {
 // Browsable via GET /admin/error-logs (admin only).
 app.use(requestLogMiddleware);
 
+// Search-param aliases. Every paginated list endpoint filters on `q`,
+// but `search` and `query` are the names callers reach for first.
+// Accept either as a fallback so the exact param name isn't a guessing
+// game. Only fills `q` when it's absent — an explicit `q` always wins,
+// and non-search endpoints simply ignore it.
+app.use((req, res, next) => {
+  if (req.query && !req.query.q) {
+    const alias = req.query.search || req.query.query;
+    if (alias) req.query.q = alias;
+  }
+  next();
+});
+
 // API routes
 app.use('/', routes);
 

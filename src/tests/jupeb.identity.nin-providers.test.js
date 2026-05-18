@@ -108,7 +108,7 @@ describe('speedysms NIN provider', () => {
     expect(http.post).toHaveBeenCalledTimes(1);
     const [url, body, opts] = http.post.mock.calls[0];
     expect(url).toBe('https://api.speedysms.com.ng/identity/nin');
-    expect(body).toEqual({ nin: '12345678901' });
+    expect(body).toEqual({ nin: '12345678901' });  // no provider / force_fresh sent by default
     expect(opts.headers.Authorization).toBe('Bearer sk_test_key');
 
     expect(r.outcome).toBe('verified');
@@ -170,6 +170,107 @@ describe('speedysms NIN provider', () => {
     const r = await speedysms.verifyNin('12345678901', { http });
     expect(r.outcome).toBe('unavailable');
     expect(r.error_code).toBe('identity_balance_exhausted');
+  });
+
+  // SpeedySMS uses a different shape ({success,code,message}) for billing /
+  // auth refusals that happen before the NIN lookup runs. The real-world
+  // identity_balance_exhausted body looks like this — the adapter must
+  // surface the upstream message rather than a generic provider_unavailable.
+  it('maps gate-shape {success:false, code, message} to outcome=unavailable with the real code + message', async () => {
+    const http = makeHttpMock({
+      status: 402,
+      data: {
+        success: false,
+        code: 'identity_balance_exhausted',
+        message: 'Your Identity balance is empty. Top up at /dashboard/identity/plans.',
+      },
+    });
+    const r = await speedysms.verifyNin('12345678901', { http });
+    expect(r.outcome).toBe('unavailable');
+    expect(r.error_code).toBe('identity_balance_exhausted');
+    expect(r.error_message).toBe(
+      'Your Identity balance is empty. Top up at /dashboard/identity/plans.'
+    );
+  });
+
+  // The terminal gate codes — SpeedySMS uses the same envelope for not_found /
+  // invalid as for refusals. These must map to outcome=failed so we charge
+  // and short-circuit instead of retrying forever.
+  it('maps gate-shape {success:false, code:"not_found"} to outcome=failed', async () => {
+    const http = makeHttpMock({
+      status: 200,
+      data: { success: false, code: 'not_found', message: 'NIN not found' },
+    });
+    const r = await speedysms.verifyNin('12345678901', { http });
+    expect(r.outcome).toBe('failed');
+    expect(r.error_code).toBe('not_found');
+    expect(r.error_message).toBe('NIN not found');
+  });
+
+  // SpeedySMS's live success wire shape double-nests the profile:
+  //   { success:true, message, data: { status:'success', lookup_id, data:{...profile}, photo_url, ... } }
+  // The outer `data` is the IdentityLookupResult; the inner `data.data` is the
+  // NormalizedData record with the actual name / DOB / address fields.
+  it('maps the double-nested success envelope to outcome=verified with the inner profile', async () => {
+    const http = makeHttpMock({
+      status: 200,
+      data: {
+        success: true,
+        message: 'Lookup successful',
+        data: {
+          status: 'success',
+          lookup_id: 'lookup-xyz',
+          nin_last_4: '5660',
+          data: {
+            first_name: 'QUADRI',
+            middle_name: 'OLASHINA',
+            last_name: 'SIKIRU',
+            date_of_birth: '2000-03-30',
+            gender: 'male',
+            phone_number: '08136156937',
+            birthplace: { country: 'nigeria', state: null, lga: 'Ojo Lagos' },
+            residence: { address: null, town: null, lga: 'Lagos', state: 'Lagos' },
+            next_of_kin: { first_name: null, middle_name: null, last_name: null },
+          },
+          photo_url: 'https://s3.example/photo.jpg',
+          signature_url: null,
+        },
+      },
+    });
+    const r = await speedysms.verifyNin('88379555660', { http });
+    expect(r.outcome).toBe('verified');
+    expect(r.provider_reference).toBe('lookup-xyz');
+    expect(r.profile.first_name).toBe('QUADRI');
+    expect(r.profile.middle_name).toBe('OLASHINA');
+    expect(r.profile.last_name).toBe('SIKIRU');
+    expect(r.profile.date_of_birth).toBe('2000-03-30');
+    expect(r.profile.gender).toBe('male');
+    expect(r.profile.phone).toBe('08136156937');
+    expect(r.profile.photo_url).toBe('https://s3.example/photo.jpg');
+  });
+
+  it('forwards provider + force_fresh overrides to the upstream POST body', async () => {
+    const http = makeHttpMock({ status: 200, data: SUCCESS_BODY });
+    await speedysms.verifyNin('00000000001', {
+      http,
+      provider: 'mock',
+      force_fresh: true,
+    });
+    const [, body] = http.post.mock.calls[0];
+    expect(body).toEqual({
+      nin: '00000000001',
+      provider: 'mock',
+      force_fresh: true,
+    });
+  });
+
+  it('omits provider / force_fresh from the body when not requested', async () => {
+    const http = makeHttpMock({ status: 200, data: SUCCESS_BODY });
+    await speedysms.verifyNin('12345678901', { http });
+    const [, body] = http.post.mock.calls[0];
+    expect(body).toEqual({ nin: '12345678901' });
+    expect(body.provider).toBeUndefined();
+    expect(body.force_fresh).toBeUndefined();
   });
 
   it('returns outcome=unavailable on network failure', async () => {

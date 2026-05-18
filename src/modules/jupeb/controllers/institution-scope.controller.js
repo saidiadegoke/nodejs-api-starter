@@ -11,7 +11,12 @@ class InstitutionScopeController {
       if (!('jupeb_university_id' in body)) {
         return sendError(res, 'jupeb_university_id is required (use null to clear)', UNPROCESSABLE_ENTITY);
       }
-      const row = await institutionUserScopeService.setProfileJupebUniversityId(userId, body.jupeb_university_id);
+      const actorUserId = req.user && req.user.user_id;
+      const row = await institutionUserScopeService.setProfileJupebUniversityId(
+        userId,
+        body.jupeb_university_id,
+        actorUserId
+      );
       return sendSuccess(res, row, 'JUPEB institution scope updated', OK);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

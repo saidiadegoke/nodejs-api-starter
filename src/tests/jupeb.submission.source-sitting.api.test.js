@@ -137,7 +137,7 @@ describe('POST /submission/me/documents — source + sitting (M.4)', () => {
       });
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password: 'Strong@Password1',

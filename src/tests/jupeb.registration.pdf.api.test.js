@@ -1,3 +1,4 @@
+const zlib = require('zlib');
 const request = require('supertest');
 const app = require('../app');
 const pool = require('../db/pool');
@@ -7,6 +8,36 @@ const {
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
 } = require('./jupeb-session-test-helpers');
+
+// PDFKit writes content streams as FlateDecode-compressed sequences of
+// hex-encoded glyph runs (`[<48656c6c6f>] TJ`). To assert that visible text
+// actually made it into the rendered PDF we have to decompress those streams
+// and concatenate the decoded glyph hex.
+function extractPdfText(buf) {
+  let out = buf.toString('latin1');
+  const needle = Buffer.from('stream\n');
+  const end = Buffer.from('\nendstream');
+  let i = 0;
+  while (i < buf.length) {
+    const s = buf.indexOf(needle, i);
+    if (s < 0) break;
+    const e = buf.indexOf(end, s + needle.length);
+    if (e < 0) break;
+    const data = buf.slice(s + needle.length, e);
+    let decoded = '';
+    try {
+      decoded = zlib.inflateSync(data).toString('latin1');
+    } catch {
+      decoded = data.toString('latin1');
+    }
+    const hexRuns = decoded.match(/<[0-9A-Fa-f]+>/g) || [];
+    for (const run of hexRuns) {
+      out += Buffer.from(run.slice(1, -1), 'hex').toString('utf8');
+    }
+    i = e + end.length;
+  }
+  return out;
+}
 
 describe('GET /registration/me/registration-form.pdf (M.10)', () => {
   let registrationMigrated = false;
@@ -89,7 +120,7 @@ describe('GET /registration/me/registration-form.pdf (M.10)', () => {
       });
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
     const reg = await request(app)
-      .post('/auth/register-with-code')
+      .post('/auth/complete-registration')
       .send({
         code: createReg.body.data.institution_issued_code,
         password: 'Strong@Password1',
@@ -155,12 +186,10 @@ describe('GET /registration/me/registration-form.pdf (M.10)', () => {
     expect(body.length).toBeGreaterThan(500);
     expect(body.slice(0, 4).toString('ascii')).toBe('%PDF');
 
-    // Check a few text fragments are present (PDFKit writes plain text streams)
-    // We only assert the content, not byte positions.
-    const text = body.toString('latin1');
+    const text = extractPdfText(body);
     expect(text).toMatch(/JUPEB Registration Form/);
-    expect(text).toMatch(/Ada/);
-    expect(text).toMatch(new RegExp(universityName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 12)));
+    expect(text).toContain('Ada');
+    expect(text).toContain(universityName.slice(0, 12));
   });
 
   it('also serves the PDF when status is approved', async () => {
