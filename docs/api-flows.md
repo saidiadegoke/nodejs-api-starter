@@ -1647,9 +1647,20 @@ POST /submission/me/documents     (student)
 { "requirement_id": "uuid", "file_id": "uuid", "registration_id": "uuid" }
 ```
 
-(Files first uploaded via `POST /files`.) `res 201` — document row.
+The raw file is uploaded first via **`POST /files/upload`** (see below)
+to obtain a `file_id`. `res 201` — document row.
 
 Repeat for each requirement (e.g. WAEC, NECO).
+
+**Uploading the file** — `POST /files/upload` (authenticated):
+- `Content-Type: multipart/form-data`, field name **`file`** (optional
+  `context` field). There is **no `POST /files`** — the route is
+  `/files/upload`.
+- `res 201` → `data: { id, file_id, url, file_url, file_type,
+  file_size, provider, uploaded_at }`. Use `data.file_id` as the
+  `file_id` in the document-attach call above.
+- Base64 alternative: `POST /files/upload-base64` with
+  `{ file_data, context? }`.
 
 ### Candidate: 10 — Biometrics (or skip)
 
@@ -1779,15 +1790,15 @@ GET /registration/institution/registrations/{registrationId}     (inst)
 ```jsonc
 {
   "data": {
-    "id": "uuid", "status": "approved",
+    "id": "uuid", "status": "approved", "bucket": "approved",
     "institution_issued_code": "F7K2P9",
     "provisional_candidate_code": "261010001",
     "jupeb_candidate_number": "26101000001",
     "claimed_at": "...", "submitted_at": "...", "approved_at": "...",
     "approved_by": "uuid",
 
-    "university":          { "id": "...", "name": "University of Lagos", "jupeb_prefix": "101" },
-    "subject_combination": { "id": "...", "code": "JUPEB SC-001", "title": "..." },
+    "university":          { "id": "...", "name": "University of Lagos", "short_name": "UNILAG", "jupeb_prefix": "101" },
+    "subject_combination": { "id": "...", "code": "JUPEB SC-001", "title": "...", "subject_items": ["…"] },
     "session":             { "id": "...", "academic_year": "2025/2026", "year_short": "26" },
     "nin_verification":    { "id": "...", "status": "verified" },
 
@@ -2337,10 +2348,13 @@ endpoint below is gated by the `jupebStudent` auth middleware — pass
 
 ### Document upload (figma `log in 14`)
 
-Document attachment is a two-step flow: upload raw bytes via the generic
-`/files` route to get a `file_id`, then link that `file_id` to a
-requirement on the student's registration.
+Document attachment is a two-step flow: upload raw bytes via
+**`POST /files/upload`** (multipart/form-data, field `file`) to get a
+`file_id`, then link that `file_id` to a requirement on the student's
+registration. Note the upload route is `/files/upload` — there is no
+`POST /files`.
 
+- `POST /files/upload` — upload the raw file → returns `data.file_id`.
 - `GET /submission/me/requirements` — which docs are required for this
   session / institution.
 - `GET /submission/me/documents` — list student's uploaded docs.

@@ -473,6 +473,7 @@ class RegistrationService {
     return {
       id: reg.id,
       status: reg.status,
+      bucket: statusBucket(reg.status),
       status_reason: reg.status_reason || null,
       institution_issued_code: reg.institution_issued_code,
       institution_code_expires_at: reg.institution_code_expires_at,
