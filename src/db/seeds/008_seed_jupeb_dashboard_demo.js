@@ -92,6 +92,68 @@ async function run(pool) {
   if (titled.rowCount) {
     console.log(`[seed:dashboard-demo] set a default title on ${titled.rowCount} profile(s)`);
   }
+
+  // 4. Backfill subject items for the demo combinations. The base demo
+  //    seed creates the JUPEB SC-xxx combinations but not their
+  //    relational jupeb_subject_combination_items, so the enrollment /
+  //    distribution charts can't list the constituent subjects. Derive
+  //    them from each combination's comma-separated title. Idempotent —
+  //    only touches combinations that have no items yet.
+  const combos = await pool.query(
+    `SELECT c.id, c.title
+       FROM jupeb_subject_combinations c
+      WHERE c.deleted_at IS NULL
+        AND c.code LIKE 'JUPEB SC-%'
+        AND NOT EXISTS (
+          SELECT 1 FROM jupeb_subject_combination_items i WHERE i.combination_id = c.id
+        )`
+  );
+  for (const combo of combos.rows) {
+    const names = String(combo.title || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    let position = 0;
+    for (const name of names) {
+      // Resolve the subject by name; create it (auto-coded) when absent.
+      // eslint-disable-next-line no-await-in-loop
+      let sub = await pool.query(
+        `SELECT id FROM jupeb_subjects WHERE deleted_at IS NULL AND LOWER(name) = LOWER($1) LIMIT 1`,
+        [name]
+      );
+      let subjectId = sub.rows[0] && sub.rows[0].id;
+      if (!subjectId) {
+        const code = name.toUpperCase().slice(0, 20);
+        // eslint-disable-next-line no-await-in-loop
+        const ins = await pool.query(
+          `INSERT INTO jupeb_subjects (code, name) VALUES ($1, $2)
+           ON CONFLICT DO NOTHING RETURNING id`,
+          [code, name]
+        );
+        subjectId = ins.rows[0] && ins.rows[0].id;
+        if (!subjectId) {
+          // eslint-disable-next-line no-await-in-loop
+          const re = await pool.query(
+            `SELECT id FROM jupeb_subjects WHERE deleted_at IS NULL AND LOWER(code) = LOWER($1) LIMIT 1`,
+            [code]
+          );
+          subjectId = re.rows[0] && re.rows[0].id;
+        }
+      }
+      if (subjectId) {
+        // eslint-disable-next-line no-await-in-loop
+        await pool.query(
+          `INSERT INTO jupeb_subject_combination_items (combination_id, subject_id, position)
+           VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+          [combo.id, subjectId, position]
+        );
+        position += 1;
+      }
+    }
+  }
+  if (combos.rows.length) {
+    console.log(`[seed:dashboard-demo] backfilled subject items for ${combos.rows.length} combination(s)`);
+  }
 }
 
 module.exports = { run };

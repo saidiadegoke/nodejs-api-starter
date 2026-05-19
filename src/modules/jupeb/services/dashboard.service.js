@@ -1,5 +1,6 @@
 const pool = require('../../../db/pool');
 const { effectiveInstitutionListUniversityId } = require('../utils/institution-scope');
+const subjectCombinationModel = require('../models/subject-combination.model');
 
 const PENDING_STATUSES = [
   'provisional',
@@ -332,18 +333,20 @@ class DashboardService {
    */
   async getSubjectCombinationDistribution({ universityId, sessionId }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
-    assertUuid(sessionId, 'session_id');
+    // Scope to one session — defaults to the open / latest session.
+    const session = await resolveSession(sessionId);
+    if (!session) return { session_id: null, total: 0, slices: [] };
 
-    const params = [];
-    const filters = [`r.subject_combination_id IS NOT NULL`, `r.status <> 'withdrawn'`];
-    let i = 1;
+    const params = [session.id];
+    const filters = [
+      `r.subject_combination_id IS NOT NULL`,
+      `r.status <> 'withdrawn'`,
+      `r.session_id = $1`,
+    ];
+    let i = 2;
     if (scopedUniversityId) {
       filters.push(`r.university_id = $${i++}`);
       params.push(scopedUniversityId);
-    }
-    if (sessionId) {
-      filters.push(`r.session_id = $${i++}`);
-      params.push(sessionId);
     }
     const r = await pool.query(
       `SELECT sc.id, sc.code, sc.title, COUNT(r.id)::int AS count
@@ -354,15 +357,20 @@ class DashboardService {
         ORDER BY count DESC, sc.code ASC`,
       params
     );
+    // Attach the constituent subjects of each combination (one batched query).
+    const itemsMap = await subjectCombinationModel.listItemsForCombinations(
+      r.rows.map((row) => row.id)
+    );
     const total = r.rows.reduce((sum, row) => sum + row.count, 0);
     const slices = r.rows.map((row) => ({
       subject_combination_id: row.id,
       code: row.code,
       title: row.title,
+      subjects: (itemsMap.get(row.id) || []).map((it) => ({ code: it.code, name: it.name })),
       count: row.count,
       pct: total ? Number(((row.count / total) * 100).toFixed(1)) : 0,
     }));
-    return { total, slices };
+    return { session_id: session.id, total, slices };
   }
 
   /**
@@ -515,19 +523,22 @@ class DashboardService {
 
   async getSubjectEnrollment({ universityId, sessionId, limit }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
-    assertUuid(sessionId, 'session_id');
+    // Scope to one session — defaults to the open / latest session so the
+    // chart shows the *current* intake, not a sum across every session.
+    const session = await resolveSession(sessionId);
+    if (!session) return [];
     const lim = Math.min(20, Math.max(1, parseInt(limit, 10) || 6));
 
-    const params = [];
-    const filters = [`r.subject_combination_id IS NOT NULL`, `r.status <> 'withdrawn'`];
-    let i = 1;
+    const params = [session.id];
+    const filters = [
+      `r.subject_combination_id IS NOT NULL`,
+      `r.status <> 'withdrawn'`,
+      `r.session_id = $1`,
+    ];
+    let i = 2;
     if (scopedUniversityId) {
       filters.push(`r.university_id = $${i++}`);
       params.push(scopedUniversityId);
-    }
-    if (sessionId) {
-      filters.push(`r.session_id = $${i++}`);
-      params.push(sessionId);
     }
     params.push(lim);
     const result = await pool.query(
@@ -540,10 +551,65 @@ class DashboardService {
        LIMIT $${i}`,
       params
     );
+    // Attach the constituent subjects of each combination (one batched query).
+    const itemsMap = await subjectCombinationModel.listItemsForCombinations(
+      result.rows.map((row) => row.id)
+    );
     return result.rows.map((row) => ({
       subject_combination_id: row.id,
       code: row.code,
       label: row.title,
+      count: row.count,
+      subjects: (itemsMap.get(row.id) || []).map((it) => ({ code: it.code, name: it.name })),
+    }));
+  }
+
+  /**
+   * Enrollment counted by individual subject (not by combination): for
+   * each subject, how many non-withdrawn registrations sit in a
+   * combination that includes it. Powers a per-subject bar chart —
+   * `[{ subject_id, code, name, count }]`, biggest first. Scopes to the
+   * open / latest session by default; `limit` is optional (top-N).
+   */
+  async getEnrollmentBySubject({ universityId, sessionId, limit }, userId) {
+    const scopedUniversityId = await resolveUniversityId(userId, universityId);
+    const session = await resolveSession(sessionId);
+    if (!session) return [];
+
+    const params = [session.id];
+    const filters = [
+      `r.status <> 'withdrawn'`,
+      `r.session_id = $1`,
+      `s.deleted_at IS NULL`,
+    ];
+    let i = 2;
+    if (scopedUniversityId) {
+      filters.push(`r.university_id = $${i++}`);
+      params.push(scopedUniversityId);
+    }
+    let limitClause = '';
+    if (limit !== undefined && limit !== null && limit !== '') {
+      const lim = Math.min(50, Math.max(1, parseInt(limit, 10) || 0));
+      if (lim) {
+        params.push(lim);
+        limitClause = `LIMIT $${i}`;
+      }
+    }
+    const result = await pool.query(
+      `SELECT s.id, s.code, s.name, COUNT(DISTINCT r.id)::int AS count
+         FROM jupeb_subjects s
+         JOIN jupeb_subject_combination_items i ON i.subject_id = s.id
+         JOIN jupeb_registrations r ON r.subject_combination_id = i.combination_id
+        WHERE ${filters.join(' AND ')}
+        GROUP BY s.id, s.code, s.name
+        ORDER BY count DESC, s.name ASC
+        ${limitClause}`,
+      params
+    );
+    return result.rows.map((row) => ({
+      subject_id: row.id,
+      code: row.code,
+      name: row.name,
       count: row.count,
     }));
   }

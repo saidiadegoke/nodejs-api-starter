@@ -21,6 +21,8 @@ router.get('/institution-distribution', dashboardRead, DashboardController.getIn
 router.get('/institution-trends', dashboardRead, DashboardController.getInstitutionTrends);
 // Distribution — enrollment share across subject combinations.
 router.get('/subject-combination-distribution', dashboardRead, DashboardController.getSubjectCombinationDistribution);
+// Bar — enrollment counted by individual subject.
+router.get('/enrollment-by-subject', dashboardRead, DashboardController.getEnrollmentBySubject);
 // Registration Timeline card on the Registration Management screen
 // (opens_at / closes_at / now / within_window).
 router.get('/session-timeline', dashboardRead, DashboardController.getSessionTimeline);

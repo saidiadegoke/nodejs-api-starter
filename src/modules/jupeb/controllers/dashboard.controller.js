@@ -109,6 +109,19 @@ class DashboardController {
     }
   }
 
+  // Bar — enrollment counted by individual subject.
+  static async getEnrollmentBySubject(req, res) {
+    try {
+      const data = await dashboardService.getEnrollmentBySubject(
+        pickParams(req),
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Enrollment by subject');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   // Registration timeline — opens / closes / cutoffs / now-marker
   // for the Registration Management header card.
   static async getSessionTimeline(req, res) {
