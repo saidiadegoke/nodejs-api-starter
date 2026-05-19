@@ -199,6 +199,12 @@ resolve while a fresh registration is in flight.
       "roles": ["student"],
       "verified": false
     },
+    "university": {
+      "id": "uuid",
+      "name": "Ahmadu Bello University",
+      "short_name": "ABU",
+      "jupeb_prefix": "108"
+    },
     "registration": {
       "id": "uuid",
       "status": "pending_documents",
@@ -213,6 +219,13 @@ resolve while a fresh registration is in flight.
   }
 }
 ```
+
+The `university` block is the institution the user belongs to —
+resolved from their institution-scope binding
+(`profiles.jupeb_university_id`), or, failing that, the university of
+their latest registration. `null` for users tied to no institution.
+It's also returned by `GET /users/me` and embedded in the
+`/registration/me/current` + `/registration/me/profile` composites.
 
 The `registration` block embeds the user's latest JUPEB registration
 so mobile clients don't need a follow-up `/registration/me/current`
@@ -431,7 +444,9 @@ the verify-info screen renders without a second round-trip:
       "contact_no": "+2348023456789", "phone": "+2348023456789",
       "email": null, "address": null, "source": "nin"
     },
-    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "..." },
+    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "...",
+      "status": "active", "is_global": true,
+      "subject_items": [ { "id": "uuid", "position": 0, "subject_id": "uuid", "code": "MTH", "name": "Mathematics" }, "…" ] },
     "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" }
   }
 }
@@ -517,7 +532,9 @@ Only `code` is read. The honeypot bot-trap applies (`website` / `url` /
                            "lga": "Ondo West", "place_of_birth": "Lagos" },
     "contact_information": { "email": "candidate@example.com", "phone": "+2348000000000" },
     "next_of_kin": { "name": "…", "relationship": "…", "...": "..." },
-    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "…" },
+    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "…",
+      "status": "active", "is_global": true,
+      "subject_items": [ { "id": "uuid", "position": 0, "subject_id": "uuid", "code": "MTH", "name": "Mathematics" }, "…" ] },
     "university": { "id": "uuid", "name": "…", "short_name": "…", "jupeb_prefix": "001" },
     "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" },
     "code": { "expires_at": "2026-09-30T23:59:59Z" },
@@ -1568,13 +1585,28 @@ NIN row is `pending`, NIN-derived fields fall back to the cached
                            "lga": "Ondo West", "place_of_birth": "Lagos State" },
     "contact_information": { "email": "adesalam@example.com", "phone": "+2348000000000" },
     "next_of_kin": { "name": "Jane Johnson", "relationship": "Mother", "contact": "+2348023456789" },
-    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "..." },
-    "university": { "id": "uuid", "name": "...", "jupeb_prefix": "001" },
+    "subject_combination": {
+      "id": "uuid", "code": "SC-001", "title": "Maths, Physics, Chemistry",
+      "status": "active", "is_global": true, "university_id": null,
+      "subject_items": [
+        { "id": "uuid", "position": 0, "subject_id": "uuid", "code": "MATHEMATICS", "name": "Mathematics" },
+        { "id": "uuid", "position": 1, "subject_id": "uuid", "code": "PHYSICS", "name": "Physics" },
+        { "id": "uuid", "position": 2, "subject_id": "uuid", "code": "CHEMISTRY", "name": "Chemistry" }
+      ]
+    },
+    "university": { "id": "uuid", "name": "...", "short_name": "...", "jupeb_prefix": "001" },
     "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" },
     "nin_verification": { "id": "uuid", "status": "verified" }
   }
 }
 ```
+
+`subject_combination` is the **full** combination object — the
+combination row plus `subject_items[]` (each `{ id, position,
+subject_id, code, name }`) — so the client gets the constituent
+subjects without a follow-up `GET /catalog/subject-combinations/{id}`.
+The same full object is returned wherever a registration is serialized
+(`/registration/me/current`, the institution candidate detail, etc.).
 
 ### Candidate: 7 — Capture sittings + result types
 

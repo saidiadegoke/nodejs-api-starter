@@ -46,6 +46,29 @@ class UniversityModel {
     return result.rows[0];
   }
 
+  /**
+   * Resolve the university a user belongs to — the institution-scope
+   * binding on profiles.jupeb_university_id, falling back to the
+   * university of their latest JUPEB registration (covers students who
+   * have no profile binding). Returns { id, name, short_name,
+   * jupeb_prefix } or null.
+   */
+  async resolveForUser(userId) {
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.short_name, u.jupeb_prefix
+         FROM jupeb_universities u
+        WHERE u.deleted_at IS NULL
+          AND u.id = COALESCE(
+            (SELECT jupeb_university_id FROM profiles WHERE user_id = $1),
+            (SELECT university_id FROM jupeb_registrations
+              WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1)
+          )
+        LIMIT 1`,
+      [userId]
+    );
+    return result.rows[0] || null;
+  }
+
   async findPublicActive({ universityType } = {}) {
     if (universityType) {
       const r = await pool.query(

@@ -19,6 +19,17 @@ class SubjectCombinationModel {
     return result.rows[0];
   }
 
+  /** Batch fetch combinations by id (active only). */
+  async findByIds(ids) {
+    if (!ids || !ids.length) return [];
+    const r = await pool.query(
+      `SELECT * FROM jupeb_subject_combinations
+       WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+      [ids]
+    );
+    return r.rows;
+  }
+
   async listItems(combinationId) {
     const r = await pool.query(
       `SELECT i.id, i.position, i.subject_id, s.code, s.name

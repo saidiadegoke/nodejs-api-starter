@@ -124,6 +124,33 @@ function enrichListRow(row) {
   };
 }
 
+/**
+ * Attach the full `subject_combination` object (the combination row plus
+ * its `subject_items[]`) to a batch of enriched list rows — one query
+ * for the combinations, one for the items, regardless of page size.
+ * Each row keeps its raw `subject_combination_id` and gains
+ * `subject_combination`.
+ */
+async function attachSubjectCombinations(rows) {
+  const ids = [...new Set(rows.map((r) => r.subject_combination_id).filter(Boolean))];
+  if (!ids.length) {
+    rows.forEach((r) => { r.subject_combination = null; });
+    return rows;
+  }
+  const [combos, itemsMap] = await Promise.all([
+    subjectCombinationModel.findByIds(ids),
+    subjectCombinationModel.listItemsForCombinations(ids),
+  ]);
+  const comboMap = new Map(combos.map((c) => [c.id, c]));
+  for (const r of rows) {
+    const combo = r.subject_combination_id ? comboMap.get(r.subject_combination_id) : null;
+    r.subject_combination = combo
+      ? { ...combo, subject_items: itemsMap.get(combo.id) || [] }
+      : null;
+  }
+  return rows;
+}
+
 async function generateUniqueInstitutionCode() {
   for (let i = 0; i < 24; i += 1) {
     const code = makeInstitutionCode();
@@ -158,9 +185,21 @@ async function loadDisplayObjects(reg) {
     reg.university_id ? universityModel.findById(reg.university_id) : null,
     reg.session_id ? sessionModel.findById(reg.session_id) : null,
   ]);
+  // Embed the combination's constituent subjects so clients get the full
+  // object — no follow-up GET /catalog/subject-combinations/:id needed.
+  const subjectItems = combo ? await subjectCombinationModel.listItems(combo.id) : [];
   return {
-    subject_combination: combo ? { id: combo.id, code: combo.code, title: combo.title } : null,
-    university: university ? { id: university.id, name: university.name, jupeb_prefix: university.jupeb_prefix } : null,
+    subject_combination: combo
+      ? { ...combo, subject_items: subjectItems }
+      : null,
+    university: university
+      ? {
+        id: university.id,
+        name: university.name,
+        short_name: university.short_name,
+        jupeb_prefix: university.jupeb_prefix,
+      }
+      : null,
     session: session ? { id: session.id, academic_year: session.academic_year, year_short: session.year_short } : null,
   };
 }
@@ -538,8 +577,9 @@ class RegistrationService {
       offset,
     });
     const total = await registrationModel.countInstitution(filters);
+    const enriched = await attachSubjectCombinations(rows.map(enrichListRow));
     return {
-      rows: rows.map(enrichListRow),
+      rows: enriched,
       page: safePage,
       limit: safeLimit,
       total,

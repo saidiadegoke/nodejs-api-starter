@@ -3,6 +3,7 @@ const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { OK, NOT_FOUND, BAD_REQUEST, CONFLICT } = require('../../../shared/constants/statusCodes');
 const webSocketService = require('../../../shared/services/websocket.service');
 const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
+const universityModel = require('../../jupeb/models/university.model');
 
 class UserProfileController {
   /**
@@ -61,10 +62,17 @@ class UserProfileController {
 
       const roles = rolesResult.rows.map(r => r.name);
 
+      // The institution the user belongs to (best-effort).
+      let university = null;
+      try {
+        university = await universityModel.resolveForUser(userId);
+      } catch { /* jupeb tables absent — non-fatal */ }
+
       sendSuccess(res, {
         ...user,
         role: roles[0] || 'user',
         roles: roles,
+        university,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted', // TODO: Implement KYC
         settings: {
