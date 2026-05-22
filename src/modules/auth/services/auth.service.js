@@ -1,5 +1,6 @@
 const AuthModel = require('../models/auth.model');
 const CountryModel = require('../../../shared/models/country.model');
+const universityModel = require('../../jupeb/models/university.model');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -188,6 +189,9 @@ class AuthService {
       reg.session_id ? sessionModel.findById(reg.session_id) : null,
       reg.nin_verification_id ? ninVerificationModel.findById(reg.nin_verification_id) : null,
     ]);
+    // Embed the combination's constituent subjects so the verify-info
+    // screen has the full object without a follow-up catalog call.
+    const subjectItems = combo ? await subjectCombinationModel.listItems(combo.id) : [];
 
     const intake = (ninRow && ninRow.intake_payload) || {};
     const ninPayload = (ninRow && ninRow.response_payload) || {};
@@ -220,7 +224,7 @@ class AuthService {
       },
       next_of_kin: ninPayload.next_of_kin || null,
       subject_combination: combo
-        ? { id: combo.id, code: combo.code, title: combo.title }
+        ? { ...combo, subject_items: subjectItems }
         : null,
       university: university
         ? {
@@ -600,6 +604,13 @@ class AuthService {
       }
     } catch { /* jupeb tables absent — non-fatal */ }
 
+    // The institution the user belongs to (institution-scope binding, or
+    // their registration's university). Best-effort, like `registration`.
+    let university = null;
+    try {
+      university = await universityModel.resolveForUser(user.id);
+    } catch { /* jupeb tables absent — non-fatal */ }
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -618,6 +629,7 @@ class AuthService {
         verified: user.email_verified && user.phone_verified,
         created_at: user.created_at
       },
+      university,
       registration,
     };
   }

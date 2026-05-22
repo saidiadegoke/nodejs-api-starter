@@ -199,6 +199,12 @@ resolve while a fresh registration is in flight.
       "roles": ["student"],
       "verified": false
     },
+    "university": {
+      "id": "uuid",
+      "name": "Ahmadu Bello University",
+      "short_name": "ABU",
+      "jupeb_prefix": "108"
+    },
     "registration": {
       "id": "uuid",
       "status": "pending_documents",
@@ -213,6 +219,13 @@ resolve while a fresh registration is in flight.
   }
 }
 ```
+
+The `university` block is the institution the user belongs to —
+resolved from their institution-scope binding
+(`profiles.jupeb_university_id`), or, failing that, the university of
+their latest registration. `null` for users tied to no institution.
+It's also returned by `GET /users/me` and embedded in the
+`/registration/me/current` + `/registration/me/profile` composites.
 
 The `registration` block embeds the user's latest JUPEB registration
 so mobile clients don't need a follow-up `/registration/me/current`
@@ -431,7 +444,9 @@ the verify-info screen renders without a second round-trip:
       "contact_no": "+2348023456789", "phone": "+2348023456789",
       "email": null, "address": null, "source": "nin"
     },
-    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "..." },
+    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "...",
+      "status": "active", "is_global": true,
+      "subject_items": [ { "id": "uuid", "position": 0, "subject_id": "uuid", "code": "MTH", "name": "Mathematics" }, "…" ] },
     "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" }
   }
 }
@@ -482,16 +497,68 @@ route to the log-in screen:
 
 Raw email / phone never leak — only masked values.
 
-### Register with an institution code (single-shot signup)
+### Register with an institution code (preview)
 
 ```
 POST /auth/register-with-code     (public)
+GET  /auth/register-with-code?code=…   (public — same handler)
 ```
 
-The companion to `GET /auth/code-status`. After the pre-validation
-call confirms the code is claimable, the client posts the code +
-chosen password to mint the account and bind it to the
-pre-loaded `jupeb_registrations` row in a single round-trip.
+The companion to `GET /auth/code-status`. This is a **read-only
+preview** — it powers the figma `log in 11` → `log in 12` verify-info
+screen. It does **not** create an account, does **not** claim the
+code, and does **not** return tokens — the code stays `code_issued`.
+The actual account + tokens come from `POST /auth/complete-registration`
+(next).
+
+`req`
+```json
+{ "code": "F7K2P9" }
+```
+
+Only `code` is read. The honeypot bot-trap applies (`website` / `url` /
+`homepage` → silent rejection).
+
+`res 200`
+```json
+{
+  "success": true,
+  "message": "Code preview",
+  "data": {
+    "candidate": { "registration_id": "uuid", "full_name": "Adebayo Salami",
+                   "provisional_candidate_code": "270010001", "photo_url": null, "status": "code_issued" },
+    "basic_information": { "date_of_birth": "1999-01-01", "gender": "male",
+                           "residential_address": "…", "state_of_origin": "Ondo",
+                           "lga": "Ondo West", "place_of_birth": "Lagos" },
+    "contact_information": { "email": "candidate@example.com", "phone": "+2348000000000" },
+    "next_of_kin": { "name": "…", "relationship": "…", "...": "..." },
+    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "…",
+      "status": "active", "is_global": true,
+      "subject_items": [ { "id": "uuid", "position": 0, "subject_id": "uuid", "code": "MTH", "name": "Mathematics" }, "…" ] },
+    "university": { "id": "uuid", "name": "…", "short_name": "…", "jupeb_prefix": "001" },
+    "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" },
+    "code": { "expires_at": "2026-09-30T23:59:59Z" },
+    "editable_fields": ["password", "residential_address", "phone", "email"],
+    "nin_verification": { "id": "uuid", "status": "verified" }
+  }
+}
+```
+
+`editable_fields` lists what the client may send to
+`complete-registration`. Errors carry `details.error_code`:
+`422 code_required`, `404 code_not_found`, `410 code_expired`,
+`409 code_already_claimed` / `code_unavailable`.
+
+### Complete registration (claim the code, mint the account)
+
+```
+POST /auth/complete-registration     (public)
+```
+
+The token-issuing step. After the verify-info screen, the student sets
+a password on the Bio Data step; this call mints the user account,
+**atomically claims** the registration (`code_issued` → `claimed`), and
+returns the same auth envelope as `/auth/login`.
 
 `req`
 ```json
@@ -501,55 +568,44 @@ pre-loaded `jupeb_registrations` row in a single round-trip.
   "email": "candidate@example.com",
   "phone": "+2348000000000",
   "first_name": "Adebayo",
-  "last_name": "Salami"
+  "last_name": "Salami",
+  "residential_address": "12 Marina Road, Lagos"
 }
 ```
 
-`code` + `password` are required; the contact / name fields are
-optional overlays on whatever the institution pre-seeded. The
-endpoint also implements the same honeypot bot-trap as
-`/auth/register` — bodies carrying `website`, `url`, or `homepage`
-are silently rejected.
+`code` + `password` (≥ 8 chars) are required; contact / name /
+address fields are optional overlays on whatever the institution
+pre-seeded (defaults pulled from the NIN intake). Same honeypot trap.
 
 `res 201`
 ```json
 {
   "success": true,
+  "message": "Registration successful",
   "data": {
     "access_token": "eyJhbGc...",
     "refresh_token": "eyJhbGc...",
     "token_type": "Bearer",
     "expires_in": 3600,
-    "user": {
-      "user_id": "uuid",
-      "email": "candidate@example.com",
-      "phone": "+2348000000000",
-      "first_name": "Adebayo",
-      "last_name": "Salami",
-      "role": "user",
-      "roles": ["user"]
-    },
-    "registration": {
-      "id": "uuid",
-      "status": "claimed",
-      "provisional_candidate_code": "270010001",
-      "claimed_at": "2026-05-13T10:00:00.000Z"
-    }
+    "user": { "user_id": "uuid", "email": "candidate@example.com", "phone": "+2348000000000",
+              "first_name": "Adebayo", "last_name": "Salami", "role": "student", "roles": ["student"] },
+    "registration": { "id": "uuid", "status": "claimed",
+                      "provisional_candidate_code": "270010001", "claimed_at": "2026-05-19T10:00:00.000Z" }
   }
 }
 ```
 
-Errors carry `details.error_code` so the client can branch:
-- `400 code_required` / `400 code_invalid`
-- `409 code_already_claimed` — same shape as the matching
-  `code-status` error; client should switch to the **Log in** UI.
+Errors carry `details.error_code`:
+- `422 code_required` / `422 weak_password` / `422 identifier_required`
+- `404 code_not_found`
 - `410 code_expired`
-- `422 password_too_short`
+- `409 code_already_claimed` / `code_unavailable` — switch to the **Log in** UI
+- `409 email_in_use` / `409 phone_in_use`
 
 On success a `jupeb-welcome-student.html` email fires
-(fire-and-forget). The candidate is then authenticated and can
-fetch their pre-loaded profile via `GET /jupeb/me/profile`
-(Flow 5, step 6).
+(fire-and-forget). The candidate is now authenticated (use the
+returned `access_token`) and can fetch their profile via
+`GET /registration/me/profile` (Flow 5, step 6).
 
 ### OAuth (social login)
 
@@ -1529,13 +1585,28 @@ NIN row is `pending`, NIN-derived fields fall back to the cached
                            "lga": "Ondo West", "place_of_birth": "Lagos State" },
     "contact_information": { "email": "adesalam@example.com", "phone": "+2348000000000" },
     "next_of_kin": { "name": "Jane Johnson", "relationship": "Mother", "contact": "+2348023456789" },
-    "subject_combination": { "id": "uuid", "code": "SC-001", "title": "..." },
-    "university": { "id": "uuid", "name": "...", "jupeb_prefix": "001" },
+    "subject_combination": {
+      "id": "uuid", "code": "SC-001", "title": "Maths, Physics, Chemistry",
+      "status": "active", "is_global": true, "university_id": null,
+      "subject_items": [
+        { "id": "uuid", "position": 0, "subject_id": "uuid", "code": "MATHEMATICS", "name": "Mathematics" },
+        { "id": "uuid", "position": 1, "subject_id": "uuid", "code": "PHYSICS", "name": "Physics" },
+        { "id": "uuid", "position": 2, "subject_id": "uuid", "code": "CHEMISTRY", "name": "Chemistry" }
+      ]
+    },
+    "university": { "id": "uuid", "name": "...", "short_name": "...", "jupeb_prefix": "001" },
     "session": { "id": "uuid", "academic_year": "2026/2027", "year_short": "27" },
     "nin_verification": { "id": "uuid", "status": "verified" }
   }
 }
 ```
+
+`subject_combination` is the **full** combination object — the
+combination row plus `subject_items[]` (each `{ id, position,
+subject_id, code, name }`) — so the client gets the constituent
+subjects without a follow-up `GET /catalog/subject-combinations/{id}`.
+The same full object is returned wherever a registration is serialized
+(`/registration/me/current`, the institution candidate detail, etc.).
 
 ### Candidate: 7 — Capture sittings + result types
 
@@ -1576,9 +1647,20 @@ POST /submission/me/documents     (student)
 { "requirement_id": "uuid", "file_id": "uuid", "registration_id": "uuid" }
 ```
 
-(Files first uploaded via `POST /files`.) `res 201` — document row.
+The raw file is uploaded first via **`POST /files/upload`** (see below)
+to obtain a `file_id`. `res 201` — document row.
 
 Repeat for each requirement (e.g. WAEC, NECO).
+
+**Uploading the file** — `POST /files/upload` (authenticated):
+- `Content-Type: multipart/form-data`, field name **`file`** (optional
+  `context` field). There is **no `POST /files`** — the route is
+  `/files/upload`.
+- `res 201` → `data: { id, file_id, url, file_url, file_type,
+  file_size, provider, uploaded_at }`. Use `data.file_id` as the
+  `file_id` in the document-attach call above.
+- Base64 alternative: `POST /files/upload-base64` with
+  `{ file_data, context? }`.
 
 ### Candidate: 10 — Biometrics (or skip)
 
@@ -1685,7 +1767,7 @@ candidate's intake / users.email):
 | Step | Trigger | Template |
 |---|---|---|
 | 2 | `institutionCreate` returns 201 | `jupeb-code-issued.html` |
-| 5 | `register-with-code` returns 201 | `jupeb-welcome-student.html` |
+| 5 | `complete-registration` returns 201 | `jupeb-welcome-student.html` |
 | 12 (approve) | `emitRegistrationApproved` | `jupeb-registration-approved.html` |
 | 12 (reject) | `transitionStatus → rejected` | `jupeb-registration-rejected.html` |
 | 12 (withdraw) | `transitionStatus → withdrawn` | `jupeb-registration-withdrawn.html` |
@@ -1708,15 +1790,15 @@ GET /registration/institution/registrations/{registrationId}     (inst)
 ```jsonc
 {
   "data": {
-    "id": "uuid", "status": "approved",
+    "id": "uuid", "status": "approved", "bucket": "approved",
     "institution_issued_code": "F7K2P9",
     "provisional_candidate_code": "261010001",
     "jupeb_candidate_number": "26101000001",
     "claimed_at": "...", "submitted_at": "...", "approved_at": "...",
     "approved_by": "uuid",
 
-    "university":          { "id": "...", "name": "University of Lagos", "jupeb_prefix": "101" },
-    "subject_combination": { "id": "...", "code": "JUPEB SC-001", "title": "..." },
+    "university":          { "id": "...", "name": "University of Lagos", "short_name": "UNILAG", "jupeb_prefix": "101" },
+    "subject_combination": { "id": "...", "code": "JUPEB SC-001", "title": "...", "subject_items": ["…"] },
     "session":             { "id": "...", "academic_year": "2025/2026", "year_short": "26" },
     "nin_verification":    { "id": "...", "status": "verified" },
 
@@ -1787,8 +1869,9 @@ program_director / institution_admin) and accept optional
 | KPI · Approved/Pending/Rejected counts | `GET /dashboard/students-status` | `approved`, `pending`, `rejected` |
 | Line · Registration Trends (current vs prior year) | `GET /dashboard/registration-trends?year=YYYY&session_id=…` | `series[].points[].count` |
 | Line · Institution Onboarding Trends | `GET /dashboard/institution-trends?year=YYYY` | `series[].points[].count` |
-| Bar · Subject Combination Enrollment (top N) | `GET /dashboard/subject-enrollment?session_id=…&limit=6` | `[{code, label, count}]` |
-| Donut · Subject Combination Enrollment distribution | `GET /dashboard/subject-combination-distribution?session_id=…` | `total`, `slices[].{code, title, count, pct}` |
+| Bar · Subject Combination Enrollment (top N) | `GET /dashboard/subject-enrollment?session_id=…&limit=6` | `[{code, label, count, subjects[]}]` |
+| Donut · Subject Combination Enrollment distribution | `GET /dashboard/subject-combination-distribution?session_id=…` | `session_id`, `total`, `slices[].{code, title, count, pct, subjects[]}` |
+| Bar · Enrollment by individual subject | `GET /dashboard/enrollment-by-subject?session_id=…&limit=…` | `[{subject_id, code, name, count}]` |
 | Bar · Top Institutions (Registration Mgmt page) | `GET /registration/institution/overview/by-university?session_id=…&limit=12` | `[{university_id, university_name, registered_count}]` |
 | Donut · Institution Distribution by type | `GET /dashboard/institution-distribution` | `total`, `slices[].{type, count, pct}` |
 | Card · Registration Timeline (opens/now/closes) | `GET /dashboard/session-timeline?session_id=…` | `opens_at`, `closes_at`, `now`, `within_window`, cutoffs |
@@ -1955,14 +2038,20 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```jsonc
 [
-  { "subject_combination_id": "uuid", "code": "JUPEB SC-009", "label": "...", "count": 28500 },
-  { "subject_combination_id": "uuid", "code": "JUPEB SC-003", "label": "...", "count": 27000 },
-  ...
+  { "subject_combination_id": "uuid", "code": "JUPEB SC-002", "label": "Mathematics, Physics, Chemistry",
+    "count": 7, "subjects": [ { "code": "MATHEMATICS", "name": "Mathematics" },
+                              { "code": "PHYSICS", "name": "Physics" },
+                              { "code": "CHEMISTRY", "name": "Chemistry" } ] },
+  { "...": "..." }
 ]
 ```
 
-`label` is the combination `title`. `limit` caps the bar count
-(default 6, max 20); `session_id` / `university_id` scope the counts.
+`label` is the combination `title`; `subjects[]` lists the constituent
+subjects. `limit` caps the bar count (default 6, max 20).
+**Session scope:** `session_id` is optional — when omitted the endpoint
+resolves to the open / latest session (same as the other `/dashboard/*`
+endpoints), so the chart shows the *current* intake rather than a sum
+across every session.
 
 ```bash
 # 4b) Donut: subject combination enrollment distribution
@@ -1972,10 +2061,12 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 ```jsonc
 {
-  "total": 3671,
+  "session_id": "uuid",
+  "total": 28,
   "slices": [
-    { "subject_combination_id": "uuid", "code": "JUPEB SC-004", "title": "...", "count": 980, "pct": 26.7 },
-    { "subject_combination_id": "uuid", "code": "JUPEB SC-002", "title": "...", "count": 870, "pct": 23.7 },
+    { "subject_combination_id": "uuid", "code": "JUPEB SC-002", "title": "Mathematics, Physics, Chemistry",
+      "subjects": [ { "code": "MATHEMATICS", "name": "Mathematics" }, { "...": "..." } ],
+      "count": 7, "pct": 25.0 },
     { "...": "..." }
   ]
 }
@@ -1983,8 +2074,31 @@ curl -s -H "Authorization: Bearer $ADMIN" \
 
 Same counting as `subject-enrollment`, but returns **every** combination
 with enrollments (no `limit`) plus percent shares — so `pct` sums to
-~100 for a true distribution. `session_id` / `university_id` scope the
-counts.
+~100 for a true distribution. Each slice carries `subjects[]` (the
+combination's constituent subjects). `session_id` defaults to the
+open / latest session; `university_id` further scopes the counts.
+
+```bash
+# 4c) Bar: enrollment by individual subject
+curl -s -H "Authorization: Bearer $ADMIN" \
+  "$BASE/dashboard/enrollment-by-subject?session_id=$SESSION_ID" | jq '.data'
+```
+
+```jsonc
+[
+  { "subject_id": "uuid", "code": "CHEMISTRY", "name": "Chemistry", "count": 16 },
+  { "subject_id": "uuid", "code": "PHYSICS",   "name": "Physics",   "count": 16 },
+  { "subject_id": "uuid", "code": "MATHEMATICS","name": "Mathematics","count": 15 },
+  { "...": "..." }
+]
+```
+
+Unlike `subject-enrollment` (which counts by *combination*), this
+counts by **individual subject** — a subject's `count` is the number of
+non-withdrawn registrations whose combination includes that subject, so
+a subject in two combinations sums both. Ordered by `count` desc.
+`session_id` defaults to the open / latest session; `limit` (optional,
+max 50) caps to a top-N; `university_id` further scopes the counts.
 
 ```bash
 # 5) Bar: top 12 institutions (Registration page)
@@ -2234,10 +2348,13 @@ endpoint below is gated by the `jupebStudent` auth middleware — pass
 
 ### Document upload (figma `log in 14`)
 
-Document attachment is a two-step flow: upload raw bytes via the generic
-`/files` route to get a `file_id`, then link that `file_id` to a
-requirement on the student's registration.
+Document attachment is a two-step flow: upload raw bytes via
+**`POST /files/upload`** (multipart/form-data, field `file`) to get a
+`file_id`, then link that `file_id` to a requirement on the student's
+registration. Note the upload route is `/files/upload` — there is no
+`POST /files`.
 
+- `POST /files/upload` — upload the raw file → returns `data.file_id`.
 - `GET /submission/me/requirements` — which docs are required for this
   session / institution.
 - `GET /submission/me/documents` — list student's uploaded docs.
