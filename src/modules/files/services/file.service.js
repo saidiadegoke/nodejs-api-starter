@@ -2,7 +2,7 @@ const FileModel = require('../models/file.model');
 const { v4: uuidv4 } = require('uuid');
 const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { s3Client, s3BucketName, s3BucketBaseUrl } = require('../../../shared/config/s3.config');
+const { s3Client, s3BucketName, buildPublicObjectUrl } = require('../../../shared/config/s3.config');
 const path = require('path');
 
 class FileService {
@@ -37,10 +37,7 @@ class FileService {
       const command = new PutObjectCommand(uploadParams);
       await s3Client.send(command);
 
-      // Construct S3 URL using base URL if provided, otherwise use default format
-      const file_url = s3BucketBaseUrl 
-        ? `${s3BucketBaseUrl.replace(/\/$/, '')}/${s3Key}`
-        : `https://${s3BucketName}.s3.amazonaws.com/${s3Key}`;
+      const file_url = buildPublicObjectUrl(s3Key);
 
       // Save file record to database
       const fileData = {

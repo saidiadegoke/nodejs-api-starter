@@ -6,7 +6,7 @@ const AddressController = require('./controllers/address.controller');
 const KYCController = require('./controllers/kyc.controller');
 const { body } = require('express-validator');
 const { validate } = require('../../shared/validations/validator');
-const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../shared/middleware/rbac.middleware');
 
 /**
  * @route   GET /api/users/me
@@ -125,7 +125,7 @@ router.get('/:user_id/activities', UserActivityController.getUserActivities);
  * @desc    Get all users (admin only)
  * @access  Admin
  */
-router.get('/', requireAuth, UserController.getAllUsers);
+router.get('/', requireAuth, requirePermission('users.view'), UserController.getAllUsers);
 
 module.exports = router;
 

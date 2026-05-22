@@ -282,6 +282,45 @@ describe('Admin RBAC — roles, permissions, user assignment', () => {
     expect(res.status).toBe(422);
   });
 
+  it('GET /admin/users requires auth', async () => {
+    const res = await request(app).get('/admin/users');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /admin/users rejects users without users.view', async () => {
+    const t = await getStudentToken();
+    if (!t) return;
+    const res = await request(app).get('/admin/users').set('Authorization', `Bearer ${t}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /admin/users returns paginated list for admin', async () => {
+    if (!dbReady) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const res = await request(app)
+      .get('/admin/users?page=1&limit=5')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.pagination).toBeDefined();
+    expect(typeof res.body.pagination.total).toBe('number');
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(row).toHaveProperty('id');
+      expect(row).toHaveProperty('roles');
+      expect(Array.isArray(row.roles)).toBe(true);
+    }
+  });
+
+  it('GET /users alias requires users.view', async () => {
+    const t = await getStudentToken();
+    if (!t) return;
+    const res = await request(app).get('/users').set('Authorization', `Bearer ${t}`);
+    expect(res.status).toBe(403);
+  });
+
   it('GET /admin/users/:userId/roles returns current assignments', async () => {
     if (!dbReady) return;
     const token = await getAdminToken();

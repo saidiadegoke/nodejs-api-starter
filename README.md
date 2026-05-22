@@ -24,7 +24,7 @@ Use this as a foundation for custom APIs — the modules included are intentiona
 - Lock down **`/admin/*`** (super-admin only in seeds—change default passwords, restrict by network or VPN if needed).
 - Replace development-only auth flows: phone OTP (`123456` in dev), `SKIP_*` flags, and any mock providers are not acceptable for real users unless you redesign them.
 - Configure **`SMTP_*`** / **`FROM_EMAIL`** for real email, or disable features that send mail.
-- For S3-backed storage, set **`AWS_*`** and **`DEFAULT_FILE_PROVIDER=s3`** (see `.env.example`). For local-only dev, **`DEFAULT_FILE_PROVIDER=mock`** (default) avoids S3.
+- For S3-backed storage, set **`S3_PROVIDER`** (`aws` or `digitalocean`), the matching credentials in **`.env.example`**, and **`DEFAULT_FILE_PROVIDER=s3`**. For local-only dev, **`DEFAULT_FILE_PROVIDER=mock`** (default) avoids S3.
 - Leave OAuth client env vars **empty** for providers you do not use—Passport only registers strategies when both ID and secret are set.
 - Run **`npm audit`**, enable HTTPS at the edge (reverse proxy / load balancer), and add your own rate limiting and monitoring as needed (see note on `RATE_LIMIT_*` in `.env.example`).
 
@@ -33,7 +33,7 @@ Use this as a foundation for custom APIs — the modules included are intentiona
 | Area | Env / behavior |
 |------|----------------|
 | OAuth (Google, Facebook, GitHub, Twitter) | Set both `*_CLIENT_ID` / secret (or `FACEBOOK_APP_*`, etc.). Empty = strategy not registered. |
-| S3 uploads | `AWS_*`, `AWS_S3_BUCKET_NAME` or `AWS_S3_BUCKET`, `DEFAULT_FILE_PROVIDER=s3` |
+| S3 uploads | `S3_PROVIDER=aws` + `AWS_*`, or `S3_PROVIDER=digitalocean` + `DO_SPACES_*`; `DEFAULT_FILE_PROVIDER=s3` |
 | Transactional email | `SMTP_*`, `FROM_EMAIL` |
 | Swagger basic auth | `API_DOCS_PASSWORD` |
 | Storage quota | `STORAGE_LIMIT_MB` |

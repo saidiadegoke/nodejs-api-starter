@@ -4,6 +4,7 @@ const AdminSettingsController = require('./controllers/adminSettings.controller'
 const AdminAuditController = require('./controllers/adminAudit.controller');
 const RbacController = require('./controllers/rbac.controller');
 const AdminUsersController = require('./controllers/adminUsers.controller');
+const UserController = require('../users/controllers/user.controller');
 const {
   requireAuth,
   requireRole,
@@ -74,6 +75,18 @@ router.delete('/permissions/:permissionId', requireAuth, requireAdmin, RbacContr
 
 router.get('/users/:userId/roles', requireAuth, requireAdmin, RbacController.listUserRoles);
 router.patch('/users/:userId/roles', requireAuth, requireAdmin, RbacController.setUserRoles);
+
+// ============================================================================
+// Admin users
+// ============================================================================
+
+/** GET /admin/users — paginated user list (requires users.view) */
+router.get(
+  '/users',
+  requireAuth,
+  requirePermission('users.view'),
+  UserController.getAllUsers
+);
 
 // ============================================================================
 // Admin user creation (with university association)
