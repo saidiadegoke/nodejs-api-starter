@@ -747,6 +747,7 @@ CASCADE), automatically detaching it from every role that held it.
 ### Assign / unassign roles for a user
 
 ```
+GET   /admin/users                     (users.view) — paginated user list; alias `GET /users`
 GET   /admin/users/{userId}/roles      (admin)   — list current active roles
 PATCH /admin/users/{userId}/roles      (admin)
 ```

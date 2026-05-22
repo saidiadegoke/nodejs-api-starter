@@ -1,31 +1,65 @@
 const pool = require('../../../db/pool');
 
+const USER_LIST_SELECT = `
+  SELECT
+    u.id,
+    u.email,
+    u.phone,
+    u.status,
+    u.email_verified,
+    u.phone_verified,
+    u.created_at,
+    u.updated_at,
+    p.first_name,
+    p.last_name,
+    p.display_name,
+    p.jupeb_university_id,
+    COALESCE(
+      (
+        SELECT array_agg(r.name ORDER BY r.name)
+        FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id = u.id
+          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+      ),
+      ARRAY[]::text[]
+    ) AS roles
+  FROM users u
+  LEFT JOIN profiles p ON u.id = p.user_id
+`;
+
 class User {
   /**
-   * Find all users
+   * Find all users (non-deleted) with profile and role names
    */
   static async findAll(limit = 10, offset = 0) {
     const result = await pool.query(
-      'SELECT id, email, username, full_name, phone, role, is_active, created_at, updated_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      `${USER_LIST_SELECT}
+       WHERE u.deleted_at IS NULL
+       ORDER BY u.created_at DESC
+       LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     return result.rows;
   }
 
   /**
-   * Count total users
+   * Count total non-deleted users
    */
   static async count() {
-    const result = await pool.query('SELECT COUNT(*) FROM users');
-    return parseInt(result.rows[0].count);
+    const result = await pool.query(
+      'SELECT COUNT(*) FROM users WHERE deleted_at IS NULL'
+    );
+    return parseInt(result.rows[0].count, 10);
   }
 
   /**
-   * Find user by ID
+   * Find user by ID with profile and roles
    */
   static async findById(id) {
     const result = await pool.query(
-      'SELECT id, email, username, full_name, phone, role, is_active, created_at, updated_at FROM users WHERE id = $1',
+      `${USER_LIST_SELECT}
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
       [id]
     );
     return result.rows[0];
@@ -36,7 +70,7 @@ class User {
    */
   static async findByEmail(email) {
     const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
+      'SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL',
       [email]
     );
     return result.rows[0];
@@ -79,5 +113,3 @@ class User {
 }
 
 module.exports = User;
-
-
