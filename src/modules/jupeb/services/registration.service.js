@@ -318,6 +318,7 @@ class RegistrationService {
     }
     await assertInstitutionUniversityAccess(userId, university_id);
     await assertComboForUniversity(subject_combination_id, university_id);
+
     const institution_issued_code = await generateUniqueInstitutionCode();
     const provisional_serial = await registrationModel.nextProvisionalSerial(session_id, university_id);
     const provisional_candidate_code = buildProvisionalCandidateCode(
@@ -366,12 +367,6 @@ class RegistrationService {
         }
       }
 
-      // Send the candidate the registration code via email if we know
-      // their intake email. Fire-and-forget — no-ops silently when SMTP
-      // isn't configured or no email is on the verification's intake.
-      // Deferred via setImmediate so the unawaited promise's DB queries
-      // don't share the express response's microtask tail (which
-      // measurably delays response in async-hooks-instrumented stacks).
       setImmediate(() => { jupebMailer.sendCodeIssued(row.id); });
 
       return serializeRegistration(row);
@@ -733,11 +728,12 @@ class RegistrationService {
     if (!canTransition(reg.status, 'rejected')) {
       throw httpError(422, 'Registration cannot be rejected from its current status');
     }
-    return transitionStatus(reg, 'rejected', {
+    const updated = await transitionStatus(reg, 'rejected', {
       userId,
       reason,
       extraFields: { status_reason: reason },
     });
+    return serializeRegistration(updated);
   }
 
   /**
@@ -754,11 +750,12 @@ class RegistrationService {
     if (!canTransition(reg.status, 'withdrawn')) {
       throw httpError(422, `Registration cannot be withdrawn from status ${reg.status}`);
     }
-    return transitionStatus(reg, 'withdrawn', {
+    const updated = await transitionStatus(reg, 'withdrawn', {
       userId,
       reason: reason || null,
       extraFields: { status_reason: reason || null },
     });
+    return serializeRegistration(updated);
   }
 
   /**

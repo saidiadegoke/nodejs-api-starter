@@ -1,12 +1,17 @@
 const catalogService = require('../services/catalog.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
-const { NOT_FOUND, CONFLICT, INTERNAL_SERVER_ERROR, CREATED } = require('../../../shared/constants/statusCodes');
+const { NOT_FOUND, INTERNAL_SERVER_ERROR, CREATED } = require('../../../shared/constants/statusCodes');
+const { mapUniqueViolation } = require('../../../shared/utils/pg-unique-violation');
 
-function mapPgError(err) {
-  if (err && err.code === '23505') {
-    return { status: CONFLICT, message: 'Duplicate value violates unique constraint' };
+function sendCatalogError(res, err) {
+  if (err && err.status) {
+    return sendError(res, err.message, err.status, err.details || null);
   }
-  return { status: INTERNAL_SERVER_ERROR, message: err.message || 'Internal server error' };
+  const mapped = mapUniqueViolation(err);
+  if (mapped) {
+    return sendError(res, mapped.message, mapped.status, mapped.details);
+  }
+  return sendError(res, err.message || 'Internal server error', INTERNAL_SERVER_ERROR);
 }
 
 class CatalogController {
@@ -57,15 +62,10 @@ class CatalogController {
 
   static async createUniversity(req, res) {
     try {
-      const row = await catalogService.createUniversity(req.body);
-      return sendSuccess(res, row, 'University created', 201);
+      const row = await catalogService.createUniversity(req.body, req.user && req.user.user_id);
+      return sendSuccess(res, row, 'University created', CREATED);
     } catch (err) {
-      if (err.code === '23505') {
-        const m = mapPgError(err);
-        return sendError(res, m.message, m.status);
-      }
-      const status = err.status || INTERNAL_SERVER_ERROR;
-      return sendError(res, err.message, status);
+      return sendCatalogError(res, err);
     }
   }
 
@@ -74,12 +74,7 @@ class CatalogController {
       const row = await catalogService.patchUniversity(req.params.universityId, req.body);
       return sendSuccess(res, row, 'University updated');
     } catch (err) {
-      if (err.code === '23505') {
-        const m = mapPgError(err);
-        return sendError(res, m.message, m.status);
-      }
-      const status = err.status || NOT_FOUND;
-      return sendError(res, err.message, status);
+      return sendCatalogError(res, err);
     }
   }
 
@@ -134,12 +129,7 @@ class CatalogController {
       const row = await catalogService.createSubjectCombination(req.body);
       return sendSuccess(res, row, 'Subject combination created', 201);
     } catch (err) {
-      if (err.code === '23505') {
-        const m = mapPgError(err);
-        return sendError(res, m.message, m.status);
-      }
-      const status = err.status || INTERNAL_SERVER_ERROR;
-      return sendError(res, err.message, status);
+      return sendCatalogError(res, err);
     }
   }
 
@@ -151,12 +141,7 @@ class CatalogController {
       );
       return sendSuccess(res, row, 'Subject combination updated');
     } catch (err) {
-      if (err.code === '23505') {
-        const m = mapPgError(err);
-        return sendError(res, m.message, m.status);
-      }
-      const status = err.status || NOT_FOUND;
-      return sendError(res, err.message, status);
+      return sendCatalogError(res, err);
     }
   }
 

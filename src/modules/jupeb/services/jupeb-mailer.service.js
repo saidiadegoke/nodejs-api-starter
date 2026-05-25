@@ -259,6 +259,31 @@ async function sendMatricAssigned(registrationId) {
   );
 }
 
+/**
+ * Sent when an institution_admin account is provisioned (e.g. POST /catalog/universities).
+ */
+async function sendInstitutionAdminCredentials({ email, password, firstName, universityName }) {
+  if (!email || !password) return;
+  const loginUrl = `${frontendUrl()}/auth/login`;
+  return fireAndForget(
+    sendEmail({
+      to: email,
+      subject: `${appName()} — your institution account is ready`,
+      templateFile: 'jupeb-institution-admin-credentials.html',
+      placeholders: {
+        appName: appName(),
+        firstName: firstName || 'Admin',
+        universityName: universityName || 'your institution',
+        email,
+        password,
+        loginUrl,
+        year: year(),
+      },
+    }),
+    'institution-admin-credentials'
+  );
+}
+
 module.exports = {
   sendCodeIssued,
   sendWelcomeStudent,
@@ -266,4 +291,5 @@ module.exports = {
   sendRegistrationRejected,
   sendRegistrationWithdrawn,
   sendMatricAssigned,
+  sendInstitutionAdminCredentials,
 };

@@ -68,6 +68,8 @@ paths:
             Created row includes `institution_issued_code`, `provisional_candidate_code`, and
             an embedded `nin_verification` summary (`{ id, status }`) — or `null` when no
             verification is linked.
+        '409':
+          description: Duplicate NIN registration
           content:
             application/json:
               schema:
@@ -88,6 +90,14 @@ paths:
                           status:
                             type: string
                             enum: [verified, failed, pending]
+                      institution_admin:
+                        nullable: true
+                        type: object
+                        properties:
+                          user_id: { type: string, format: uuid }
+                          email: { type: string, format: email }
+                          first_name: { type: string, nullable: true }
+                          last_name: { type: string, nullable: true }
     get:
       tags: [Registration — institution]
       summary: List registrations (filters)
@@ -277,12 +287,49 @@ paths:
       responses:
         '200': { description: OK }
 
+  /registration/institution/registrations/batch:
+    post:
+      tags: [Registration — institution]
+      summary: Batch approve, reject, or withdraw registrations
+      description: |
+        Applies `approve`, `reject`, or `withdraw` to each id independently. Never short-circuits
+        on the first failure — every id receives a verdict in `accepted` or `rejected`.
+
+        For a single registration, you may use this endpoint or the per-id routes below.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, action]
+              properties:
+                ids:
+                  type: array
+                  maxItems: 100
+                  items: { type: string, format: uuid }
+                action:
+                  type: string
+                  enum: [approve, reject, withdraw]
+                reason:
+                  type: string
+                  description: Required when action is `reject`; optional for `withdraw`
+      responses:
+        '200':
+          description: |
+            `{ accepted: [{ id, status }], rejected: [{ id, error_code, message, status }], action }`
+        '422':
+          description: Validation error (empty ids, invalid action, reject without reason, etc.)
+
   /registration/institution/registrations/{registrationId}/approve:
     post:
       tags: [Registration — institution]
       summary: Approve after institution review (unlocks dashboard)
       description: |
         Transitions the registration to `approved` and sets `dashboard_unlocked_at`.
+        For multiple registrations, prefer `POST .../batch` with `action: approve`.
 
         **NIN gate:** if the registration is linked to a `nin_verification_id` whose status is
         not `verified`, this endpoint returns `422` with a message naming the current NIN
@@ -306,6 +353,8 @@ paths:
     post:
       tags: [Registration — institution]
       summary: Reject with reason
+      description: |
+        For multiple registrations, prefer `POST .../batch` with `action: reject` and `reason`.
       security:
         - BearerAuth: []
       parameters:
