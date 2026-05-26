@@ -1722,6 +1722,22 @@ URLs) and biometric coverage status.
 
 ### Institution: 12 — Approve (or reject)
 
+Bulk (up to 100 ids per request; per-row success/failure):
+
+```
+POST /registration/institution/registrations/batch     (inst)
+```
+
+`req`
+```json
+{ "ids": ["uuid", "..."], "action": "approve" | "reject" | "withdraw", "reason": "..." }
+```
+
+- `reject` requires `reason`; `withdraw` optional `reason`
+- `res 200` — `{ accepted: [{ id, status }], rejected: [{ id, error_code, message }], action }`
+
+Single registration:
+
 ```
 POST /registration/institution/registrations/{registrationId}/approve     (inst)
 ```
@@ -1745,6 +1761,14 @@ POST /registration/institution/registrations/{registrationId}/reject     (inst)
 ```
 
 `res 200` — status `rejected`, `status_reason` set.
+
+Withdraw:
+
+```
+POST /registration/institution/registrations/{registrationId}/withdraw     (inst)
+```
+
+`req` optional `{ "reason": "..." }`. Also available via batch with `action: withdraw`.
 
 ### Candidate: 13 — Dashboard unlocked
 

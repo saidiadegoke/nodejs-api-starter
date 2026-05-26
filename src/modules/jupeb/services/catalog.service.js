@@ -1,5 +1,6 @@
 const pool = require('../../../db/pool');
 const universityModel = require('../models/university.model');
+const { provisionInstitutionAdminOnUniversityCreate } = require('./institution-admin-provision.service');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const subjectModel = require('../models/subject.model');
 const { validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
@@ -12,9 +13,12 @@ function isUuid(value) {
   );
 }
 
-function httpError(status, message) {
+const { enrichUniqueViolationError } = require('../../../shared/utils/pg-unique-violation');
+
+function httpError(status, message, details) {
   const err = new Error(message);
   err.status = status;
+  if (details) err.details = details;
   return err;
 }
 
@@ -56,11 +60,12 @@ class CatalogService {
   }
 
   _validateInstitutionContact(body) {
-    if (body.email !== undefined && body.email !== null && body.email !== '') {
-      const email = String(body.email).trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw httpError(422, 'email is malformed');
-      }
+    const email = body.email !== undefined && body.email !== null ? String(body.email).trim() : '';
+    if (!email) {
+      throw httpError(422, 'email is required');
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw httpError(422, 'email is malformed');
     }
     if (
       body.expected_candidate_count !== undefined
@@ -74,7 +79,7 @@ class CatalogService {
     }
   }
 
-  async createUniversity(body) {
+  async createUniversity(body, createdBy = null) {
     const { code, name, short_name, jupeb_prefix, metadata, university_type } = body;
     if (!code || !name || !jupeb_prefix) {
       throw httpError(422, 'code, name, and jupeb_prefix are required');
@@ -88,22 +93,47 @@ class CatalogService {
       }
     }
     this._validateInstitutionContact(body);
-    return universityModel.create({
-      code,
-      name,
-      short_name,
-      jupeb_prefix: String(jupeb_prefix).trim(),
-      metadata: metadata && typeof metadata === 'object' ? metadata : {},
-      university_type: university_type || null,
-      email: body.email ? String(body.email).trim() : null,
-      address: body.address ? String(body.address).trim() : null,
-      phone: body.phone ? String(body.phone).trim() : null,
-      expected_candidate_count:
-        body.expected_candidate_count !== undefined && body.expected_candidate_count !== null && body.expected_candidate_count !== ''
-          ? Number(body.expected_candidate_count)
-          : null,
-      description: body.description ? String(body.description).trim() : null,
-    });
+
+    let university;
+    try {
+      university = await universityModel.create({
+        code,
+        name,
+        short_name,
+        jupeb_prefix: String(jupeb_prefix).trim(),
+        metadata: metadata && typeof metadata === 'object' ? metadata : {},
+        university_type: university_type || null,
+        email: body.email ? String(body.email).trim() : null,
+        address: body.address ? String(body.address).trim() : null,
+        phone: body.phone ? String(body.phone).trim() : null,
+        expected_candidate_count:
+          body.expected_candidate_count !== undefined &&
+          body.expected_candidate_count !== null &&
+          body.expected_candidate_count !== ''
+            ? Number(body.expected_candidate_count)
+            : null,
+        description: body.description ? String(body.description).trim() : null,
+      });
+    } catch (err) {
+      if (err && err.code === '23505') {
+        throw enrichUniqueViolationError(err);
+      }
+      throw err;
+    }
+
+    try {
+      const admin = await provisionInstitutionAdminOnUniversityCreate(body, {
+        university_id: university.id,
+        universityName: university.name,
+        createdBy,
+      });
+      return { ...university, institution_admin: admin.institution_admin };
+    } catch (err) {
+      await pool
+        .query('DELETE FROM jupeb_universities WHERE id = $1', [university.id])
+        .catch(() => {});
+      throw err;
+    }
   }
 
   async patchUniversity(id, body) {

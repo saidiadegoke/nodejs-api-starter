@@ -205,7 +205,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [code, name, jupeb_prefix]
+              required: [code, name, jupeb_prefix, email]
               properties:
                 code: { type: string }
                 name: { type: string }
@@ -216,7 +216,12 @@ paths:
                 university_type:
                   type: string
                   enum: [federal, state, private]
-                email: { type: string, format: email }
+                email:
+                  type: string
+                  format: email
+                  description: |
+                    Institution contact email and `institution_admin` login. A password is
+                    generated and emailed (not returned in the API response).
                 address: { type: string }
                 phone: { type: string }
                 expected_candidate_count:
@@ -224,9 +229,19 @@ paths:
                   minimum: 0
                 description: { type: string }
                 metadata: { type: object }
+                admin_first_name:
+                  type: string
+                  description: Optional admin profile name (updatable later).
+                admin_last_name:
+                  type: string
+                  description: Optional admin profile name (updatable later).
       responses:
         '201':
-          description: Created — response data is the `University` row.
+          description: |
+            Created — response data is the `University` row plus `institution_admin`
+            (login uses `email`; password sent by email).
+        '409':
+          description: Duplicate university code/prefix, or login email already registered
         '422': { description: Validation error (incl. malformed email, negative capacity) }
         '401': { description: Unauthorized }
 

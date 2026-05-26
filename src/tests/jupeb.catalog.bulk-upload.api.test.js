@@ -36,9 +36,9 @@ describe('Catalog bulk CSV upload — accepts multipart, raw csv, JSON', () => {
   }
 
   function makeCsv(codes) {
-    const lines = ['code,name,jupeb_prefix'];
+    const lines = ['code,name,jupeb_prefix,email'];
     for (const c of codes) {
-      lines.push(`${c},${c} Probe Univ,${nextJupebTestPrefix()}`);
+      lines.push(`${c},${c} Probe Univ,${nextJupebTestPrefix()},bulk-${c}@example.com`);
     }
     cleanupCodes.push(...codes);
     return lines.join('\n');
