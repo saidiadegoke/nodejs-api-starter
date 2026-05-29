@@ -319,7 +319,9 @@ paths:
       responses:
         '200':
           description: |
-            `{ accepted: [{ id, status }], rejected: [{ id, error_code, message, status }], action }`
+            `{ accepted: [{ id, status }], rejected: [{ id, error_code, message, http_status }], action }`.
+            In `accepted`, `status` is the new registration status. In `rejected`, `http_status` is the
+            HTTP-equivalent error for that row (often 422); the registration row was not updated.
         '422':
           description: Validation error (empty ids, invalid action, reject without reason, etc.)
 

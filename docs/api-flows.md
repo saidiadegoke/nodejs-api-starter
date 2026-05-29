@@ -1734,7 +1734,14 @@ POST /registration/institution/registrations/batch     (inst)
 ```
 
 - `reject` requires `reason`; `withdraw` optional `reason`
-- `res 200` — `{ accepted: [{ id, status }], rejected: [{ id, error_code, message }], action }`
+- `res 200` — `{ accepted: [{ id, status }], rejected: [{ id, error_code, message, http_status }], action }`.
+  **Important:** the HTTP status is always **200** when the batch request itself is valid. Rows that
+  could not be updated appear under `rejected` (with `http_status`, often 422). Check both arrays —
+  do not assume every id succeeded just because the response is 200.
+- **Approve / reject** only apply when the registration is already in **`pending_institution_review`**
+  (after the student has submitted for institution review). Earlier states (`code_issued`, `claimed`,
+  `pending_documents`, etc.) return **422** on the single-row routes, or a **`rejected`** entry in batch.
+- **Approve** additionally requires linked NIN verification to be **`verified`** when a NIN is linked.
 
 Single registration:
 
@@ -1743,7 +1750,8 @@ POST /registration/institution/registrations/{registrationId}/approve     (inst)
 ```
 
 `res 200` — registration transitions to `approved`,
-`dashboard_unlocked_at` is set.
+`dashboard_unlocked_at` is set. Only valid when the row is already in
+`pending_institution_review` (otherwise **422**).
 
 **NIN gate**: if the linked NIN verification is still `pending` or
 `failed`, this returns 422 with a message naming the current NIN status.
@@ -1760,7 +1768,8 @@ POST /registration/institution/registrations/{registrationId}/reject     (inst)
 { "reason": "Incomplete WAEC scan" }
 ```
 
-`res 200` — status `rejected`, `status_reason` set.
+`res 200` — status `rejected`, `status_reason` set. Only valid from
+`pending_institution_review` (otherwise **422**).
 
 Withdraw:
 
@@ -1769,6 +1778,10 @@ POST /registration/institution/registrations/{registrationId}/withdraw     (inst
 ```
 
 `req` optional `{ "reason": "..." }`. Also available via batch with `action: withdraw`.
+
+**Withdraw is not delete:** the registration row stays in the database; `status` becomes `withdrawn`
+(a terminal state). Lists and analytics typically exclude withdrawn rows, but history and audit
+data remain. There is no hard-delete API on this path.
 
 ### Candidate: 13 — Dashboard unlocked
 

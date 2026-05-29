@@ -762,7 +762,7 @@ class RegistrationService {
    * E.7 — batch approve / reject / withdraw. Loops over rows and applies the
    * per-row guards from the existing single-row endpoints. Never short-circuits
    * on first failure: every id gets a verdict, returned as
-   *   { accepted: [{ id, status }], rejected: [{ id, error_code, message }] }.
+   *   { accepted: [{ id, status }], rejected: [{ id, error_code, message, http_status }], action }.
    *
    * Body: { ids: [uuid, ...], action: 'approve'|'reject'|'withdraw', reason?: string }
    *   - approve: no reason required.
@@ -810,7 +810,7 @@ class RegistrationService {
           id,
           error_code: (err.details && err.details.error_code) || mapErrorCode(err),
           message: err.message,
-          status: err.status || 500,
+          http_status: err.status || 500,
         });
       }
     }
