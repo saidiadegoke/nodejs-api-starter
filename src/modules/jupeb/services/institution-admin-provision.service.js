@@ -10,14 +10,25 @@ const jupebMailer = require('./jupeb-mailer.service');
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+const LOWER = 'abcdefghijkmnopqrstuvwxyz';
+const DIGIT = '23456789';
+const SPECIAL = '!@#$%&*';
+
+/** Meets institution portal rules: ≥8 chars, uppercase, lowercase, special. */
 function generatePassword(length = 12) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
-  let out = '';
-  const bytes = crypto.randomBytes(length);
-  for (let i = 0; i < length; i += 1) {
-    out += chars[bytes[i] % chars.length];
+  const len = Math.max(8, length);
+  const pick = (set) => set[crypto.randomInt(0, set.length)];
+  const pool = UPPER + LOWER + DIGIT + SPECIAL;
+  const chars = [pick(UPPER), pick(LOWER), pick(SPECIAL)];
+  for (let i = chars.length; i < len; i += 1) {
+    chars.push(pick(pool));
   }
-  return out;
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
 }
 
 function httpError(status, message, details) {
@@ -114,7 +125,7 @@ async function provisionInstitutionAdmin({
   const user = await AuthModel.createUser({
     email: normalizedEmail,
     phone: null,
-    password: 'password',
+    password: passwordPlaintext,
     first_name: firstName,
     last_name: lastName,
     role: 'institution_admin',
