@@ -56,6 +56,46 @@ describe('JUPEB identity API', () => {
     expect(getRes.body.data.status).toBe('verified');
   });
 
+  it('persists intake_payload on verify and echoes it on profile.intake + data.intake_payload', async () => {
+    if (!identityMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const nin = `8${String(Date.now()).slice(-10)}`;
+    const res = await request(app)
+      .post('/identity/nin/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        nin,
+        idempotency_key: `idem-intake-${Date.now()}`,
+        intake_payload: {
+          name: 'Quadri Sikiru',
+          email: 'quadri@example.com',
+          phone: '08136156937',
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.data.intake_payload).toMatchObject({
+      name: 'Quadri Sikiru',
+      email: 'quadri@example.com',
+      phone: '08136156937',
+    });
+    expect(res.body.data.profile.intake).toMatchObject({
+      name: 'Quadri Sikiru',
+      email: 'quadri@example.com',
+      phone: '08136156937',
+    });
+
+    const getRes = await request(app)
+      .get(`/identity/nin/verifications/${res.body.data.verification_id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.data.intake_payload).toMatchObject({
+      name: 'Quadri Sikiru',
+      email: 'quadri@example.com',
+      phone: '08136156937',
+    });
+  });
+
   it('rejects invalid NIN format', async () => {
     if (!identityMigrated) return;
     const token = await getAdminToken();

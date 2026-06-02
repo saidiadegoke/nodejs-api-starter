@@ -60,20 +60,107 @@ function sanitizeVerification(row) {
   };
 }
 
-function publicVerifyResponse(row) {
-  const payload = row.response_payload || {};
-  const profile = {
-    first_name: payload.first_name,
-    last_name: payload.last_name,
-    middle_name: payload.middle_name ?? null,
-    date_of_birth: payload.date_of_birth ?? null,
-    gender: payload.gender ?? null,
-    nin_last4: row.nin_last4,
+/**
+ * Optional DB context for verify responses: the authenticated user (registrar)
+ * and any registration already linked to this verification id.
+ */
+async function enrichVerifyContext(row, userId) {
+  const extra = {};
+  if (!userId || !isUuid(userId)) return extra;
+  try {
+    const [callerRes, regRes] = await Promise.all([
+      pool.query(
+        `SELECT u.id, u.email, u.phone, u.email_verified, u.phone_verified, u.last_login_at,
+                p.title AS profile_title, p.first_name, p.last_name, p.display_name,
+                p.date_of_birth, p.gender, p.profile_photo_url, p.residential_address,
+                p.state_of_origin, p.lga, p.place_of_birth
+           FROM users u
+           LEFT JOIN profiles p ON p.user_id = u.id
+          WHERE u.id = $1
+          LIMIT 1`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT r.id, r.status, r.session_id, r.university_id, r.subject_combination_id,
+                r.user_id, r.nin_verification_id, r.institution_issued_code,
+                r.provisional_candidate_code, r.jupeb_candidate_number,
+                r.claimed_at, r.submitted_at, r.approved_at, r.created_at, r.updated_at
+           FROM jupeb_registrations r
+          WHERE r.nin_verification_id = $1
+          ORDER BY r.updated_at DESC NULLS LAST, r.created_at DESC
+          LIMIT 1`,
+        [row.id]
+      ),
+    ]);
+    const c = callerRes.rows[0];
+    if (c) {
+      extra.caller_user = {
+        id: c.id,
+        email: c.email,
+        phone: c.phone,
+        email_verified: c.email_verified,
+        phone_verified: c.phone_verified,
+        last_login_at: c.last_login_at,
+        profile: {
+          title: c.profile_title,
+          first_name: c.first_name,
+          last_name: c.last_name,
+          display_name: c.display_name,
+          date_of_birth: c.date_of_birth,
+          gender: c.gender,
+          profile_photo_url: c.profile_photo_url,
+          residential_address: c.residential_address,
+          state_of_origin: c.state_of_origin,
+          lga: c.lga,
+          place_of_birth: c.place_of_birth,
+        },
+      };
+    }
+    if (regRes.rows[0]) {
+      extra.registration = regRes.rows[0];
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[enrichVerifyContext]', err && err.message);
+  }
+  return extra;
+}
+
+/**
+ * Echo intake form fields inside `profile` so clients can render one object
+ * (NIN-derived + registrar-typed) without losing the typed name/email/phone.
+ */
+function attachIntakeToProfile(profile, intake) {
+  const base = { ...profile };
+  const i = intake && typeof intake === 'object' ? intake : {};
+  const block = {
+    name: i.name ?? null,
+    email: i.email ?? null,
+    phone: i.phone ?? null,
+    subject_combination_id: i.subject_combination_id ?? null,
   };
+  if (block.name || block.email || block.phone || block.subject_combination_id) {
+    base.intake = block;
+  }
+  return base;
+}
+
+async function publicVerifyResponse(row, userId) {
+  const rawPayload = row.response_payload && typeof row.response_payload === 'object'
+    ? row.response_payload
+    : {};
+  const intake = row.intake_payload && typeof row.intake_payload === 'object'
+    ? row.intake_payload
+    : {};
+  const profile = attachIntakeToProfile({
+    ...rawPayload,
+    nin_last4: row.nin_last4,
+  }, intake);
   const out = {
     verification_id: row.id,
     status: row.status,
     profile,
+    intake_payload: row.intake_payload || {},
   };
   if (row.status === 'pending') {
     out.retry_after = row.retry_after;
@@ -88,6 +175,23 @@ function publicVerifyResponse(row) {
   if (row.status === 'failed' && row.error_payload && Object.keys(row.error_payload).length) {
     out.error = row.error_payload;
   }
+  Object.assign(out, await enrichVerifyContext(row, userId));
+  return out;
+}
+
+async function publicVerifyFailedResponse(row, userId) {
+  const intake = row.intake_payload && typeof row.intake_payload === 'object'
+    ? row.intake_payload
+    : {};
+  const profile = attachIntakeToProfile({ nin_last4: row.nin_last4 }, intake);
+  const out = {
+    verification_id: row.id,
+    status: 'failed',
+    profile,
+    intake_payload: row.intake_payload || {},
+    error: row.error_payload,
+  };
+  Object.assign(out, await enrichVerifyContext(row, userId));
   return out;
 }
 
@@ -121,7 +225,12 @@ class IdentityService {
         if (existing.nin_hash !== ninHash) {
           throw httpError(409, 'idempotency_key was already used for a different NIN');
         }
-        return publicVerifyResponse(existing);
+        let rowOut = existing;
+        if (Object.keys(intake).length) {
+          const updated = await ninVerificationModel.mergeIntakePayload(existing.id, intake);
+          if (updated) rowOut = updated;
+        }
+        return publicVerifyResponse(rowOut, userId);
       }
     }
 
@@ -132,7 +241,12 @@ class IdentityService {
     // approved/rejected/withdrawn (see RegistrationService transitionStatus).
     const cached = await ninVerificationModel.findActiveCacheByNinHash(ninHash);
     if (cached) {
-      return publicVerifyResponse(cached);
+      let rowOut = cached;
+      if (Object.keys(intake).length) {
+        const updated = await ninVerificationModel.mergeIntakePayload(cached.id, intake);
+        if (updated) rowOut = updated;
+      }
+      return publicVerifyResponse(rowOut, userId);
     }
 
     const provider = ninAdapter.getProvider();
@@ -155,7 +269,7 @@ class IdentityService {
         },
         requested_by: userId,
       });
-      return publicVerifyResponse(row);
+      return publicVerifyResponse(row, userId);
     }
 
     if (adapterResult.outcome === 'failed') {
@@ -173,13 +287,9 @@ class IdentityService {
         },
         verified_at: null,
         requested_by: userId,
+        intake_payload: intake,
       });
-      return {
-        verification_id: row.id,
-        status: 'failed',
-        profile: { nin_last4: last4 },
-        error: row.error_payload,
-      };
+      return publicVerifyFailedResponse(row, userId);
     }
 
     const row = await ninVerificationModel.create({
@@ -193,8 +303,9 @@ class IdentityService {
       error_payload: {},
       verified_at: new Date().toISOString(),
       requested_by: userId,
+      intake_payload: intake,
     });
-    return publicVerifyResponse(row);
+    return publicVerifyResponse(row, userId);
   }
 
   async retryVerification(verificationId, userId) {
@@ -202,7 +313,7 @@ class IdentityService {
     const existing = await ninVerificationModel.findById(verificationId);
     if (!existing) throw httpError(404, 'Verification not found');
     if (existing.status !== 'pending') {
-      return publicVerifyResponse(existing);
+      return publicVerifyResponse(existing, userId);
     }
     const adapterResult = await ninAdapter.verifyNin(
       // We don't have the raw NIN; the adapter mock doesn't need it for force-modes.
@@ -242,7 +353,7 @@ class IdentityService {
         console.warn('[markVerified] write-through query failed:', err && err.message);
       }
 
-      return publicVerifyResponse(row);
+      return publicVerifyResponse(row, userId);
     }
     if (adapterResult.outcome === 'failed') {
       const row = await ninVerificationModel.markFailed(verificationId, {
@@ -253,12 +364,7 @@ class IdentityService {
         last_error_code: adapterResult.error_code || 'verification_failed',
       });
       await emitNinResolved(verificationId, 'failed');
-      return {
-        verification_id: row.id,
-        status: 'failed',
-        profile: { nin_last4: row.nin_last4 },
-        error: row.error_payload,
-      };
+      return publicVerifyFailedResponse(row, userId);
     }
     const seconds = adapterResult.retry_after_seconds || 300;
     const retry_after = new Date(Date.now() + seconds * 1000).toISOString();
@@ -270,7 +376,7 @@ class IdentityService {
         message: adapterResult.error_message || null,
       },
     });
-    return publicVerifyResponse(row || existing);
+    return publicVerifyResponse(row || existing, userId);
   }
 
   async getVerification(verificationId, userId) {

@@ -127,6 +127,18 @@ describe('speedysms NIN provider', () => {
     expect(r.profile.next_of_kin.relationship).toBeNull();
     expect(r.profile.next_of_kin.contact).toBeNull();
     expect(r.profile.photo_url).toBe('https://s3.example/sig/photo.jpg?sig=…');
+    expect(r.profile.birthplace).toMatchObject({ country: 'nigeria', state: 'Lagos', lga: 'Lagos Mainland' });
+    expect(r.profile.residence).toMatchObject({
+      address: '2A MUSA ADE STREET',
+      town: 'OGBA',
+      lga: 'Ogba',
+      state: 'Lagos',
+      status: 'birth',
+    });
+    expect(r.profile.provider_lookup).toMatchObject({
+      lookup_id: 'lookup-abc',
+      nin_last_4: '8901',
+    });
   });
 
   it('maps status=not_found to outcome=failed (terminal)', async () => {
@@ -211,6 +223,49 @@ describe('speedysms NIN provider', () => {
   //   { success:true, message, data: { status:'success', lookup_id, data:{...profile}, photo_url, ... } }
   // The outer `data` is the IdentityLookupResult; the inner `data.data` is the
   // NormalizedData record with the actual name / DOB / address fields.
+  it('maps HTTP 200 + {success:true, data:{status:failed, error}} to unavailable when message is wallet/balance (not verified)', async () => {
+    const http = makeHttpMock({
+      status: 200,
+      data: {
+        success: true,
+        message: 'NIN verification failed',
+        data: {
+          status: 'failed',
+          profile: { nin_last4: '5667' },
+          error: {
+            code: 'not_found',
+            message: 'Insufficient wallet balance to process api call',
+          },
+        },
+      },
+    });
+    const r = await speedysms.verifyNin('88379555667', { http });
+    expect(r.outcome).toBe('unavailable');
+    expect(r.error_code).toBe('identity_balance_exhausted');
+    expect(r.error_message).toContain('wallet');
+  });
+
+  it('maps HTTP 200 + {success:true, data:{status:failed, error}} to outcome=failed for real NIN not_found', async () => {
+    const http = makeHttpMock({
+      status: 200,
+      data: {
+        success: true,
+        message: 'Lookup failed',
+        data: {
+          status: 'failed',
+          error: {
+            code: 'not_found',
+            message: 'NIN not found in national database',
+          },
+        },
+      },
+    });
+    const r = await speedysms.verifyNin('12345678901', { http });
+    expect(r.outcome).toBe('failed');
+    expect(r.error_code).toBe('not_found');
+    expect(r.error_message).toContain('national database');
+  });
+
   it('maps the double-nested success envelope to outcome=verified with the inner profile', async () => {
     const http = makeHttpMock({
       status: 200,
@@ -246,7 +301,13 @@ describe('speedysms NIN provider', () => {
     expect(r.profile.date_of_birth).toBe('2000-03-30');
     expect(r.profile.gender).toBe('male');
     expect(r.profile.phone).toBe('08136156937');
+    expect(r.profile.phone_number).toBe('08136156937');
     expect(r.profile.photo_url).toBe('https://s3.example/photo.jpg');
+    expect(r.profile.signature_url).toBeNull();
+    expect(r.profile.provider_lookup).toMatchObject({
+      lookup_id: 'lookup-xyz',
+      nin_last_4: '5660',
+    });
   });
 
   it('forwards provider + force_fresh overrides to the upstream POST body', async () => {

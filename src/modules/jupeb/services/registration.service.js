@@ -178,6 +178,81 @@ async function loadNinVerificationSummary(reg) {
   return { id: row.id, status: row.status };
 }
 
+/**
+ * Full NIN row fields needed to mirror `getMeProfile` merge rules on the
+ * institution candidate-detail endpoint (M.2 parity with submission preview).
+ */
+async function loadNinVerificationForInstitutionDetail(reg) {
+  if (!reg || !reg.nin_verification_id) {
+    return { nin_verification: null, ninPayload: {}, intake: {} };
+  }
+  const row = await ninVerificationModel.findById(reg.nin_verification_id);
+  if (!row) return { nin_verification: null, ninPayload: {}, intake: {} };
+  return {
+    nin_verification: { id: row.id, status: row.status },
+    ninPayload: row.response_payload || {},
+    intake: row.intake_payload || {},
+  };
+}
+
+/**
+ * Same field precedence as `getMeProfile` so institution GET matches
+ * `GET /registration/me/submission-preview` for NIN-backed demographics.
+ */
+function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake) {
+  if (!candidateRow) return null;
+  const u = candidateRow;
+  const n = ninPayload || {};
+  const i = intake || {};
+  const first_name = u.first_name || n.first_name || null;
+  const last_name = u.last_name || n.last_name || null;
+  const display_name =
+    u.display_name
+    || [first_name, last_name].filter(Boolean).join(' ').trim()
+    || (i.name ? String(i.name).trim() : null)
+    || [n.first_name, n.last_name].filter(Boolean).join(' ').trim()
+    || null;
+  return {
+    id: u.id,
+    email: u.email || i.email || null,
+    phone: u.phone || i.phone || n.phone || null,
+    email_verified: u.email_verified,
+    phone_verified: u.phone_verified,
+    last_login_at: u.last_login_at,
+    first_name,
+    last_name,
+    display_name,
+    date_of_birth: n.date_of_birth || u.date_of_birth || null,
+    gender: n.gender || u.gender || null,
+    profile_photo_url: n.photo_url || u.profile_photo_url || null,
+    residential_address: u.residential_address || n.address || null,
+    state_of_origin: u.state_of_origin || n.state_of_origin || null,
+    lga: u.lga || n.lga || null,
+    place_of_birth: u.place_of_birth || n.place_of_birth || null,
+  };
+}
+
+function institutionNextOfKinFromNinPayload(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const name =
+    raw.name
+    || raw.full_name
+    || [raw.first_name, raw.middle_name, raw.last_name]
+      .filter((x) => x && String(x).trim())
+      .map((x) => String(x).trim())
+      .join(' ')
+    || null;
+  const phone = raw.phone || raw.contact || raw.contact_no || null;
+  return {
+    name,
+    relationship: raw.relationship || raw.relation || null,
+    phone,
+    email: raw.email || null,
+    address: raw.address || null,
+    source: 'nin',
+  };
+}
+
 async function loadDisplayObjects(reg) {
   if (!reg) return {};
   const [combo, university, session] = await Promise.all([
@@ -408,7 +483,7 @@ class RegistrationService {
 
     const [
       displays,
-      nin_verification,
+      ninBundle,
       candidate,
       biometrics,
       next_of_kin,
@@ -417,7 +492,7 @@ class RegistrationService {
       history,
     ] = await Promise.all([
       loadDisplayObjects(reg),
-      loadNinVerificationSummary(reg),
+      loadNinVerificationForInstitutionDetail(reg),
       reg.user_id ? pool.query(
         `SELECT u.id, u.email, u.phone, u.email_verified, u.phone_verified,
                 u.last_login_at,
@@ -455,7 +530,24 @@ class RegistrationService {
       ).then((r) => r.rows).catch(() => []),
     ]);
 
-    // Decode biometric status (mirrors the list endpoint's enrichment).
+    const { nin_verification, ninPayload, intake } = ninBundle;
+    const mergedCandidate = mergeInstitutionCandidateFromNin(candidate, ninPayload, intake);
+    let next_of_kin_response = null;
+    if (next_of_kin) {
+      next_of_kin_response = {
+        name: next_of_kin.name,
+        relationship: next_of_kin.relationship,
+        phone: next_of_kin.phone,
+        email: next_of_kin.email,
+        address: next_of_kin.address,
+        source: next_of_kin.source,
+      };
+    } else {
+      const fromNin = institutionNextOfKinFromNinPayload(ninPayload.next_of_kin);
+      if (fromNin && (fromNin.name || fromNin.phone || fromNin.email)) {
+        next_of_kin_response = fromNin;
+      }
+    }
     const captureTypes = new Set((biometrics || []).map((b) => b.capture_type).filter(Boolean));
     const skipped = {
       face: !!reg.face_skipped_at,
@@ -484,34 +576,8 @@ class RegistrationService {
       nin_verification_id: reg.nin_verification_id,
       ...displays,
       nin_verification,
-      candidate: candidate ? {
-        id: candidate.id,
-        email: candidate.email,
-        phone: candidate.phone,
-        email_verified: candidate.email_verified,
-        phone_verified: candidate.phone_verified,
-        last_login_at: candidate.last_login_at,
-        first_name: candidate.first_name,
-        last_name: candidate.last_name,
-        display_name: candidate.display_name
-          || [candidate.first_name, candidate.last_name].filter(Boolean).join(' ').trim()
-          || null,
-        date_of_birth: candidate.date_of_birth,
-        gender: candidate.gender,
-        profile_photo_url: candidate.profile_photo_url,
-        residential_address: candidate.residential_address,
-        state_of_origin: candidate.state_of_origin,
-        lga: candidate.lga,
-        place_of_birth: candidate.place_of_birth,
-      } : null,
-      next_of_kin: next_of_kin ? {
-        name: next_of_kin.name,
-        relationship: next_of_kin.relationship,
-        phone: next_of_kin.phone,
-        email: next_of_kin.email,
-        address: next_of_kin.address,
-        source: next_of_kin.source,
-      } : null,
+      candidate: mergedCandidate,
+      next_of_kin: next_of_kin_response,
       documents: documents || [],
       result_entries: result_entries || [],
       biometrics: (biometrics || []).map((b) => ({
