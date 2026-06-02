@@ -34,12 +34,13 @@ class NinVerificationModel {
       error_payload,
       verified_at,
       requested_by,
+      intake_payload,
     } = data;
     const result = await pool.query(
       `INSERT INTO jupeb_nin_verifications (
         nin_hash, nin_last4, provider, provider_reference, idempotency_key, status,
-        response_payload, error_payload, verified_at, requested_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)
+        response_payload, error_payload, verified_at, requested_by, intake_payload
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb)
       RETURNING ${RETURNING_COLUMNS}`,
       [
         nin_hash,
@@ -52,9 +53,31 @@ class NinVerificationModel {
         JSON.stringify(error_payload || {}),
         verified_at || null,
         requested_by || null,
+        JSON.stringify(intake_payload || {}),
       ]
     );
     return result.rows[0];
+  }
+
+  /**
+   * Shallow-merge JSON keys into intake_payload (Postgres jsonb ||).
+   * Used when re-verifying the same NIN (cache hit) with updated form fields.
+   */
+  async mergeIntakePayload(id, partial, client = pool) {
+    if (!id || !partial || typeof partial !== 'object') return null;
+    const cleaned = {};
+    for (const [k, v] of Object.entries(partial)) {
+      if (v !== undefined && v !== null && v !== '') cleaned[k] = v;
+    }
+    if (!Object.keys(cleaned).length) return null;
+    const result = await client.query(
+      `UPDATE jupeb_nin_verifications
+         SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || $2::jsonb
+       WHERE id = $1
+       RETURNING ${RETURNING_COLUMNS}`,
+      [id, JSON.stringify(cleaned)]
+    );
+    return result.rows[0] || null;
   }
 
   async createPending(data) {

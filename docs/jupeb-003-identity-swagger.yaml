@@ -71,12 +71,20 @@ paths:
                   type: string
                 intake_payload:
                   type: object
-                  description: Candidate fields captured alongside the NIN; persisted on the verification row so the form is not lost when the provider is unavailable.
+                  description: Candidate fields captured alongside the NIN; persisted on the verification row so the form is not lost when the provider is unavailable. Not forwarded to the upstream NIN API — only `nin` (and optional overrides below) are sent to SpeedySMS.
                   properties:
                     name: { type: string }
                     email: { type: string, format: email }
                     phone: { type: string }
                     subject_combination_id: { type: string, format: uuid }
+                provider:
+                  type: string
+                  description: |
+                    When `JUPEB_NIN_PROVIDER=speedysms`, forwarded on the upstream POST body.
+                    Use `mock` to hit SpeedySMS’s free test NIN pool (`00000000001`–`00000000010`) without billing the live identity pool.
+                force_fresh:
+                  type: boolean
+                  description: When true, forwarded upstream to bypass SpeedySMS cache (full-price lookup). Ignored when the active provider is `mock`.
       responses:
         '200':
           description: |
@@ -96,7 +104,24 @@ paths:
                       status:
                         type: string
                         enum: [verified, failed, pending]
-                      profile: { type: object }
+                      profile:
+                        type: object
+                        description: >
+                          Full stored provider profile (flat + nested fields). SpeedySMS supplies
+                          birthplace, residence, next_of_kin_record, provider_lookup, photo_url, etc.
+                          Mock mirrors the same shape in development. When `intake_payload` was sent,
+                          those fields are also nested under `profile.intake` for side-by-side UI.
+                      intake_payload:
+                        type: object
+                        description: Echo of the candidate fields submitted with this verify call (when provided).
+                      caller_user:
+                        type: object
+                        nullable: true
+                        description: Present when the request is authenticated — the registrar’s user row + profile (not the candidate).
+                      registration:
+                        type: object
+                        nullable: true
+                        description: Present when a `jupeb_registrations` row already references this `verification_id`.
                       retry_after:
                         type: string
                         format: date-time
