@@ -101,6 +101,11 @@ paths:
     get:
       tags: [Registration — institution]
       summary: List registrations (filters)
+      description: |
+        Each row includes `candidate` (`id`, `name`, `email`, `candidate_id`). Before the student claims
+        the code, `candidate.id` (the linked user id) is **null**; `name` / `email` may still be populated
+        from the linked `jupeb_nin_verifications` intake (`intake_payload`) or NIN provider payload when present.
+        Optional `q` matches those fields in addition to profile-based name/email.
       security:
         - BearerAuth: []
       parameters:
@@ -120,7 +125,10 @@ paths:
           in: query
           schema: { type: integer }
       responses:
-        '200': { description: Paginated }
+        '200':
+          description: |
+            Paginated list with `subject_combination` (full object + `subject_items`) and enriched `candidate`.
+            CSV export (`GET .../export`) uses the same subject pipeline for the `subject_combination` column.
 
   /registration/institution/registrations/{registrationId}:
     get:

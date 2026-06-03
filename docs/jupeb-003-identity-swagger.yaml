@@ -16,6 +16,31 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  schemas:
+    NinVerifySubjectCombination:
+      type: object
+      nullable: true
+      description: |
+        Returned when `intake_payload.subject_combination_id` is a UUID that resolves to an **active**
+        catalog subject combination. Same composite shape as institution registration list
+        (`code`, `title`, `subject_items[]`, etc.). Omitted when the id is missing, invalid, or the combo is inactive.
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        title: { type: string }
+        status: { type: string }
+        is_global: { type: boolean }
+        university_id: { type: string, format: uuid, nullable: true }
+        subject_items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              position: { type: integer }
+              subject_id: { type: string, format: uuid }
+              code: { type: string }
+              name: { type: string }
   parameters:
     VerificationId:
       name: verificationId
@@ -114,6 +139,8 @@ paths:
                       intake_payload:
                         type: object
                         description: Echo of the candidate fields submitted with this verify call (when provided).
+                      subject_combination:
+                        $ref: '#/components/schemas/NinVerifySubjectCombination'
                       caller_user:
                         type: object
                         nullable: true

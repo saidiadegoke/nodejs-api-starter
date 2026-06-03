@@ -10,6 +10,7 @@ const {
 
 describe('Institution registrations — list / stats / by-university / export (013 §E.1-E.6)', () => {
   let registrationMigrated = false;
+  let identityMigrated = false;
 
   beforeAll(async () => {
     try {
@@ -17,6 +18,12 @@ describe('Institution registrations — list / stats / by-university / export (0
       registrationMigrated = true;
     } catch {
       registrationMigrated = false;
+    }
+    try {
+      await pool.query('SELECT 1 FROM jupeb_nin_verifications LIMIT 1');
+      identityMigrated = true;
+    } catch {
+      identityMigrated = false;
     }
     process.env.JUPEB_INSTITUTION_CODE_TTL_HOURS = '0';
   });
@@ -279,5 +286,59 @@ describe('Institution registrations — list / stats / by-university / export (0
       'candidate_id,name,email,university,subject_combination,sittings_count,status,biometric_status,institution_issued_code,jupeb_candidate_number,provisional_candidate_code,created_at,submitted_at,approved_at'
     );
     expect(csv).toMatch(uni.name);
+    expect(csv).toMatch('CSV Combo');
+  });
+
+  it('pre-claim list fills candidate name/email from linked NIN intake; candidate.id is null', async () => {
+    if (!registrationMigrated || !identityMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const uni = await makeUniversity(adminToken, 'NINLD');
+    const combo = await makeSubjectCombination(adminToken, 'NINLD');
+    const session = await makeOpenSession(adminToken);
+
+    const nin = `5${String(Date.now()).slice(-10)}`;
+    const vRes = await request(app)
+      .post('/identity/nin/verify')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        nin,
+        idempotency_key: `idem-ninld-${Date.now()}`,
+        intake_payload: {
+          name: 'Preclaim Nin Person',
+          email: 'preclaimnin@example.com',
+        },
+      });
+    expect(vRes.status).toBe(200);
+    const verificationId = vRes.body.data.verification_id;
+
+    const created = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        session_id: session.id,
+        university_id: uni.id,
+        subject_combination_id: combo.id,
+        nin_verification_id: verificationId,
+      });
+    expect(created.status).toBe(201);
+    const regId = created.body.data.id;
+
+    const listRes = await request(app)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(listRes.status).toBe(200);
+    const row = listRes.body.data.find((r) => r.id === regId);
+    expect(row).toBeDefined();
+    expect(row.candidate.id).toBeNull();
+    expect(row.candidate.name).toBe('Preclaim Nin Person');
+    expect(row.candidate.email).toBe('preclaimnin@example.com');
+
+    const qRes = await request(app)
+      .get(`/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&q=Preclaim`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(qRes.status).toBe(200);
+    expect(qRes.body.data.some((r) => r.id === regId)).toBe(true);
   });
 });

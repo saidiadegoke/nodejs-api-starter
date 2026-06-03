@@ -1,5 +1,6 @@
 const pool = require('../../../db/pool');
 const ninVerificationModel = require('../models/nin-verification.model');
+const subjectCombinationModel = require('../models/subject-combination.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationModel = require('../models/registration.model');
 const ninAdapter = require('./nin-adapter.service');
@@ -127,9 +128,20 @@ async function enrichVerifyContext(row, userId) {
 }
 
 /**
+ * Same subject_combination shape as institution list when intake names a combo.
  * Echo intake form fields inside `profile` so clients can render one object
  * (NIN-derived + registrar-typed) without losing the typed name/email/phone.
  */
+async function subjectCombinationFromIntake(intake) {
+  if (!intake || typeof intake !== 'object') return null;
+  const cid = intake.subject_combination_id;
+  if (!cid || !isUuid(String(cid))) return null;
+  const combo = await subjectCombinationModel.findById(String(cid));
+  if (!combo || combo.status !== 'active') return null;
+  const subject_items = await subjectCombinationModel.listItems(combo.id);
+  return { ...combo, subject_items: subject_items || [] };
+}
+
 function attachIntakeToProfile(profile, intake) {
   const base = { ...profile };
   const i = intake && typeof intake === 'object' ? intake : {};
@@ -175,6 +187,8 @@ async function publicVerifyResponse(row, userId) {
   if (row.status === 'failed' && row.error_payload && Object.keys(row.error_payload).length) {
     out.error = row.error_payload;
   }
+  const subjectCombination = await subjectCombinationFromIntake(intake);
+  if (subjectCombination) out.subject_combination = subjectCombination;
   Object.assign(out, await enrichVerifyContext(row, userId));
   return out;
 }
@@ -191,6 +205,8 @@ async function publicVerifyFailedResponse(row, userId) {
     intake_payload: row.intake_payload || {},
     error: row.error_payload,
   };
+  const subjectCombination = await subjectCombinationFromIntake(intake);
+  if (subjectCombination) out.subject_combination = subjectCombination;
   Object.assign(out, await enrichVerifyContext(row, userId));
   return out;
 }

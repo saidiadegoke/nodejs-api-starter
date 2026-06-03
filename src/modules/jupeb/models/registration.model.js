@@ -201,7 +201,10 @@ class RegistrationModel {
           COALESCE(u.email, '')        ILIKE $${idx} OR
           COALESCE(r.provisional_candidate_code, '') ILIKE $${idx} OR
           COALESCE(r.jupeb_candidate_number, '')      ILIKE $${idx} OR
-          COALESCE(r.institution_issued_code, '')     ILIKE $${idx}
+          COALESCE(r.institution_issued_code, '')     ILIKE $${idx} OR
+          COALESCE(nv.intake_payload->>'name', '')    ILIKE $${idx} OR
+          COALESCE(nv.intake_payload->>'email', '')   ILIKE $${idx} OR
+          COALESCE(TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))), '') ILIKE $${idx}
         )`
       );
       values.push(term);
@@ -225,11 +228,15 @@ class RegistrationModel {
         uni.name AS uni_name,
         uni.short_name AS uni_short_name,
         COALESCE(b.has_face, false)        AS has_face,
-        COALESCE(b.has_fingerprint, false) AS has_fingerprint
+        COALESCE(b.has_fingerprint, false) AS has_fingerprint,
+        (nv.intake_payload->>'name') AS nin_intake_name,
+        (nv.intake_payload->>'email') AS nin_intake_email,
+        NULLIF(TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))), '') AS nin_display_name
       FROM jupeb_registrations r
       LEFT JOIN users u ON u.id = r.user_id
       LEFT JOIN profiles p ON p.user_id = u.id
       LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
+      LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
       LEFT JOIN (
         SELECT registration_id,
                BOOL_OR(capture_type = 'face')        AS has_face,
@@ -254,6 +261,7 @@ class RegistrationModel {
       LEFT JOIN users u ON u.id = r.user_id
       LEFT JOIN profiles p ON p.user_id = u.id
       LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
+      LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
       WHERE ${whereSql}`;
     const result = await pool.query(sql, values);
     return result.rows[0].c;

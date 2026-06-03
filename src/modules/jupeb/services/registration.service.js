@@ -76,9 +76,13 @@ function statusBucket(status) {
  */
 function enrichListRow(row) {
   if (!row) return row;
+  const intakeName = row.nin_intake_name ? String(row.nin_intake_name).trim() : '';
+  const ninFromPayload = row.nin_display_name ? String(row.nin_display_name).trim() : '';
   const fullName =
     row.display_name ||
     [row.first_name, row.last_name].filter(Boolean).join(' ') ||
+    (intakeName || null) ||
+    (ninFromPayload || null) ||
     null;
   const biometric_status =
     row.has_face && row.has_fingerprint
@@ -86,10 +90,11 @@ function enrichListRow(row) {
       : row.has_face || row.has_fingerprint
       ? 'partial'
       : 'no';
+  const ninEmail = row.nin_intake_email ? String(row.nin_intake_email).trim() : '';
   const candidate = {
     id: row.user_id || null,
     name: fullName,
-    email: row.user_email || null,
+    email: (row.user_email && String(row.user_email).trim()) || (ninEmail || null) || null,
     candidate_id:
       row.jupeb_candidate_number ||
       row.provisional_candidate_code ||
@@ -707,6 +712,7 @@ class RegistrationService {
       limit: 10000,
       offset: 0,
     });
+    const enrichedRows = await attachSubjectCombinations(rows.map(enrichListRow));
 
     const headers = [
       'candidate_id',
@@ -735,24 +741,30 @@ class RegistrationService {
     };
 
     const lines = [headers.join(',')];
-    for (const row of rows) {
-      const enriched = enrichListRow(row);
+    for (const enriched of enrichedRows) {
       const candidate = enriched.candidate || {};
+      const sc = enriched.subject_combination;
+      const subjectLabel = sc
+        ? [
+          [sc.code, sc.title].filter(Boolean).join(' — '),
+          (sc.subject_items || []).map((it) => it.code || it.name).filter(Boolean).join(' | '),
+        ].filter(Boolean).join(' | ')
+        : '';
       lines.push([
         candidate.candidate_id,
         candidate.name,
         candidate.email,
         enriched.university && enriched.university.name,
-        '', // subject_combination title not joined here; could enhance via display_name
-        row.sittings_count,
-        row.status,
+        subjectLabel,
+        enriched.sittings_count,
+        enriched.status,
         enriched.biometric_status,
-        row.institution_issued_code,
-        row.jupeb_candidate_number,
-        row.provisional_candidate_code,
-        row.created_at && row.created_at.toISOString && row.created_at.toISOString(),
-        row.submitted_at && row.submitted_at.toISOString && row.submitted_at.toISOString(),
-        row.approved_at && row.approved_at.toISOString && row.approved_at.toISOString(),
+        enriched.institution_issued_code,
+        enriched.jupeb_candidate_number,
+        enriched.provisional_candidate_code,
+        enriched.created_at && enriched.created_at.toISOString && enriched.created_at.toISOString(),
+        enriched.submitted_at && enriched.submitted_at.toISOString && enriched.submitted_at.toISOString(),
+        enriched.approved_at && enriched.approved_at.toISOString && enriched.approved_at.toISOString(),
       ].map(csvEscape).join(','));
     }
     return lines.join('\n') + '\n';
