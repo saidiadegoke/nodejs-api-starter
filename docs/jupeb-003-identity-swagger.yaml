@@ -16,6 +16,35 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  schemas:
+    NinVerifySubjectCombination:
+      type: object
+      nullable: true
+      description: |
+        Returned when `intake_payload.subject_combination_id` matches an **active** catalog row
+        (8-4-4-4-12 hex id, as accepted by PostgreSQL — not limited to strict RFC variant/version nibbles).
+        Same composite shape as institution registration list (`code`, `title`, timestamps,
+        `subject_items[]`, etc.). Omitted when the id is missing, malformed, or the combo is inactive.
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        title: { type: string }
+        status: { type: string }
+        is_global: { type: boolean }
+        university_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+        subject_items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              position: { type: integer }
+              subject_id: { type: string, format: uuid }
+              code: { type: string }
+              name: { type: string }
   parameters:
     VerificationId:
       name: verificationId
@@ -76,7 +105,7 @@ paths:
                     name: { type: string }
                     email: { type: string, format: email }
                     phone: { type: string }
-                    subject_combination_id: { type: string, format: uuid }
+                    subject_combination_id: { type: string, description: 'Catalog combination id (8-4-4-4-12 hex; PostgreSQL uuid)' }
                 provider:
                   type: string
                   description: |
@@ -107,13 +136,16 @@ paths:
                       profile:
                         type: object
                         description: >
-                          Full stored provider profile (flat + nested fields). SpeedySMS supplies
+                          NIN provider profile (flat + nested fields). SpeedySMS supplies
                           birthplace, residence, next_of_kin_record, provider_lookup, photo_url, etc.
-                          Mock mirrors the same shape in development. When `intake_payload` was sent,
-                          those fields are also nested under `profile.intake` for side-by-side UI.
+                          Mock mirrors the same shape in development. Registrar-typed intake
+                          (name, email, phone, subject_combination_id) is only on `intake_payload`
+                          and `subject_combination` — not duplicated under `profile`.
                       intake_payload:
                         type: object
                         description: Echo of the candidate fields submitted with this verify call (when provided).
+                      subject_combination:
+                        $ref: '#/components/schemas/NinVerifySubjectCombination'
                       caller_user:
                         type: object
                         nullable: true

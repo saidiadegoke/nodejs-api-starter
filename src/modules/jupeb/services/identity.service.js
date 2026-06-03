@@ -1,5 +1,6 @@
 const pool = require('../../../db/pool');
 const ninVerificationModel = require('../models/nin-verification.model');
+const subjectCombinationModel = require('../models/subject-combination.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationModel = require('../models/registration.model');
 const ninAdapter = require('./nin-adapter.service');
@@ -19,6 +20,29 @@ function isUuid(value) {
     typeof value === 'string' &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
   );
+}
+
+/** 8-4-4-4-12 hex (PostgreSQL accepts this even when RFC version/variant nibbles are non-standard). */
+function isUuidHexShape(value) {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value).trim())
+  );
+}
+
+/** jsonb is usually an object; normalize string JSON so intake fields are visible to resolvers. */
+function normalizeIntakePayload(raw) {
+  if (raw == null) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const o = JSON.parse(raw);
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 const PRIVILEGED = new Set([
@@ -127,40 +151,51 @@ async function enrichVerifyContext(row, userId) {
 }
 
 /**
- * Echo intake form fields inside `profile` so clients can render one object
- * (NIN-derived + registrar-typed) without losing the typed name/email/phone.
+ * Full `subject_combination` + `subject_items` for verify responses (read-only).
+ * Uses hex-shaped id matching; only **active** catalog rows resolve.
  */
-function attachIntakeToProfile(profile, intake) {
-  const base = { ...profile };
-  const i = intake && typeof intake === 'object' ? intake : {};
-  const block = {
-    name: i.name ?? null,
-    email: i.email ?? null,
-    phone: i.phone ?? null,
-    subject_combination_id: i.subject_combination_id ?? null,
-  };
-  if (block.name || block.email || block.phone || block.subject_combination_id) {
-    base.intake = block;
-  }
-  return base;
+async function subjectCombinationByCatalogId(rawId) {
+  if (rawId == null || rawId === '') return null;
+  const cid = String(rawId).trim();
+  if (!isUuidHexShape(cid)) return null;
+  const combo = await subjectCombinationModel.findById(cid);
+  if (!combo || combo.status !== 'active') return null;
+  const subject_items = await subjectCombinationModel.listItems(combo.id);
+  return { ...combo, subject_items: subject_items || [] };
+}
+
+async function subjectCombinationFromIntake(intake) {
+  if (!intake || typeof intake !== 'object') return null;
+  return subjectCombinationByCatalogId(intake.subject_combination_id);
+}
+
+/**
+ * Prefer intake `subject_combination_id`; if it does not resolve, use a linked
+ * registration's `subject_combination_id` (institution row created before verify).
+ */
+async function resolveSubjectCombinationForVerify(row, extra) {
+  const intake = normalizeIntakePayload(row.intake_payload);
+  let resolved = await subjectCombinationFromIntake(intake);
+  if (resolved) return resolved;
+  const regSid = extra && extra.registration && extra.registration.subject_combination_id;
+  if (regSid) resolved = await subjectCombinationByCatalogId(regSid);
+  return resolved || null;
 }
 
 async function publicVerifyResponse(row, userId) {
   const rawPayload = row.response_payload && typeof row.response_payload === 'object'
     ? row.response_payload
     : {};
-  const intake = row.intake_payload && typeof row.intake_payload === 'object'
-    ? row.intake_payload
-    : {};
-  const profile = attachIntakeToProfile({
+  const intakePayloadObj = normalizeIntakePayload(row.intake_payload);
+  const profile = {
     ...rawPayload,
     nin_last4: row.nin_last4,
-  }, intake);
+  };
   const out = {
     verification_id: row.id,
     status: row.status,
     profile,
-    intake_payload: row.intake_payload || {},
+    intake_payload: intakePayloadObj,
   };
   if (row.status === 'pending') {
     out.retry_after = row.retry_after;
@@ -175,23 +210,27 @@ async function publicVerifyResponse(row, userId) {
   if (row.status === 'failed' && row.error_payload && Object.keys(row.error_payload).length) {
     out.error = row.error_payload;
   }
-  Object.assign(out, await enrichVerifyContext(row, userId));
+  const extra = await enrichVerifyContext(row, userId);
+  const subjectCombination = await resolveSubjectCombinationForVerify(row, extra);
+  if (subjectCombination) out.subject_combination = subjectCombination;
+  Object.assign(out, extra);
   return out;
 }
 
 async function publicVerifyFailedResponse(row, userId) {
-  const intake = row.intake_payload && typeof row.intake_payload === 'object'
-    ? row.intake_payload
-    : {};
-  const profile = attachIntakeToProfile({ nin_last4: row.nin_last4 }, intake);
+  const intakePayloadObj = normalizeIntakePayload(row.intake_payload);
+  const profile = { nin_last4: row.nin_last4 };
   const out = {
     verification_id: row.id,
     status: 'failed',
     profile,
-    intake_payload: row.intake_payload || {},
+    intake_payload: intakePayloadObj,
     error: row.error_payload,
   };
-  Object.assign(out, await enrichVerifyContext(row, userId));
+  const extra = await enrichVerifyContext(row, userId);
+  const subjectCombination = await resolveSubjectCombinationForVerify(row, extra);
+  if (subjectCombination) out.subject_combination = subjectCombination;
+  Object.assign(out, extra);
   return out;
 }
 

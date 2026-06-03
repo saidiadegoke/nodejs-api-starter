@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../app');
 const pool = require('../db/pool');
+const { nextJupebTestUniversityCode } = require('./jupeb-session-test-helpers');
 
 describe('JUPEB identity API', () => {
   let identityMigrated = false;
@@ -25,6 +26,23 @@ describe('JUPEB identity API', () => {
     const res = await request(app).post('/auth/login').send(adminCredentials);
     if (res.status !== 200 || !res.body.data?.access_token) return null;
     return res.body.data.access_token;
+  }
+
+  async function makeGlobalSubjectCombination(adminToken) {
+    let res;
+    for (let i = 0; i < 5; i += 1) {
+      res = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: nextJupebTestUniversityCode('IDSC'),
+          title: 'Identity Verify Combo',
+          subjects: ['Math', 'Phys', 'Chem'],
+          is_global: true,
+        });
+      if (res.status === 201) return res.body.data;
+    }
+    throw new Error(`Could not create subject combination: ${res && res.status}`);
   }
 
   it('POST /identity/nin/verify without auth returns 401', async () => {
@@ -56,7 +74,7 @@ describe('JUPEB identity API', () => {
     expect(getRes.body.data.status).toBe('verified');
   });
 
-  it('persists intake_payload on verify and echoes it on profile.intake + data.intake_payload', async () => {
+  it('persists intake_payload on verify; profile is NIN-only (intake only on data.intake_payload)', async () => {
     if (!identityMigrated) return;
     const token = await getAdminToken();
     if (!token) return;
@@ -79,11 +97,7 @@ describe('JUPEB identity API', () => {
       email: 'quadri@example.com',
       phone: '08136156937',
     });
-    expect(res.body.data.profile.intake).toMatchObject({
-      name: 'Quadri Sikiru',
-      email: 'quadri@example.com',
-      phone: '08136156937',
-    });
+    expect(res.body.data.profile).not.toHaveProperty('intake');
 
     const getRes = await request(app)
       .get(`/identity/nin/verifications/${res.body.data.verification_id}`)
@@ -94,6 +108,34 @@ describe('JUPEB identity API', () => {
       email: 'quadri@example.com',
       phone: '08136156937',
     });
+  });
+
+  it('returns subject_combination with subject_items when intake names subject_combination_id', async () => {
+    if (!identityMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const combo = await makeGlobalSubjectCombination(token);
+    const nin = `6${String(Date.now()).slice(-10)}`;
+    const res = await request(app)
+      .post('/identity/nin/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        nin,
+        idempotency_key: `idem-sc-${Date.now()}`,
+        intake_payload: {
+          name: 'Combo Intake',
+          subject_combination_id: combo.id,
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.data.subject_combination).toBeDefined();
+    expect(res.body.data.subject_combination.id).toBe(combo.id);
+    expect(res.body.data.subject_combination.code).toBe(combo.code);
+    expect(Array.isArray(res.body.data.subject_combination.subject_items)).toBe(true);
+    expect(res.body.data.subject_combination.subject_items.length).toBeGreaterThanOrEqual(1);
+    const first = res.body.data.subject_combination.subject_items[0];
+    expect(first).toHaveProperty('code');
+    expect(first).toHaveProperty('name');
   });
 
   it('rejects invalid NIN format', async () => {
