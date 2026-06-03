@@ -74,7 +74,7 @@ describe('JUPEB identity API', () => {
     expect(getRes.body.data.status).toBe('verified');
   });
 
-  it('persists intake_payload on verify and echoes it on profile.intake + data.intake_payload', async () => {
+  it('persists intake_payload on verify; profile is NIN-only (intake only on data.intake_payload)', async () => {
     if (!identityMigrated) return;
     const token = await getAdminToken();
     if (!token) return;
@@ -97,11 +97,7 @@ describe('JUPEB identity API', () => {
       email: 'quadri@example.com',
       phone: '08136156937',
     });
-    expect(res.body.data.profile.intake).toMatchObject({
-      name: 'Quadri Sikiru',
-      email: 'quadri@example.com',
-      phone: '08136156937',
-    });
+    expect(res.body.data.profile).not.toHaveProperty('intake');
 
     const getRes = await request(app)
       .get(`/identity/nin/verifications/${res.body.data.verification_id}`)
