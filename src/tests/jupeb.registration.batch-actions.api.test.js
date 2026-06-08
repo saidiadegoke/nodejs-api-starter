@@ -253,4 +253,60 @@ describe('Institution batch actions + withdraw (013 §E.7 / §E.8)', () => {
       .send({ reason: 'x' });
     expect(res.status).toBe(404);
   });
+
+  it('DELETE /institution/registrations/:id removes unclaimed code_issued row', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const fixtures = await makeFixtures(adminToken, 'RDEL');
+    const regId = await createAtStatus(adminToken, fixtures, 'U1');
+
+    const res = await request(app)
+      .delete(`/registration/institution/registrations/${regId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.deleted).toBe(true);
+    const gone = await pool.query(`SELECT 1 FROM jupeb_registrations WHERE id = $1`, [regId]);
+    expect(gone.rowCount).toBe(0);
+  });
+
+  it('DELETE registration returns 422 for approved row', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const fixtures = await makeFixtures(adminToken, 'NDEL');
+    const regId = await createAtStatus(adminToken, fixtures, 'Apr', 'approved');
+
+    const res = await request(app)
+      .delete(`/registration/institution/registrations/${regId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(422);
+  });
+
+  it('batch delete accepts deletable rows and rejects protected rows per id', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const fixtures = await makeFixtures(adminToken, 'BDEL');
+
+    const okRejected = await createAtStatus(adminToken, fixtures, 'DRj', 'rejected');
+    const okUnclaimed = await createAtStatus(adminToken, fixtures, 'DCd');
+    const badApproved = await createAtStatus(adminToken, fixtures, 'DAp', 'approved');
+
+    const res = await request(app)
+      .post('/registration/institution/registrations/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ids: [okRejected, okUnclaimed, badApproved], action: 'delete' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.action).toBe('delete');
+    const accIds = res.body.data.accepted.map((a) => a.id).sort();
+    expect(accIds).toEqual([okRejected, okUnclaimed].sort());
+    expect(res.body.data.accepted.every((a) => a.status === 'deleted')).toBe(true);
+    const bad = res.body.data.rejected.find((r) => r.id === badApproved);
+    expect(bad).toBeDefined();
+    expect(bad.http_status).toBe(422);
+
+    const still = await pool.query(`SELECT id FROM jupeb_registrations WHERE id = $1`, [badApproved]);
+    expect(still.rowCount).toBe(1);
+  });
 });

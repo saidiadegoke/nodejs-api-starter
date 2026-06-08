@@ -25,6 +25,19 @@ class RegistrationController {
     }
   }
 
+  /** Hard-delete a registration row (guarded: rejected, withdrawn, or unclaimed code). */
+  static async institutionDelete(req, res) {
+    try {
+      const data = await registrationService.institutionDeleteRegistration(
+        req.params.registrationId,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Registration deleted');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   // E.4 — overview KPI cards
   static async institutionStats(req, res) {
     try {
@@ -93,7 +106,7 @@ class RegistrationController {
     }
   }
 
-  // E.7 — batch approve / reject / withdraw
+  // E.7 — batch approve / reject / withdraw / delete
   static async institutionBatchAction(req, res) {
     try {
       const data = await registrationService.institutionBatchAction(req.body, req.user.user_id);

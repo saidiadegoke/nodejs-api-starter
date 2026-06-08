@@ -67,7 +67,8 @@ function growthTrend(curVal, prevVal) {
  *   pending: number,
  *   rejected: number,
  *   biometric: number,
- *   without_biometric: number
+ *   without_biometric: number,
+ *   total_subject_combinations: number
  * }>}
  */
 async function kpiCounts(universityId, sessionId) {
@@ -102,7 +103,11 @@ async function kpiCounts(universityId, sessionId) {
           SELECT 1 FROM jupeb_biometric_captures bc
           WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
         )
-      )::int AS without_biometric
+      )::int AS without_biometric,
+      COUNT(DISTINCT CASE
+        WHEN r.status <> 'withdrawn' AND r.subject_combination_id IS NOT NULL
+        THEN r.subject_combination_id
+      END)::int AS total_subject_combinations
     FROM jupeb_registrations r
     ${where}`;
   const r = await pool.query(sql, params);

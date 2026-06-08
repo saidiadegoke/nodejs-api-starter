@@ -32,6 +32,62 @@ function isUuid(value) {
   );
 }
 
+/** Matches `jupeb_reg_status_check` — used to remap mis-sent `bucket` query params. */
+const REGISTRATION_RAW_STATUSES = new Set([
+  'provisional',
+  'code_issued',
+  'claimed',
+  'pending_student_confirm',
+  'pending_documents',
+  'pending_institution_review',
+  'approved',
+  'rejected',
+  'withdrawn',
+]);
+
+const INSTITUTION_LIST_COARSE_BUCKETS = ['approved', 'pending', 'rejected', 'withdrawn'];
+
+/**
+ * UI sometimes sends a raw workflow status as `bucket`. Coerce to `status`
+ * so `_buildInstitutionWhere` can apply an exact match. Prefer explicit `status`
+ * when both are set and disagree.
+ */
+function normalizeInstitutionListFilters(query) {
+  const q = query || {};
+  let status = q.status != null && String(q.status).trim() !== '' ? String(q.status).trim() : null;
+  let bucket = q.bucket != null && String(q.bucket).trim() !== '' ? String(q.bucket).trim() : null;
+
+  if (bucket && !INSTITUTION_LIST_COARSE_BUCKETS.includes(bucket)) {
+    if (REGISTRATION_RAW_STATUSES.has(bucket)) {
+      if (!status) {
+        status = bucket;
+        bucket = null;
+      } else if (status === bucket) {
+        bucket = null;
+      } else {
+        throw httpError(
+          422,
+          'bucket and status conflict: use status for exact workflow filters (e.g. pending_institution_review)'
+        );
+      }
+    } else {
+      throw httpError(
+        422,
+        `bucket must be one of ${INSTITUTION_LIST_COARSE_BUCKETS.join(', ')} or a valid registration status for exact filtering`
+      );
+    }
+  }
+
+  if (bucket && !INSTITUTION_LIST_COARSE_BUCKETS.includes(bucket)) {
+    throw httpError(422, `bucket must be one of ${INSTITUTION_LIST_COARSE_BUCKETS.join(', ')}`);
+  }
+  if (status && REGISTRATION_RAW_STATUSES.has(status) === false) {
+    throw httpError(422, 'status must be a valid registration workflow value');
+  }
+
+  return { ...q, status, bucket };
+}
+
 const ROLE_INST_REG = new Set(['program_director', 'institution_admin', 'admin', 'super_admin']);
 const ROLE_FINALIZE = new Set(['admin', 'super_admin', 'registrar']);
 
@@ -652,12 +708,10 @@ class RegistrationService {
     const safePage = Math.max(1, parseInt(query.page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
-    const { university_id, session_id, status, bucket, q } = query;
+    const norm = normalizeInstitutionListFilters(query);
+    const { university_id, session_id, status, bucket, q } = norm;
     if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
-    if (bucket && !['approved', 'pending', 'rejected'].includes(bucket)) {
-      throw httpError(422, 'bucket must be one of approved, pending, rejected');
-    }
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
     const filters = {
       university_id: scopedUniversityId,
@@ -683,9 +737,9 @@ class RegistrationService {
 
   /**
    * E.4 — KPI counts for the figma "Total Registered / Pending / Approved /
-   * Rejected / With biometrics" cards. Scoped to the caller's institution.
-   * Adds `growth` (value + delta_pct + trend vs previous session) and `compared_to`
-   * using the same KPI definitions as the program dashboard.
+   * Rejected / With biometrics" cards plus **distinct subject combinations** in session.
+   * Scoped to the caller's institution. Adds per-metric `value` + `delta_pct` + `trend` vs
+   * previous session and `compared_to` using the same KPI definitions as the program dashboard.
    */
   async institutionStats(query, userId) {
     await assertInstitutionRegistration(userId);
@@ -702,6 +756,7 @@ class RegistrationService {
         pending: { value: 0, delta_pct: null, trend: null },
         rejected: { value: 0, delta_pct: null, trend: null },
         with_biometrics: { value: 0, delta_pct: null, trend: null },
+        total_subject_combinations: { value: 0, delta_pct: null, trend: null },
       };
       return {
         ...emptyGrowth,
@@ -728,6 +783,10 @@ class RegistrationService {
       pending: card(cur.pending, prev?.pending),
       rejected: card(cur.rejected, prev?.rejected),
       with_biometrics: card(cur.biometric, prev?.biometric),
+      total_subject_combinations: card(
+        cur.total_subject_combinations,
+        prev?.total_subject_combinations
+      ),
       compared_to: previousSession ? { session_id: previousSession.id, label: previousSession.academic_year } : null,
     };
   }
@@ -756,12 +815,10 @@ class RegistrationService {
    */
   async institutionExportCsv(query, userId) {
     await assertInstitutionRegistration(userId);
-    const { university_id, session_id, status, bucket, q } = query || {};
+    const norm = normalizeInstitutionListFilters(query || {});
+    const { university_id, session_id, status, bucket, q } = norm;
     if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
-    if (bucket && !['approved', 'pending', 'rejected'].includes(bucket)) {
-      throw httpError(422, 'bucket must be one of approved, pending, rejected');
-    }
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
     const filters = {
       university_id: scopedUniversityId,
@@ -900,15 +957,41 @@ class RegistrationService {
   }
 
   /**
-   * E.7 — batch approve / reject / withdraw. Loops over rows and applies the
+   * Hard-delete a registration row (not the institution). Allowed only for
+   * `rejected`, `withdrawn`, or `code_issued` with no linked student (`user_id` null).
+   */
+  async institutionDeleteRegistration(registrationId, userId) {
+    await assertInstitutionRegistration(userId);
+    if (!isUuid(registrationId)) throw httpError(422, 'Invalid registration id');
+    const reg = await registrationModel.findById(registrationId);
+    if (!reg) throw httpError(404, 'Registration not found');
+    await assertInstitutionUniversityAccess(userId, reg.university_id);
+
+    const unclaimedCode = reg.status === 'code_issued' && !reg.user_id;
+    const allowed = unclaimedCode || reg.status === 'rejected' || reg.status === 'withdrawn';
+    if (!allowed) {
+      throw httpError(
+        422,
+        'Registration can only be deleted when rejected, withdrawn, or still an unclaimed code (code_issued with no linked student)'
+      );
+    }
+
+    const deleted = await registrationModel.deleteRegistration(registrationId);
+    if (!deleted) throw httpError(404, 'Registration not found');
+    return { id: registrationId, deleted: true };
+  }
+
+  /**
+   * E.7 — batch approve / reject / withdraw / delete. Loops over rows and applies the
    * per-row guards from the existing single-row endpoints. Never short-circuits
    * on first failure: every id gets a verdict, returned as
    *   { accepted: [{ id, status }], rejected: [{ id, error_code, message, http_status }], action }.
    *
-   * Body: { ids: [uuid, ...], action: 'approve'|'reject'|'withdraw', reason?: string }
+   * Body: { ids: [uuid, ...], action: 'approve'|'reject'|'withdraw'|'delete', reason?: string }
    *   - approve: no reason required.
    *   - reject:  reason required.
    *   - withdraw: reason optional.
+   *   - delete: no reason required (hard-delete; see single-row delete for guards).
    */
   async institutionBatchAction(body, userId) {
     await assertInstitutionRegistration(userId);
@@ -922,8 +1005,8 @@ class RegistrationService {
     if (ids.length > 100) {
       throw httpError(422, 'ids[] cannot exceed 100 entries per request');
     }
-    if (!['approve', 'reject', 'withdraw'].includes(action)) {
-      throw httpError(422, 'action must be one of approve, reject, withdraw');
+    if (!['approve', 'reject', 'withdraw', 'delete'].includes(action)) {
+      throw httpError(422, 'action must be one of approve, reject, withdraw, delete');
     }
     if (action === 'reject' && !reason) {
       throw httpError(422, 'reason is required when action is reject');
@@ -937,15 +1020,19 @@ class RegistrationService {
 
     for (const id of ids) {
       try {
-        let updated;
         if (action === 'approve') {
-          updated = await this.institutionApprove(id, userId);
+          const updated = await this.institutionApprove(id, userId);
+          accepted.push({ id, status: updated && updated.status });
         } else if (action === 'reject') {
-          updated = await this.institutionReject(id, { reason }, userId);
+          const updated = await this.institutionReject(id, { reason }, userId);
+          accepted.push({ id, status: updated && updated.status });
+        } else if (action === 'withdraw') {
+          const updated = await this.institutionWithdraw(id, { reason }, userId);
+          accepted.push({ id, status: updated && updated.status });
         } else {
-          updated = await this.institutionWithdraw(id, { reason }, userId);
+          await this.institutionDeleteRegistration(id, userId);
+          accepted.push({ id, status: 'deleted' });
         }
-        accepted.push({ id, status: updated && updated.status });
       } catch (err) {
         rejected.push({
           id,
