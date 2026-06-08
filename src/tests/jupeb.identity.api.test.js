@@ -58,7 +58,7 @@ describe('JUPEB identity API', () => {
     const res = await request(app)
       .post('/identity/nin/verify')
       .set('Authorization', `Bearer ${token}`)
-      .send({ nin, idempotency_key: `idem-${Date.now()}` });
+      .send({ nin, provider: 'mock', idempotency_key: `idem-${Date.now()}` });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data).toHaveProperty('verification_id');
@@ -84,6 +84,7 @@ describe('JUPEB identity API', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         nin,
+        provider: 'mock',
         idempotency_key: `idem-intake-${Date.now()}`,
         intake_payload: {
           name: 'Quadri Sikiru',
@@ -121,6 +122,7 @@ describe('JUPEB identity API', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         nin,
+        provider: 'mock',
         idempotency_key: `idem-sc-${Date.now()}`,
         intake_payload: {
           name: 'Combo Intake',
@@ -178,6 +180,7 @@ describe('JUPEB identity API', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           nin,
+          provider: 'mock',
           idempotency_key: `idem-pending-${Date.now()}`,
           intake_payload: {
             name: 'Adebayo Salami',
@@ -217,7 +220,7 @@ describe('JUPEB identity API', () => {
       const res = await request(app)
         .post('/identity/nin/verify')
         .set('Authorization', `Bearer ${token}`)
-        .send({ nin, idempotency_key: `idem-pending-2-${Date.now()}` });
+        .send({ nin, provider: 'mock', idempotency_key: `idem-pending-2-${Date.now()}` });
       expect(res.body.data.status).not.toBe('failed');
     });
   });
@@ -246,7 +249,7 @@ describe('JUPEB identity API', () => {
       const res = await request(app)
         .post('/identity/nin/verify')
         .set('Authorization', `Bearer ${token}`)
-        .send({ nin, idempotency_key: `idem-retry-${nin}-${Date.now()}` });
+        .send({ nin, provider: 'mock', idempotency_key: `idem-retry-${nin}-${Date.now()}` });
       delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
       return res.body.data.verification_id;
     }
@@ -281,7 +284,7 @@ describe('JUPEB identity API', () => {
       const verifyRes = await request(app)
         .post('/identity/nin/verify')
         .set('Authorization', `Bearer ${token}`)
-        .send({ nin, idempotency_key: `idem-already-verified-${Date.now()}` });
+        .send({ nin, provider: 'mock', idempotency_key: `idem-already-verified-${Date.now()}` });
       const verificationId = verifyRes.body.data.verification_id;
 
       const retryRes = await request(app)
@@ -410,7 +413,7 @@ describe('JUPEB identity API', () => {
       const verifyRes = await request(app)
         .post('/identity/nin/verify')
         .set('Authorization', `Bearer ${token}`)
-        .send({ nin, idempotency_key: `idem-emit-${Date.now()}` });
+        .send({ nin, provider: 'mock', idempotency_key: `idem-emit-${Date.now()}` });
       const verificationId = verifyRes.body.data.verification_id;
       delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
 
@@ -442,7 +445,7 @@ describe('JUPEB identity API', () => {
       const verifyRes = await request(app)
         .post('/identity/nin/verify')
         .set('Authorization', `Bearer ${token}`)
-        .send({ nin, idempotency_key: `idem-emit-fail-${Date.now()}` });
+        .send({ nin, provider: 'mock', idempotency_key: `idem-emit-fail-${Date.now()}` });
       const verificationId = verifyRes.body.data.verification_id;
 
       const fireSpy = jest.spyOn(WebhookService, 'fire').mockReturnValue(undefined);

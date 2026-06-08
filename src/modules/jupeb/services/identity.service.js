@@ -288,8 +288,10 @@ class IdentityService {
       return publicVerifyResponse(rowOut, userId);
     }
 
-    const provider = ninAdapter.getProvider();
     const adapterResult = await ninAdapter.verifyNin(normalized, adapterOpts);
+    const useBodyMock = String(providerOverride || '').toLowerCase() === 'mock';
+    const provider =
+      useBodyMock || adapterResult.simulated_outage ? 'mock' : 'speedysms';
 
     if (adapterResult.outcome === 'unavailable') {
       const seconds = adapterResult.retry_after_seconds || 300;
@@ -355,10 +357,8 @@ class IdentityService {
       return publicVerifyResponse(existing, userId);
     }
     const adapterResult = await ninAdapter.verifyNin(
-      // We don't have the raw NIN; the adapter mock doesn't need it for force-modes.
-      // For real providers, the row carries provider_reference; the adapter must
-      // accept the existing row to re-poll.
-      existing.nin_last4.padStart(11, '0')
+      existing.nin_last4.padStart(11, '0'),
+      ninAdapter.verifyOptsFromStoredProvider(existing.provider)
     );
     if (adapterResult.outcome === 'verified') {
       const row = await ninVerificationModel.markVerified(verificationId, {

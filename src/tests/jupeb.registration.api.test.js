@@ -6,6 +6,7 @@ const {
   nextJupebTestPrefix,
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
+  buildCatalogUniversityPayload,
 } = require('./jupeb-session-test-helpers');
 
 describe('JUPEB registration API', () => {
@@ -55,15 +56,15 @@ describe('JUPEB registration API', () => {
     if (!token) return;
 
     const suffix = Date.now();
-    const prefix = nextJupebTestPrefix();
     const uniRes = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('REG'),
-        name: `Reg Test Uni ${suffix}`,
-        jupeb_prefix: prefix,
-      });
+      .send(
+        buildCatalogUniversityPayload('REG', {
+          code: nextJupebTestUniversityCode('REG'),
+          name: `Reg Test Uni ${suffix}`,
+        })
+      );
     expect(uniRes.status).toBe(201);
     const universityId = uniRes.body.data.id;
 
@@ -182,15 +183,15 @@ describe('JUPEB registration API', () => {
     if (!token) return;
 
     const suffix = Date.now() + 1;
-    const prefix = nextJupebTestPrefix();
     const uniRes = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('RJ'),
-        name: `Reject Uni ${suffix}`,
-        jupeb_prefix: prefix,
-      });
+      .send(
+        buildCatalogUniversityPayload('RJ', {
+          code: nextJupebTestUniversityCode('RJ'),
+          name: `Reject Uni ${suffix}`,
+        })
+      );
     expect(uniRes.status).toBe(201);
 
     const scRes = await request(app)
@@ -270,15 +271,15 @@ describe('JUPEB registration API', () => {
     const studentToken = studentLogin.body.data.access_token;
 
     const suffix = Date.now() + 2;
-    const prefix = nextJupebTestPrefix();
     const uniRes = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('NT'),
-        name: `Notify Uni ${suffix}`,
-        jupeb_prefix: prefix,
-      });
+      .send(
+        buildCatalogUniversityPayload('NT', {
+          code: nextJupebTestUniversityCode('NT'),
+          name: `Notify Uni ${suffix}`,
+        })
+      );
     expect(uniRes.status).toBe(201);
     const scRes = await request(app)
       .post('/catalog/subject-combinations')
@@ -344,15 +345,15 @@ describe('JUPEB registration API', () => {
     if (!token) return;
 
     const suffix = Date.now() + 3;
-    const prefix = nextJupebTestPrefix();
     const uniRes = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('PC'),
-        name: `Parallel Uni ${suffix}`,
-        jupeb_prefix: prefix,
-      });
+      .send(
+        buildCatalogUniversityPayload('PC', {
+          code: nextJupebTestUniversityCode('PC'),
+          name: `Parallel Uni ${suffix}`,
+        })
+      );
     expect(uniRes.status).toBe(201);
     const scRes = await request(app)
       .post('/catalog/subject-combinations')
@@ -403,15 +404,15 @@ describe('JUPEB registration API', () => {
     if (!token) return;
 
     const suffix = Date.now() + 4;
-    const prefix = nextJupebTestPrefix();
     const uniRes = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('EX'),
-        name: `Expiry Uni ${suffix}`,
-        jupeb_prefix: prefix,
-      });
+      .send(
+        buildCatalogUniversityPayload('EX', {
+          code: nextJupebTestUniversityCode('EX'),
+          name: `Expiry Uni ${suffix}`,
+        })
+      );
     expect(uniRes.status).toBe(201);
     const scRes = await request(app)
       .post('/catalog/subject-combinations')
@@ -474,19 +475,21 @@ describe('JUPEB registration API', () => {
     const uniA = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('SUA'),
-        name: `Scope A ${suffix}`,
-        jupeb_prefix: nextJupebTestPrefix(),
-      });
+      .send(
+        buildCatalogUniversityPayload('SUA', {
+          code: nextJupebTestUniversityCode('SUA'),
+          name: `Scope A ${suffix}`,
+        })
+      );
     const uniB = await request(app)
       .post('/catalog/universities')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        code: nextJupebTestUniversityCode('SUB'),
-        name: `Scope B ${suffix}`,
-        jupeb_prefix: nextJupebTestPrefix(),
-      });
+      .send(
+        buildCatalogUniversityPayload('SUB', {
+          code: nextJupebTestUniversityCode('SUB'),
+          name: `Scope B ${suffix}`,
+        })
+      );
     expect(uniA.status).toBe(201);
     expect(uniB.status).toBe(201);
     await pool.query(
@@ -560,25 +563,31 @@ describe('JUPEB registration API', () => {
 
     async function makeFixtures(token, tag) {
       const suffix = `${tag}-${Date.now()}-${Math.floor(Math.random() * 9999)}`;
-      const prefix = nextJupebTestPrefix();
-      const uniRes = await request(app)
-        .post('/catalog/universities')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} Uni ${suffix}`,
-          jupeb_prefix: prefix,
-        });
+      let uniRes;
+      for (let i = 0; i < 30 && (!uniRes || uniRes.status !== 201); i += 1) {
+        uniRes = await request(app)
+          .post('/catalog/universities')
+          .set('Authorization', `Bearer ${token}`)
+          .send(
+            buildCatalogUniversityPayload(`${tag}${i}`, {
+              code: nextJupebTestUniversityCode(`${tag}${i}`),
+              name: `${tag} Uni ${suffix}-${i}`,
+            })
+          );
+      }
       expect(uniRes.status).toBe(201);
-      const scRes = await request(app)
-        .post('/catalog/subject-combinations')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          code: nextJupebTestUniversityCode(`${tag}SC`),
-          title: `${tag} Combo`,
-          subjects: ['A', 'B', 'C'],
-          is_global: true,
-        });
+      let scRes;
+      for (let i = 0; i < 30 && (!scRes || scRes.status !== 201); i += 1) {
+        scRes = await request(app)
+          .post('/catalog/subject-combinations')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            code: nextJupebTestUniversityCode(`${tag}SC${i}`),
+            title: `${tag} Combo`,
+            subjects: ['A', 'B', 'C'],
+            is_global: true,
+          });
+      }
       expect(scRes.status).toBe(201);
       let sessRes;
       for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -722,6 +731,80 @@ describe('JUPEB registration API', () => {
       expect(approved.status).toBe(200);
       expect(approved.body.data.status).toBe('approved');
       expect(approved.body.data.nin_verification.status).toBe('verified');
+    });
+
+    it('GET institution candidate detail keeps demographics + NoK after approve (NIN snapshot before purge)', async () => {
+      if (!registrationMigrated || !ninPendingMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'IDET');
+
+      const nin = `5${String(Date.now()).slice(-10)}`;
+      const verifyRes = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          nin,
+          provider: 'mock',
+          idempotency_key: `idem-idet-${Date.now()}`,
+        });
+      expect(verifyRes.body.data.status).toBe('verified');
+      const ninVerificationId = verifyRes.body.data.verification_id;
+
+      const createReg = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          session_id: sessionId,
+          university_id: universityId,
+          subject_combination_id: subjectCombinationId,
+          nin_verification_id: ninVerificationId,
+        });
+      expect(createReg.status).toBe(201);
+      const registrationId = createReg.body.data.id;
+
+      const stamp = Date.now() + Math.floor(Math.random() * 1000);
+      const reg = await request(app)
+        .post('/auth/complete-registration')
+        .send({
+          code: createReg.body.data.institution_issued_code,
+          password: 'Strong@Password1',
+          email: `idet-${stamp}@example.com`,
+        });
+      expect(reg.status).toBe(201);
+      const studentToken = reg.body.data.access_token;
+
+      await request(app).post('/registration/me/confirm-subjects').set('Authorization', `Bearer ${studentToken}`).send({});
+      await request(app).post('/registration/me/submit').set('Authorization', `Bearer ${studentToken}`).send({});
+
+      const approveRes = await request(app)
+        .post(`/registration/institution/registrations/${registrationId}/approve`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(approveRes.status).toBe(200);
+
+      const cleared = await pool.query(
+        `SELECT cleared_at, response_payload FROM jupeb_nin_verifications WHERE id = $1`,
+        [ninVerificationId]
+      );
+      expect(cleared.rows[0].cleared_at).toBeTruthy();
+      expect(cleared.rows[0].response_payload).toEqual({});
+
+      const detail = await request(app)
+        .get(`/registration/institution/registrations/${registrationId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(detail.status).toBe(200);
+      const d = detail.body.data;
+      expect(d.university_id).toBe(universityId);
+      expect(d.session_id).toBe(sessionId);
+      expect(d.subject_combination_id).toBe(subjectCombinationId);
+      expect(d.candidate.date_of_birth).toBeTruthy();
+      expect(d.candidate.gender).toBe('male');
+      expect(d.candidate.lga).toBeTruthy();
+      expect(d.candidate.first_name).toMatch(/^Mock/);
+      expect(d.next_of_kin).toBeTruthy();
+      expect(d.next_of_kin.name).toMatch(/^Jane /);
+      expect(d.next_of_kin.source).toBe('nin');
     });
   });
 });

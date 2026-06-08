@@ -130,14 +130,14 @@ describe('IdentityService.verifyNin — cache reuse', () => {
     const nin = uniqueNin();
 
     // First call — populates the cache.
-    const first = await IdentityService.verifyNin({ nin }, null);
+    const first = await IdentityService.verifyNin({ nin, provider: 'mock' }, null);
     cleanupIds.push(first.verification_id);
     expect(first.status).toBe('verified');
 
     // Spy on the adapter so we can prove the second call doesn't hit it.
     const spy = jest.spyOn(ninAdapter, 'verifyNin');
     try {
-      const second = await IdentityService.verifyNin({ nin }, null);
+      const second = await IdentityService.verifyNin({ nin, provider: 'mock' }, null);
       expect(second.verification_id).toBe(first.verification_id);
       expect(second.status).toBe('verified');
       expect(spy).not.toHaveBeenCalled();
@@ -150,13 +150,13 @@ describe('IdentityService.verifyNin — cache reuse', () => {
     if (!migrated) return;
     const nin = uniqueNin();
 
-    const first = await IdentityService.verifyNin({ nin }, null);
+    const first = await IdentityService.verifyNin({ nin, provider: 'mock' }, null);
     cleanupIds.push(first.verification_id);
 
     // Simulate the registration reaching a terminal status.
     await ninVerificationModel.clearById(first.verification_id);
 
-    const second = await IdentityService.verifyNin({ nin }, null);
+    const second = await IdentityService.verifyNin({ nin, provider: 'mock' }, null);
     cleanupIds.push(second.verification_id);
     expect(second.verification_id).not.toBe(first.verification_id);
     expect(second.status).toBe('verified');

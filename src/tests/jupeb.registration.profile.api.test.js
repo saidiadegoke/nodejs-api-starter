@@ -148,6 +148,7 @@ describe('GET /registration/me/profile', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         nin,
+        provider: 'mock',
         idempotency_key: `idem-profile-pending-${Date.now()}`,
         intake_payload: { name: 'Adebayo Salami', phone: intakePhone },
       });

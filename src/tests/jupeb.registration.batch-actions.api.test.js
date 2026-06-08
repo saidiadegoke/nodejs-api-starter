@@ -147,7 +147,7 @@ describe('Institution batch actions + withdraw (013 §E.7 / §E.8)', () => {
     const verifyA = await request(app)
       .post('/identity/nin/verify')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ nin: ninA, idempotency_key: `idem-batch-A-${Date.now()}` });
+      .send({ nin: ninA, provider: 'mock', idempotency_key: `idem-batch-A-${Date.now()}` });
     if (verifyA.body.data?.status !== 'verified') return;
     const r1 = await pool.query(
       `INSERT INTO jupeb_registrations

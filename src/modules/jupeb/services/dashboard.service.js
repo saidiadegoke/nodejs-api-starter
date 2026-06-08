@@ -1,15 +1,13 @@
 const pool = require('../../../db/pool');
 const { effectiveInstitutionListUniversityId } = require('../utils/institution-scope');
 const subjectCombinationModel = require('../models/subject-combination.model');
-
-const PENDING_STATUSES = [
-  'provisional',
-  'code_issued',
-  'claimed',
-  'pending_student_confirm',
-  'pending_documents',
-  'pending_institution_review',
-];
+const {
+  PENDING_STATUSES,
+  kpiCounts,
+  deltaPct,
+  resolveRegistrationSession,
+  findPreviousRegistrationSession,
+} = require('./registration-kpi.service');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -51,88 +49,14 @@ async function resolveUniversityId(userId, rawUniversityId) {
   return effectiveInstitutionListUniversityId(userId, rawUniversityId || null);
 }
 
-async function resolveSession(sessionId) {
-  if (sessionId) {
-    assertUuid(sessionId, 'session_id');
-    const r = await pool.query(
-      `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions WHERE id = $1`,
-      [sessionId]
-    );
-    if (!r.rows[0]) throw httpError(404, 'Session not found');
-    return r.rows[0];
-  }
-  const open = await pool.query(
-    `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions
-     WHERE status = 'open' ORDER BY opens_at DESC LIMIT 1`
-  );
-  if (open.rows[0]) return open.rows[0];
-  const fallback = await pool.query(
-    `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions
-     ORDER BY opens_at DESC LIMIT 1`
-  );
-  return fallback.rows[0] || null;
-}
-
-async function findPreviousSession(currentSession) {
-  if (!currentSession) return null;
-  const r = await pool.query(
-    `SELECT id, academic_year FROM jupeb_registration_sessions
-     WHERE opens_at < $1
-     ORDER BY opens_at DESC LIMIT 1`,
-    [currentSession.opens_at]
-  );
-  return r.rows[0] || null;
-}
-
-function deltaPct(current, previous) {
-  if (previous === null || previous === undefined) return null;
-  if (previous === 0) return current === 0 ? 0 : null;
-  return Number((((current - previous) / previous) * 100).toFixed(2));
-}
+const resolveSession = resolveRegistrationSession;
+const findPreviousSession = findPreviousRegistrationSession;
 
 function statusBucket(status) {
   if (status === 'approved') return 'approved';
   if (status === 'rejected') return 'rejected';
   if (status === 'withdrawn') return 'withdrawn';
   return 'pending';
-}
-
-async function kpiCounts(universityId, sessionId) {
-  const filters = [];
-  const params = [];
-  let i = 1;
-  if (universityId) {
-    filters.push(`r.university_id = $${i++}`);
-    params.push(universityId);
-  }
-  if (sessionId) {
-    filters.push(`r.session_id = $${i++}`);
-    params.push(sessionId);
-  }
-  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  const pendingIdx = i;
-  params.push(PENDING_STATUSES);
-  const sql = `
-    SELECT
-      COUNT(*) FILTER (WHERE r.status <> 'withdrawn')::int AS total,
-      COUNT(*) FILTER (WHERE r.status = 'approved')::int AS approved,
-      COUNT(*) FILTER (WHERE r.status = ANY($${pendingIdx}::text[]))::int AS pending,
-      COUNT(*) FILTER (
-        WHERE r.status <> 'withdrawn' AND EXISTS (
-          SELECT 1 FROM jupeb_biometric_captures bc
-          WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
-        )
-      )::int AS biometric,
-      COUNT(*) FILTER (
-        WHERE r.status <> 'withdrawn' AND NOT EXISTS (
-          SELECT 1 FROM jupeb_biometric_captures bc
-          WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
-        )
-      )::int AS without_biometric
-    FROM jupeb_registrations r
-    ${where}`;
-  const r = await pool.query(sql, params);
-  return r.rows[0];
 }
 
 // Count active (non-deleted) universities. Optional filter by type so

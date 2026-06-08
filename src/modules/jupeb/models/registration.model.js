@@ -1,4 +1,5 @@
 const pool = require('../../../db/pool');
+const registrationKpi = require('../services/registration-kpi.service');
 
 class RegistrationModel {
   async appendHistory({ registration_id, from_status, to_status, reason, changed_by }) {
@@ -270,34 +271,17 @@ class RegistrationModel {
   /**
    * E.4 — bucket counts scoped to (university_id?, session_id?).
    * Returns { total, approved, pending, rejected, with_biometrics }.
+   * Uses shared KPI SQL (aligned with program dashboard stat-cards).
    */
   async statsInstitution({ university_id, session_id }) {
-    const values = [];
-    const where = ['1=1'];
-    let idx = 1;
-    if (university_id) {
-      where.push(`r.university_id = $${idx++}`);
-      values.push(university_id);
-    }
-    if (session_id) {
-      where.push(`r.session_id = $${idx++}`);
-      values.push(session_id);
-    }
-    const sql = `
-      SELECT
-        COUNT(*)::int                                                  AS total,
-        COUNT(*) FILTER (WHERE r.status = 'approved')::int             AS approved,
-        COUNT(*) FILTER (WHERE r.status = 'rejected')::int             AS rejected,
-        COUNT(*) FILTER (WHERE r.status IN (
-          'code_issued','claimed','pending_student_confirm',
-          'pending_documents','pending_institution_review'
-        ))::int                                                         AS pending,
-        COUNT(DISTINCT r.id) FILTER (WHERE b.registration_id IS NOT NULL)::int AS with_biometrics
-      FROM jupeb_registrations r
-      LEFT JOIN jupeb_biometric_captures b ON b.registration_id = r.id
-      WHERE ${where.join(' AND ')}`;
-    const result = await pool.query(sql, values);
-    return result.rows[0];
+    const row = await registrationKpi.kpiCounts(university_id || null, session_id || null);
+    return {
+      total: row.total,
+      approved: row.approved,
+      pending: row.pending,
+      rejected: row.rejected,
+      with_biometrics: row.biometric,
+    };
   }
 
   /**

@@ -1,5 +1,22 @@
 const name = 'mock';
 
+/**
+ * When `JUPEB_NIN_MOCK_STRICT=1` (or `true`), only the ten NINs documented for
+ * SpeedySMS's free test pool verify — same as passing `provider: 'mock'` on
+ * their live API (`00000000001` … `00000000010`). Any other 11-digit value
+ * returns `outcome: 'failed'` so local/staging behaves closer to production.
+ *
+ * Default (strict off): any 11-digit NIN except all zeros succeeds — that is
+ * intentional for dev/tests and is **not** a national-database check.
+ */
+function isMockStrict() {
+  const v = process.env.JUPEB_NIN_MOCK_STRICT;
+  return v === '1' || String(v).toLowerCase() === 'true';
+}
+
+/** Same pattern SpeedySMS uses for their mock/test NIN pool. */
+const MOCK_TEST_POOL_RE = /^000000000(0[1-9]|10)$/;
+
 // Derive a per-NIN profile so different NINs map to different identifying
 // fields. Real upstream providers return distinct data for each NIN; using
 // a static fixture means downstream flows (e.g. completeRegistration, which
@@ -83,6 +100,14 @@ async function verifyNin(normalizedNin) {
       outcome: 'failed',
       error_code: 'invalid_nin',
       error_message: 'Invalid NIN',
+    };
+  }
+  if (isMockStrict() && !MOCK_TEST_POOL_RE.test(normalizedNin)) {
+    return {
+      outcome: 'failed',
+      error_code: 'nin_not_in_mock_test_pool',
+      error_message:
+        'Mock NIN provider is in strict mode (JUPEB_NIN_MOCK_STRICT=1): only NINs 00000000001 through 00000000010 return verified. Unset JUPEB_NIN_MOCK_STRICT for permissive dev mock, or set JUPEB_NIN_PROVIDER=speedysms for real NIMC-backed lookups.',
     };
   }
   const ref = `mock-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

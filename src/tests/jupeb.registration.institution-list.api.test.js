@@ -235,6 +235,83 @@ describe('Institution registrations — list / stats / by-university / export (0
     expect(res.body.data.rejected).toBeGreaterThanOrEqual(1);
     expect(res.body.data.pending).toBeGreaterThanOrEqual(1);
     expect(res.body.data.with_biometrics).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.growth).toBeDefined();
+    expect(res.body.data.growth.total_registered.value).toBe(res.body.data.total);
+    expect(res.body.data.growth.approved.value).toBe(res.body.data.approved);
+    expect(res.body.data.growth.pending.value).toBe(res.body.data.pending);
+    expect(res.body.data.growth.rejected.value).toBe(res.body.data.rejected);
+    expect(res.body.data.growth.with_biometrics.value).toBe(res.body.data.with_biometrics);
+    expect(res.body.data.growth.total_registered).toHaveProperty('trend');
+    expect(res.body.data).toHaveProperty('compared_to');
+    expect(res.body.data).toHaveProperty('previous_session_counts');
+    expect(
+      res.body.data.compared_to === null ||
+        (res.body.data.compared_to.session_id && res.body.data.compared_to.label)
+    ).toBe(true);
+  });
+
+  it('GET /institution/overview/stats growth.approved delta_pct vs previous session when two sessions exist', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const uni = await makeUniversity(adminToken, 'ST2');
+    const combo = await makeSubjectCombination(adminToken, 'ST2');
+
+    const session1 = await makeOpenSession(adminToken);
+    const { registrationId: r1 } = await createRegistrationWithStudent(adminToken, {
+      universityId: uni.id,
+      sessionId: session1.id,
+      comboId: combo.id,
+      tag: 'S1',
+    });
+    await pool.query(`UPDATE jupeb_registrations SET status = 'approved' WHERE id = $1`, [r1]);
+
+    await closeAllOpenJupebSessions(adminToken);
+
+    let s2Res;
+    for (let i = 0; i < 5; i += 1) {
+      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      s2Res = await request(app)
+        .post('/sessions')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          academic_year: academicYear,
+          year_short: yearShort,
+          opens_at: new Date(`${y1 + 50}-06-01T00:00:00.000Z`).toISOString(),
+          closes_at: new Date(`${y1 + 50}-12-01T00:00:00.000Z`).toISOString(),
+        });
+      if (s2Res.status === 201) break;
+    }
+    expect(s2Res.status).toBe(201);
+    const session2 = s2Res.body.data;
+    await request(app).post(`/sessions/${session2.id}/open`).set('Authorization', `Bearer ${adminToken}`);
+
+    const { registrationId: r2a } = await createRegistrationWithStudent(adminToken, {
+      universityId: uni.id,
+      sessionId: session2.id,
+      comboId: combo.id,
+      tag: 'S2A',
+    });
+    const { registrationId: r2b } = await createRegistrationWithStudent(adminToken, {
+      universityId: uni.id,
+      sessionId: session2.id,
+      comboId: combo.id,
+      tag: 'S2B',
+    });
+    await pool.query(`UPDATE jupeb_registrations SET status = 'approved' WHERE id = ANY($1::uuid[])`, [
+      [r2a, r2b],
+    ]);
+
+    const res = await request(app)
+      .get(`/registration/institution/overview/stats?university_id=${uni.id}&session_id=${session2.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.compared_to).not.toBeNull();
+    expect(res.body.data.compared_to.session_id).toBe(session1.id);
+    expect(res.body.data.approved).toBe(2);
+    expect(res.body.data.growth.approved.delta_pct).toBe(100);
+    expect(res.body.data.growth.approved.trend).toBe('up');
   });
 
   it('GET /institution/overview/by-university returns top-N by registered_count (E.5)', async () => {
@@ -304,6 +381,7 @@ describe('Institution registrations — list / stats / by-university / export (0
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         nin,
+        provider: 'mock',
         idempotency_key: `idem-ninld-${Date.now()}`,
         intake_payload: {
           name: 'Preclaim Nin Person',
