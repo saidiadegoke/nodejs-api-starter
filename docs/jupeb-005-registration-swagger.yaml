@@ -130,6 +130,122 @@ paths:
             Paginated list with `subject_combination` (full object + `subject_items`) and enriched `candidate`.
             CSV export (`GET .../export`) uses the same subject pipeline for the `subject_combination` column.
 
+  /registration/institution/overview/stats:
+    get:
+      tags: [Registration — institution]
+      summary: Institution dashboard KPI counts (E.4) with growth vs prior session
+      description: |
+        Returns registration counts scoped to the caller's institution (and optional `session_id`).
+        **`total`** excludes `withdrawn`. **`pending`** includes `provisional` and all pre-terminal workflow states.
+        **`with_biometrics`** counts registrations with at least one non-replaced biometric capture.
+
+        When a **previous** registration session exists (earlier `opens_at`), **`growth`** includes
+        `delta_pct` comparing the resolved **current** session to that baseline. If there is no
+        previous session row, each `delta_pct` is null. If the baseline count for a metric was **0**
+        and the current count is **positive**, `delta_pct` is **`100`** (conventional “new vs zero
+        prior” for UI); if both are zero, `delta_pct` is **0**; otherwise it is the percent change
+        `((current - previous) / previous) * 100` rounded to two decimals (may be negative).
+        Each **`growth.*`** object also includes **`trend`**: `new` (first activity vs a zero baseline;
+        pair with `delta_pct` 100), `up` / `down` / `flat` for real period-over-period changes, or
+        `null` when there is no previous session to compare.
+        **`compared_to`** identifies the prior session used for those deltas.
+
+        If no registration session exists in the database, counts are zero and `compared_to` is null.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: university_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: session_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: KPI payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      approved: { type: integer }
+                      pending: { type: integer }
+                      rejected: { type: integer }
+                      with_biometrics: { type: integer }
+                      compared_to:
+                        nullable: true
+                        type: object
+                        properties:
+                          session_id: { type: string, format: uuid }
+                          label: { type: string, description: academic_year of the comparison session }
+                      previous_session_counts:
+                        nullable: true
+                        type: object
+                        description: KPI counts for the comparison session (same scope as top-level). When a metric was 0 here and is positive in the current session, `growth.*.delta_pct` is 100 for that metric (convention); when both are 0, delta_pct is 0.
+                        properties:
+                          total: { type: integer }
+                          approved: { type: integer }
+                          pending: { type: integer }
+                          rejected: { type: integer }
+                          with_biometrics: { type: integer }
+                      growth:
+                        type: object
+                        properties:
+                          total_registered:
+                            type: object
+                            properties:
+                              value: { type: integer }
+                              delta_pct: { type: number, nullable: true }
+                              trend:
+                                type: string
+                                nullable: true
+                                enum: [new, up, down, flat]
+                                description: Semantic direction; use with delta_pct (e.g. new + 100 vs up + 10).
+                          approved:
+                            type: object
+                            properties:
+                              value: { type: integer }
+                              delta_pct: { type: number, nullable: true }
+                              trend:
+                                type: string
+                                nullable: true
+                                enum: [new, up, down, flat]
+                          pending:
+                            type: object
+                            properties:
+                              value: { type: integer }
+                              delta_pct: { type: number, nullable: true }
+                              trend:
+                                type: string
+                                nullable: true
+                                enum: [new, up, down, flat]
+                          rejected:
+                            type: object
+                            properties:
+                              value: { type: integer }
+                              delta_pct: { type: number, nullable: true }
+                              trend:
+                                type: string
+                                nullable: true
+                                enum: [new, up, down, flat]
+                          with_biometrics:
+                            type: object
+                            properties:
+                              value: { type: integer }
+                              delta_pct: { type: number, nullable: true }
+                              trend:
+                                type: string
+                                nullable: true
+                                enum: [new, up, down, flat]
+        '404':
+          description: session_id was sent but session not found
+
   /registration/institution/registrations/{registrationId}:
     get:
       tags: [Registration — institution]
@@ -149,6 +265,10 @@ paths:
         - Biometric captures + skip flags
         - Next of kin
 
+        On terminal status transitions, NIN `response_payload` is cleared after
+        a best-effort snapshot into `profiles` and `jupeb_next_of_kin`, so
+        approved candidates still surface demographics and NoK from those tables.
+
         **Auth:** admin / super_admin / registrar / program_director /
         institution_admin (scoped to the registration's university).
       security:
@@ -167,6 +287,9 @@ paths:
                     type: object
                     properties:
                       id: { type: string, format: uuid }
+                      session_id: { type: string, format: uuid, nullable: true }
+                      university_id: { type: string, format: uuid, nullable: true }
+                      subject_combination_id: { type: string, format: uuid, nullable: true }
                       status: { type: string }
                       status_reason: { type: string, nullable: true }
                       institution_issued_code: { type: string, nullable: true }

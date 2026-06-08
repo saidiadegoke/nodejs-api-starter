@@ -1820,6 +1820,14 @@ candidate-detail page. Instead of N round-trips for the registration
 row + user + documents + biometrics + history, the institution UI
 makes one request:
 
+When a registration reaches a **terminal** status (`approved`, `rejected`,
+`withdrawn`), the linked NIN verification row’s `response_payload` is cleared
+for privacy/cache-invalidation. **Before** that purge, NIN-backed demographics
+and next-of-kin are copied into `profiles` and `jupeb_next_of_kin` (best-effort),
+so this endpoint still returns full candidate demographics and NoK for
+approved rows by reading those durable tables (merged with any remaining NIN
+fields on uncleared verifications).
+
 ```
 GET /registration/institution/registrations/{registrationId}     (inst)
 ```
@@ -1828,7 +1836,11 @@ GET /registration/institution/registrations/{registrationId}     (inst)
 ```jsonc
 {
   "data": {
-    "id": "uuid", "status": "approved", "bucket": "approved",
+    "id": "uuid",
+    "session_id": "uuid",
+    "university_id": "uuid",
+    "subject_combination_id": "uuid",
+    "status": "approved", "bucket": "approved",
     "institution_issued_code": "F7K2P9",
     "provisional_candidate_code": "261010001",
     "jupeb_candidate_number": "26101000001",
@@ -2251,6 +2263,7 @@ max 100) for pagination and return a
 | Endpoint | Tab on the portal | `q` matches against | Other filters |
 |---|---|---|---|
 | `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` / `status`, `university_id`, `session_id` |
+| `GET /registration/institution/overview/stats` | Dashboard KPI cards | — | `university_id`, `session_id`; `growth.*` has `value`, `delta_pct`, `trend` (`new` / `up` / `down` / `flat`); `compared_to`; `previous_session_counts` |
 
 **Status vs bucket.** Each row carries both the raw `status` (e.g.
 `code_issued`, `pending_documents`, `approved`) **and** a coarse

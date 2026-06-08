@@ -64,7 +64,7 @@ describe('nin-adapter outcome contract', () => {
 
   it('returns outcome=verified with profile and provider_reference for a well-formed NIN', async () => {
     delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
-    const result = await ninAdapter.verifyNin('12345678901');
+    const result = await ninAdapter.verifyNin('12345678901', { provider: 'mock' });
     expect(result.outcome).toBe('verified');
     expect(typeof result.provider_reference).toBe('string');
     expect(result.profile).toBeDefined();
@@ -73,7 +73,7 @@ describe('nin-adapter outcome contract', () => {
 
   it('verified profile includes address, state_of_origin, lga, place_of_birth, phone, next_of_kin, photo_url', async () => {
     delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
-    const result = await ninAdapter.verifyNin('12345678901');
+    const result = await ninAdapter.verifyNin('12345678901', { provider: 'mock' });
     expect(result.outcome).toBe('verified');
     expect(result.profile.address).toBeDefined();
     expect(result.profile.state_of_origin).toBeDefined();
@@ -88,11 +88,11 @@ describe('nin-adapter outcome contract', () => {
 
   it('returns outcome=failed with error_code=invalid_nin for malformed input', async () => {
     delete process.env.JUPEB_NIN_FORCE_UNAVAILABLE;
-    const tooShort = await ninAdapter.verifyNin('123');
+    const tooShort = await ninAdapter.verifyNin('123', { provider: 'mock' });
     expect(tooShort.outcome).toBe('failed');
     expect(tooShort.error_code).toBe('invalid_nin');
 
-    const allZeros = await ninAdapter.verifyNin('00000000000');
+    const allZeros = await ninAdapter.verifyNin('00000000000', { provider: 'mock' });
     expect(allZeros.outcome).toBe('failed');
     expect(allZeros.error_code).toBe('invalid_nin');
   });

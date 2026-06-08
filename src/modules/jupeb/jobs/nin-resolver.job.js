@@ -19,7 +19,11 @@ function maxAttempts() {
 }
 
 async function resolveOne(row) {
-  const adapterResult = await ninAdapter.verifyNin(row.nin_last4.padStart(11, '0'));
+  const padded = row.nin_last4.padStart(11, '0');
+  const adapterResult = await ninAdapter.verifyNin(
+    padded,
+    ninAdapter.verifyOptsFromStoredProvider(row.provider)
+  );
   if (adapterResult.outcome === 'verified') {
     await ninVerificationModel.markVerified(row.id, {
       response_payload: adapterResult.profile || {},

@@ -1,4 +1,5 @@
 const registry = require('../modules/jupeb/services/nin-providers');
+const mock = require('../modules/jupeb/services/nin-providers/mock.provider');
 const speedysms = require('../modules/jupeb/services/nin-providers/speedysms.provider');
 const ninAdapter = require('../modules/jupeb/services/nin-adapter.service');
 
@@ -65,6 +66,33 @@ describe('nin-providers registry', () => {
     expect(ninAdapter.getProvider()).toBe('speedysms');
     if (prior === undefined) delete process.env.JUPEB_NIN_PROVIDER;
     else process.env.JUPEB_NIN_PROVIDER = prior;
+  });
+});
+
+describe('mock NIN provider', () => {
+  const ORIG_STRICT = process.env.JUPEB_NIN_MOCK_STRICT;
+
+  afterEach(() => {
+    if (ORIG_STRICT === undefined) delete process.env.JUPEB_NIN_MOCK_STRICT;
+    else process.env.JUPEB_NIN_MOCK_STRICT = ORIG_STRICT;
+  });
+
+  it('verifies any 11-digit NIN when strict mode is off (dev default)', async () => {
+    delete process.env.JUPEB_NIN_MOCK_STRICT;
+    const r = await mock.verifyNin('99988877766');
+    expect(r.outcome).toBe('verified');
+    expect(r.profile.first_name).toBe('Mock7766');
+  });
+
+  it('in strict mode only accepts 00000000001–00000000010', async () => {
+    process.env.JUPEB_NIN_MOCK_STRICT = '1';
+    const bad = await mock.verifyNin('99988877766');
+    expect(bad.outcome).toBe('failed');
+    expect(bad.error_code).toBe('nin_not_in_mock_test_pool');
+
+    const ok = await mock.verifyNin('00000000005');
+    expect(ok.outcome).toBe('verified');
+    expect(ok.profile.first_name).toBe('Mock0005');
   });
 });
 

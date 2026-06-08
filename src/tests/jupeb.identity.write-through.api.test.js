@@ -3,9 +3,9 @@ const app = require('../app');
 const pool = require('../db/pool');
 const {
   closeAllOpenJupebSessions,
-  nextJupebTestPrefix,
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
+  buildCatalogUniversityPayload,
 } = require('./jupeb-session-test-helpers');
 
 describe('NIN write-through to NoK + profile address (M.12)', () => {
@@ -51,11 +51,12 @@ describe('NIN write-through to NoK + profile address (M.12)', () => {
       uniRes = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} WT University`,
-          jupeb_prefix: nextJupebTestPrefix(),
-        });
+        .send(
+          buildCatalogUniversityPayload(tag, {
+            code: nextJupebTestUniversityCode(tag),
+            name: `${tag} WT University`,
+          })
+        );
       if (uniRes.status === 201) break;
     }
     let scRes;
@@ -106,6 +107,7 @@ describe('NIN write-through to NoK + profile address (M.12)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         nin,
+        provider: 'mock',
         idempotency_key: `idem-wt-${Date.now()}`,
       });
     if (verifyRes.status !== 200 && verifyRes.status !== 201) return;

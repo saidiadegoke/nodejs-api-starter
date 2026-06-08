@@ -4,7 +4,8 @@ const nextOfKinModel = require('../models/next-of-kin.model');
 /**
  * M.12 — When a registration is linked to a verified NIN payload, push the
  * NIM-issued data into the editable tables so dashboards / final-preview
- * read from a single normalized source.
+ * read from a single normalized source. Also used before NIN cache purge on
+ * terminal registration status so demographics survive `response_payload` clear.
  *
  * Behavior is non-destructive:
  *   - profiles columns are only filled when currently NULL/empty.
@@ -26,29 +27,64 @@ async function applyNinPayloadToRegistration({ registrationId, ninPayload, userI
   );
   const reg = regRow.rows[0];
 
-  // 1) Profile: address / state / lga / place_of_birth — only fill if empty.
+  const firstName = payload.first_name != null && String(payload.first_name).trim() !== ''
+    ? String(payload.first_name).trim()
+    : null;
+  const lastName = payload.last_name != null && String(payload.last_name).trim() !== ''
+    ? String(payload.last_name).trim()
+    : null;
+  const displayFromNames = [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+  const displayName = (payload.display_name != null && String(payload.display_name).trim() !== '')
+    ? String(payload.display_name).trim()
+    : displayFromNames;
+
+  // 1) Profile: demographics + address — only fill when empty (never overwrite edits).
   if (reg && reg.user_id) {
     const profileFields = {
+      first_name: firstName || undefined,
+      last_name: lastName || undefined,
+      display_name: displayName || undefined,
       residential_address: payload.address || payload.residential_address,
       state_of_origin: payload.state_of_origin,
       lga: payload.lga,
       place_of_birth: payload.place_of_birth,
+      gender: payload.gender != null && String(payload.gender).trim() !== ''
+        ? String(payload.gender).trim()
+        : undefined,
+      profile_photo_url: payload.photo_url != null && String(payload.photo_url).trim() !== ''
+        ? String(payload.photo_url).trim()
+        : undefined,
     };
-    const present = Object.entries(profileFields).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
+    const present = Object.entries(profileFields).filter(
+      ([, v]) => v !== undefined && v !== null && String(v).trim() !== ''
+    );
     if (present.length) {
-      // Make sure a profile row exists.
       await pool.query(
         `INSERT INTO profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
         [reg.user_id]
       );
-      // Only update fields that are NULL/empty today.
       const sets = present.map(([k], idx) => `${k} = COALESCE(NULLIF(${k}, ''), $${idx + 2})`).join(', ');
       const values = present.map(([, v]) => String(v));
       const upd = await pool.query(
         `UPDATE profiles SET ${sets}, updated_at = NOW() WHERE user_id = $1 RETURNING ${present.map(([k]) => k).join(', ')}`,
         [reg.user_id, ...values]
       );
-      result.applied.profile = upd.rowCount > 0;
+      if (upd.rowCount > 0) result.applied.profile = true;
+    }
+
+    const dobRaw = payload.date_of_birth;
+    if (dobRaw != null && String(dobRaw).trim() !== '') {
+      await pool.query(
+        `INSERT INTO profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
+        [reg.user_id]
+      );
+      const dobUpd = await pool.query(
+        `UPDATE profiles
+            SET date_of_birth = COALESCE(date_of_birth, $2::date), updated_at = NOW()
+          WHERE user_id = $1`,
+        [reg.user_id, String(dobRaw).trim()]
+      );
+      if (dobUpd.rowCount > 0) result.applied.profile = true;
     }
   }
 
@@ -57,20 +93,27 @@ async function applyNinPayloadToRegistration({ registrationId, ninPayload, userI
   if (nok && typeof nok === 'object') {
     const existing = await nextOfKinModel.findActiveByRegistration(registrationId);
     if (!existing) {
-      const name = nok.name || nok.full_name;
-      const relationship = (nok.relationship || nok.relation || 'relative').toString().toLowerCase();
-      const phone = nok.phone || nok.contact;
-      const email = nok.email || null;
-      const address = nok.address || null;
-      if (name && (phone || email)) {
+      const nameRaw = nok.name || nok.full_name
+        || [nok.first_name, nok.middle_name, nok.last_name]
+          .filter((x) => x && String(x).trim())
+          .map((x) => String(x).trim())
+          .join(' ');
+      const name = nameRaw ? String(nameRaw).trim() : '';
+      const relationshipRaw = nok.relationship || nok.relation || 'relative';
+      const relationship = String(relationshipRaw).toLowerCase();
+      const phoneRaw = nok.phone || nok.contact || nok.contact_no;
+      const phone = phoneRaw != null && String(phoneRaw).trim() !== '' ? String(phoneRaw).trim() : null;
+      const email = nok.email != null && String(nok.email).trim() !== '' ? String(nok.email).trim() : null;
+      const address = nok.address != null && String(nok.address).trim() !== '' ? String(nok.address).trim() : null;
+      if (name) {
         try {
           await nextOfKinModel.create({
             registration_id: registrationId,
-            name: String(name).trim(),
+            name: name,
             relationship,
-            phone: phone ? String(phone).trim() : null,
-            email: email ? String(email).trim() : null,
-            address: address ? String(address).trim() : null,
+            phone,
+            email,
+            address,
             source: 'nin',
             created_by: userId,
           });

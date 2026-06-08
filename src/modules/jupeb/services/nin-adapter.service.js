@@ -1,7 +1,9 @@
-// Thin facade over the NIN provider registry. The active provider is chosen
-// by JUPEB_NIN_PROVIDER (default: 'mock'). JUPEB_NIN_FORCE_UNAVAILABLE=1
-// short-circuits to an `unavailable` outcome regardless of provider — used
-// by tests to exercise the resolver's retry/back-off paths.
+// NIN verification routing:
+// - Request body `provider: 'mock'` → in-process mock (no network, synthetic profile).
+// - Otherwise → SpeedySMS (`speedysms.provider`) — real NIMC-backed lookups when
+//   `SPEEDYSMS_API_KEY` is set; otherwise `outcome: unavailable` (misconfigured).
+//
+// `JUPEB_NIN_FORCE_UNAVAILABLE=1` short-circuits to `unavailable` for any path — used by tests.
 
 const registry = require('./nin-providers');
 
@@ -17,19 +19,20 @@ function unavailable() {
   };
 }
 
+/** Label stored on `jupeb_nin_verifications.provider` for the default (non-mock) HTTP path. */
 function getProvider() {
-  return registry.resolveName();
+  return 'speedysms';
+}
+
+function useInProcessMock(opts) {
+  return String(opts && opts.provider).toLowerCase() === 'mock';
 }
 
 /**
- * Verify a normalized 11-digit NIN through the currently selected provider.
- *
- * Returns an outcome of `verified`, `failed` (provider rejected the NIN — terminal),
- * or `unavailable` (we could not reach the provider — should be retried).
- *
- * Includes legacy `ok` field during migration for callers not yet on the new contract.
+ * Verify a normalized 11-digit NIN.
  *
  * @param {string} normalizedNin
+ * @param {{ provider?: string, force_fresh?: boolean, http?: import('axios').AxiosInstance }} [opts]
  * @returns {Promise<{
  *   outcome: 'verified' | 'failed' | 'unavailable',
  *   ok: boolean,
@@ -43,18 +46,36 @@ function getProvider() {
 async function verifyNin(normalizedNin, opts = {}) {
   if (process.env.JUPEB_NIN_FORCE_UNAVAILABLE === '1') {
     const u = unavailable();
-    return { ...u, ok: false };
+    // Lets IdentityService persist `provider: mock` on pending rows so retry/resolver
+    // re-runs through the in-process mock (no SpeedySMS key required in tests).
+    return { ...u, ok: false, simulated_outage: true };
   }
-  const provider = registry.get(getProvider());
-  // Per-request overrides (e.g. `provider: 'mock'` to hit SpeedySMS's free
-  // test pool, `force_fresh: true` to bypass their cache). The mock adapter
-  // ignores these; the speedysms adapter forwards them to the upstream POST.
-  const result = await provider.verifyNin(normalizedNin, opts);
+  if (useInProcessMock(opts)) {
+    const mockProvider = registry.get('mock');
+    const result = await mockProvider.verifyNin(normalizedNin, opts);
+    return { ...result, ok: result.outcome === 'verified' };
+  }
+  const speedysms = registry.get('speedysms');
+  // Forward SpeedySMS gateway options only (`force_fresh`, upstream `provider` like `mono`);
+  // our in-process `mock` is selected only via the branch above.
+  const forward = {};
+  if (opts.force_fresh) forward.force_fresh = opts.force_fresh;
+  if (opts.http) forward.http = opts.http;
+  if (opts.provider && String(opts.provider).toLowerCase() !== 'mock') {
+    forward.provider = opts.provider;
+  }
+  const result = await speedysms.verifyNin(normalizedNin, forward);
   return { ...result, ok: result.outcome === 'verified' };
+}
+
+/** Build adapter opts when re-verifying from a persisted `jupeb_nin_verifications.provider` value. */
+function verifyOptsFromStoredProvider(providerName) {
+  return String(providerName || '').toLowerCase() === 'mock' ? { provider: 'mock' } : {};
 }
 
 module.exports = {
   verifyNin,
   getProvider,
   listProviders: registry.list,
+  verifyOptsFromStoredProvider,
 };

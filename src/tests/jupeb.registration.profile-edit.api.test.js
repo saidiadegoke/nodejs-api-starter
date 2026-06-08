@@ -190,6 +190,7 @@ describe('PATCH /registration/me/profile (M.2)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         nin,
+        provider: 'mock',
         idempotency_key: `idem-pe-immutable-${Date.now()}`,
         intake_payload: { name: 'Adebayo Salami' },
       });

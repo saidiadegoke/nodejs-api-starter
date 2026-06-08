@@ -75,6 +75,15 @@ paths:
         Allowed roles include `program_director`, `institution_admin`, `registrar`, `admin`, `super_admin`.
         Response never returns raw NIN; profile fields come from provider payload.
 
+        ## Mock provider (`JUPEB_NIN_PROVIDER=mock`, default)
+        The in-process **mock** does **not** call the national database. Unless
+        `JUPEB_NIN_MOCK_STRICT=1` is set, **any valid 11-digit NIN** (except all zeros)
+        returns `status: verified` with a synthetic profile — useful for local dev
+        and CI, but **not** a test of whether a NIN exists. Use **`JUPEB_NIN_PROVIDER=speedysms`**
+        with a real `SPEEDYSMS_API_KEY` for production-like acceptance/refusal, or set
+        **`JUPEB_NIN_MOCK_STRICT=1`** to restrict the mock to NINs `00000000001`–`00000000010`
+        (same idea as SpeedySMS’s documented test pool).
+
         ## Pending state
         When the upstream NIN provider is unavailable (timeout, 5xx, circuit-open), the verification
         is persisted with `status = pending` and a `retry_after` timestamp. The candidate's intake fields

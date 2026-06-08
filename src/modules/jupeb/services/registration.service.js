@@ -17,6 +17,7 @@ const {
 } = require('../utils/institution-scope');
 const { emitRegistrationApproved } = require('./registration-events.service');
 const jupebMailer = require('./jupeb-mailer.service');
+const registrationKpi = require('./registration-kpi.service');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -345,11 +346,31 @@ async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) 
     changed_by: userId,
   });
 
-  // Terminal status → purge the cached NIN profile (PII no longer needed)
-  // and invalidate the cache so any subsequent verifyNin call for the same
-  // NIN goes to the provider fresh. Best-effort: a clear failure must not
-  // block the status transition itself.
+  // Terminal status → snapshot NIN-backed demographics into profiles / NoK,
+  // then purge the cached NIN profile (PII) on the verification row so cache
+  // lookups miss and a later verifyNin can hit the provider fresh.
+  // Snapshot runs first so institution/student UIs still read durable tables
+  // after `response_payload` is cleared. Best-effort: failures must not block
+  // the status transition.
   if (TERMINAL_STATUSES.has(toStatus) && reg.nin_verification_id) {
+    try {
+      const ninRow = await ninVerificationModel.findById(reg.nin_verification_id);
+      if (ninRow && ninRow.response_payload && typeof ninRow.response_payload === 'object') {
+        // eslint-disable-next-line global-require
+        const { applyNinPayloadToRegistration } = require('./nin-write-through.service');
+        await applyNinPayloadToRegistration({
+          registrationId: reg.id,
+          ninPayload: ninRow.response_payload,
+          userId,
+        });
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[transitionStatus] NIN snapshot write-through failed for registration',
+        reg.id, err && err.message
+      );
+    }
     try {
       await ninVerificationModel.clearById(reg.nin_verification_id);
     } catch (err) {
@@ -469,7 +490,11 @@ class RegistrationService {
    *   - documents (uploaded + per-doc status)
    *   - result entries grouped by (source, sitting)
    *   - biometric captures + skip flags
-   *   - next-of-kin
+   *   - next-of-kin (from `jupeb_next_of_kin` or cleared NIN payload fallback)
+   *
+   * After approval, NIN `response_payload` is cleared; demographics and NoK
+   * are read from `profiles` / `jupeb_next_of_kin` (snapshotted at terminal transition).
+   * Response includes `session_id`, `university_id`, and `subject_combination_id`.
    *
    * Auth: institution-write role + university scope on the row.
    */
@@ -564,6 +589,9 @@ class RegistrationService {
 
     return {
       id: reg.id,
+      session_id: reg.session_id,
+      university_id: reg.university_id,
+      subject_combination_id: reg.subject_combination_id,
       status: reg.status,
       bucket: statusBucket(reg.status),
       status_reason: reg.status_reason || null,
@@ -656,6 +684,8 @@ class RegistrationService {
   /**
    * E.4 — KPI counts for the figma "Total Registered / Pending / Approved /
    * Rejected / With biometrics" cards. Scoped to the caller's institution.
+   * Adds `growth` (value + delta_pct + trend vs previous session) and `compared_to`
+   * using the same KPI definitions as the program dashboard.
    */
   async institutionStats(query, userId) {
     await assertInstitutionRegistration(userId);
@@ -663,10 +693,43 @@ class RegistrationService {
     if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
-    return registrationModel.statsInstitution({
-      university_id: scopedUniversityId,
-      session_id: session_id || null,
+
+    const currentSession = await registrationKpi.resolveRegistrationSession(session_id || null);
+    if (!currentSession) {
+      const emptyGrowth = {
+        total_registered: { value: 0, delta_pct: null, trend: null },
+        approved: { value: 0, delta_pct: null, trend: null },
+        pending: { value: 0, delta_pct: null, trend: null },
+        rejected: { value: 0, delta_pct: null, trend: null },
+        with_biometrics: { value: 0, delta_pct: null, trend: null },
+      };
+      return {
+        ...emptyGrowth,
+        compared_to: null,
+      };
+    }
+
+    const previousSession = await registrationKpi.findPreviousRegistrationSession(currentSession);
+    const cur = await registrationKpi.kpiCounts(scopedUniversityId, currentSession.id);
+    const prev = previousSession
+      ? await registrationKpi.kpiCounts(scopedUniversityId, previousSession.id)
+      : null;
+    const d = registrationKpi.deltaPct;
+    const t = registrationKpi.growthTrend;
+    const card = (curVal, prevVal) => ({
+      value: curVal,
+      delta_pct: prev ? d(curVal, prevVal) : null,
+      trend: prev ? t(curVal, prevVal) : null,
     });
+
+    return {
+      total_registered: card(cur.total, prev?.total),
+      approved: card(cur.approved, prev?.approved),
+      pending: card(cur.pending, prev?.pending),
+      rejected: card(cur.rejected, prev?.rejected),
+      with_biometrics: card(cur.biometric, prev?.biometric),
+      compared_to: previousSession ? { session_id: previousSession.id, label: previousSession.academic_year } : null,
+    };
   }
 
   /**
