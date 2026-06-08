@@ -106,6 +106,12 @@ paths:
         the code, `candidate.id` (the linked user id) is **null**; `name` / `email` may still be populated
         from the linked `jupeb_nin_verifications` intake (`intake_payload`) or NIN provider payload when present.
         Optional `q` matches those fields in addition to profile-based name/email.
+
+        **`bucket` vs `status`:** `bucket` is a coarse tab filter — `approved`, `pending`, `rejected`, or `withdrawn`.
+        `status` is an exact match on `jupeb_registrations.status` (e.g. `pending_institution_review`). If a client
+        mistakenly sends a raw workflow value as `bucket` (e.g. `bucket=pending_institution_review`) and `status`
+        is not set, the server treats it as `status` and clears `bucket`. If both are set and disagree, the
+        request returns **422** with a conflict message; when both match, `bucket` is cleared.
       security:
         - BearerAuth: []
       parameters:
@@ -115,9 +121,22 @@ paths:
         - name: session_id
           in: query
           schema: { type: string, format: uuid }
+        - name: bucket
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [approved, pending, rejected, withdrawn]
+          description: Coarse filter tab. Raw workflow statuses belong in `status` (or are auto-remapped from `bucket` when `status` is absent).
         - name: status
           in: query
           schema: { type: string }
+          description: Exact `jupeb_registrations.status` (e.g. `pending_institution_review`, `code_issued`).
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: Search across candidate name/email and codes (see summary).
         - name: page
           in: query
           schema: { type: integer }
@@ -138,6 +157,8 @@ paths:
         Returns registration counts scoped to the caller's institution (and optional `session_id`).
         **`total`** excludes `withdrawn`. **`pending`** includes `provisional` and all pre-terminal workflow states.
         **`with_biometrics`** counts registrations with at least one non-replaced biometric capture.
+        **`total_subject_combinations`** is the count of **distinct** `subject_combination_id` values on
+        non-withdrawn registrations in scope (null combination ids are excluded).
 
         When a **previous** registration session exists (earlier `opens_at`), **`growth`** includes
         `delta_pct` comparing the resolved **current** session to that baseline. If there is no
@@ -194,6 +215,7 @@ paths:
                           pending: { type: integer }
                           rejected: { type: integer }
                           with_biometrics: { type: integer }
+                          total_subject_combinations: { type: integer }
                       growth:
                         type: object
                         properties:
@@ -235,6 +257,15 @@ paths:
                                 nullable: true
                                 enum: [new, up, down, flat]
                           with_biometrics:
+                            type: object
+                            properties:
+                              value: { type: integer }
+                              delta_pct: { type: number, nullable: true }
+                              trend:
+                                type: string
+                                nullable: true
+                                enum: [new, up, down, flat]
+                          total_subject_combinations:
                             type: object
                             properties:
                               value: { type: integer }
@@ -418,13 +449,46 @@ paths:
       responses:
         '200': { description: OK }
 
+    delete:
+      tags: [Registration — institution]
+      summary: Delete registration row (hard delete)
+      description: |
+        Permanently removes the `jupeb_registrations` row for this id. Allowed only when the row is
+        **`rejected`**, **`withdrawn`**, or **`code_issued`** with **no linked student** (`user_id` is null —
+        unused institution code). Child rows with `ON DELETE CASCADE` are removed; other references may
+        be nullified per schema.
+
+        Does **not** delete an institution or university — only this enrollment row.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      deleted: { type: boolean }
+        '404': { description: Registration not found }
+        '422': { description: Not deletable from current status, or invalid id }
+
   /registration/institution/registrations/batch:
     post:
       tags: [Registration — institution]
-      summary: Batch approve, reject, or withdraw registrations
+      summary: Batch approve, reject, withdraw, or delete registrations
       description: |
-        Applies `approve`, `reject`, or `withdraw` to each id independently. Never short-circuits
+        Applies `approve`, `reject`, `withdraw`, or `delete` to each id independently. Never short-circuits
         on the first failure — every id receives a verdict in `accepted` or `rejected`.
+
+        For `delete`, successful rows return `status: "deleted"` in `accepted` (hard delete; same rules as
+        `DELETE .../registrations/{registrationId}`).
 
         For a single registration, you may use this endpoint or the per-id routes below.
       security:
@@ -443,7 +507,7 @@ paths:
                   items: { type: string, format: uuid }
                 action:
                   type: string
-                  enum: [approve, reject, withdraw]
+                  enum: [approve, reject, withdraw, delete]
                 reason:
                   type: string
                   description: Required when action is `reject`; optional for `withdraw`
@@ -451,8 +515,10 @@ paths:
         '200':
           description: |
             `{ accepted: [{ id, status }], rejected: [{ id, error_code, message, http_status }], action }`.
-            In `accepted`, `status` is the new registration status. In `rejected`, `http_status` is the
-            HTTP-equivalent error for that row (often 422); the registration row was not updated.
+            In `accepted`, `status` is the new registration status after approve / reject / withdraw, or the
+            literal string `deleted` after a successful hard-delete. In `rejected`, `http_status` is the
+            HTTP-equivalent error for that row (often 422); the registration row was not updated (for
+            `delete`, the row was not removed).
         '422':
           description: Validation error (empty ids, invalid action, reject without reason, etc.)
 

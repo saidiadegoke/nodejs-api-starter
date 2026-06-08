@@ -2263,7 +2263,14 @@ max 100) for pagination and return a
 | Endpoint | Tab on the portal | `q` matches against | Other filters |
 |---|---|---|---|
 | `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` / `status`, `university_id`, `session_id` |
-| `GET /registration/institution/overview/stats` | Dashboard KPI cards | — | `university_id`, `session_id`; `growth.*` has `value`, `delta_pct`, `trend` (`new` / `up` / `down` / `flat`); `compared_to`; `previous_session_counts` |
+| `GET /registration/institution/registrations/export` | Same filters as list (CSV) | — | Same query params as the list endpoint |
+| `GET /registration/institution/overview/stats` | Dashboard KPI cards | — | `university_id`, `session_id`; includes **`total_subject_combinations`** (distinct non-withdrawn `subject_combination_id` in scope); card metrics use `value` / `delta_pct` / `trend`; `compared_to` |
+| `DELETE /registration/institution/registrations/{id}` | Remove enrollment row | — | Hard-delete when `rejected`, `withdrawn`, or `code_issued` with no linked student |
+| `POST /registration/institution/registrations/batch` | Bulk actions | — | `action`: `approve` \| `reject` \| `withdraw` \| **`delete`** (same delete rules as `DELETE`) |
+| `GET /catalog/universities` | Institutions | `code`, `name`, `short_name` | `status` |
+| `GET /catalog/subjects` | Subjects | `code`, `name`, `description` | `status` |
+| `GET /catalog/subject-combinations` | Subject Combinations | `code`, `title` | `status`, `university_id` |
+| `GET /sessions` | Session History / Manage Session | `academic_year`, `year_short` | `status` |
 
 **Status vs bucket.** Each row carries both the raw `status` (e.g.
 `code_issued`, `pending_documents`, `approved`) **and** a coarse
@@ -2271,10 +2278,8 @@ max 100) for pagination and return a
 translated from it (`pending` = any non-terminal status). Filter by
 either: `?bucket=pending` or `?status=pending` apply the bucket
 grouping; `?status=code_issued` (a raw status) does an exact match.
-| `GET /catalog/universities` | Institutions | `code`, `name`, `short_name` | `status` |
-| `GET /catalog/subjects` | Subjects | `code`, `name`, `description` | `status` |
-| `GET /catalog/subject-combinations` | Subject Combinations | `code`, `title` | `status`, `university_id` |
-| `GET /sessions` | Session History / Manage Session | `academic_year`, `year_short` | `status` |
+
+**Mis-sent `bucket`.** If a client passes a raw workflow status as `bucket` (e.g. `bucket=pending_institution_review`) and `status` is not set, the server treats it as an exact `status` filter (same rows as `?status=pending_institution_review`). If both `bucket` and `status` are set to different values, the API returns **422** with a conflict message.
 
 ### Sample requests
 

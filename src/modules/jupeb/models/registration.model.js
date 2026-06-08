@@ -159,7 +159,7 @@ class RegistrationModel {
    *
    * Filters:
    *   - university_id, session_id, status (legacy)
-   *   - bucket: 'approved' | 'pending' | 'rejected' (server-side mapping)
+   *   - bucket: 'approved' | 'pending' | 'rejected' | 'withdrawn' (server-side mapping)
    *   - q: fuzzy ILIKE on full name, email, provisional_candidate_code,
    *     jupeb_candidate_number, institution_issued_code
    */
@@ -270,7 +270,7 @@ class RegistrationModel {
 
   /**
    * E.4 — bucket counts scoped to (university_id?, session_id?).
-   * Returns { total, approved, pending, rejected, with_biometrics }.
+   * Returns { total, approved, pending, rejected, with_biometrics, total_subject_combinations }.
    * Uses shared KPI SQL (aligned with program dashboard stat-cards).
    */
   async statsInstitution({ university_id, session_id }) {
@@ -281,6 +281,7 @@ class RegistrationModel {
       pending: row.pending,
       rejected: row.rejected,
       with_biometrics: row.biometric,
+      total_subject_combinations: row.total_subject_combinations,
     };
   }
 
@@ -345,6 +346,12 @@ class RegistrationModel {
       [id, number]
     );
     return result.rows[0];
+  }
+
+  /** Hard-delete a registration row; child tables with ON DELETE CASCADE are cleaned up. */
+  async deleteRegistration(id) {
+    const result = await pool.query(`DELETE FROM jupeb_registrations WHERE id = $1 RETURNING id`, [id]);
+    return result.rows[0] || null;
   }
 }
 

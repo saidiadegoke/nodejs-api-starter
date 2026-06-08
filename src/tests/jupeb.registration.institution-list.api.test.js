@@ -210,6 +210,42 @@ describe('Institution registrations — list / stats / by-university / export (0
     expect(approvedOnly.body.data.some((r) => r.id === r1)).toBe(false);
   });
 
+  it('?bucket=pending_institution_review remaps to exact status (same rows as ?status=)', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const uni = await makeUniversity(adminToken, 'BRM');
+    const combo = await makeSubjectCombination(adminToken, 'BRM');
+    const session = await makeOpenSession(adminToken);
+    const { registrationId: r1 } = await createRegistrationWithStudent(
+      adminToken,
+      { universityId: uni.id, sessionId: session.id, comboId: combo.id, tag: 'RemapA' }
+    );
+    const { registrationId: r2 } = await createRegistrationWithStudent(
+      adminToken,
+      { universityId: uni.id, sessionId: session.id, comboId: combo.id, tag: 'RemapB' }
+    );
+    await pool.query(`UPDATE jupeb_registrations SET status = 'pending_institution_review' WHERE id = $1`, [r1]);
+    await pool.query(`UPDATE jupeb_registrations SET status = 'pending_documents' WHERE id = $1`, [r2]);
+
+    const byBucket = await request(app)
+      .get(
+        `/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&bucket=pending_institution_review`
+      )
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(byBucket.status).toBe(200);
+    expect(byBucket.body.data.map((r) => r.id)).toEqual([r1]);
+
+    const byStatus = await request(app)
+      .get(
+        `/registration/institution/registrations?university_id=${uni.id}&session_id=${session.id}&status=pending_institution_review`
+      )
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(byStatus.status).toBe(200);
+    expect(byStatus.body.data.map((r) => r.id)).toEqual(byBucket.body.data.map((r) => r.id));
+  });
+
   it('GET /institution/overview/stats returns approved / pending / rejected / with_biometrics counts (E.4)', async () => {
     if (!registrationMigrated) return;
     const adminToken = await getAdminToken();
@@ -230,20 +266,14 @@ describe('Institution registrations — list / stats / by-university / export (0
       .get(`/registration/institution/overview/stats?university_id=${uni.id}&session_id=${session.id}`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.total).toBeGreaterThanOrEqual(3);
-    expect(res.body.data.approved).toBeGreaterThanOrEqual(1);
-    expect(res.body.data.rejected).toBeGreaterThanOrEqual(1);
-    expect(res.body.data.pending).toBeGreaterThanOrEqual(1);
-    expect(res.body.data.with_biometrics).toBeGreaterThanOrEqual(1);
-    expect(res.body.data.growth).toBeDefined();
-    expect(res.body.data.growth.total_registered.value).toBe(res.body.data.total);
-    expect(res.body.data.growth.approved.value).toBe(res.body.data.approved);
-    expect(res.body.data.growth.pending.value).toBe(res.body.data.pending);
-    expect(res.body.data.growth.rejected.value).toBe(res.body.data.rejected);
-    expect(res.body.data.growth.with_biometrics.value).toBe(res.body.data.with_biometrics);
-    expect(res.body.data.growth.total_registered).toHaveProperty('trend');
+    expect(res.body.data.total_registered.value).toBeGreaterThanOrEqual(3);
+    expect(res.body.data.approved.value).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.rejected.value).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.pending.value).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.with_biometrics.value).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.total_subject_combinations.value).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.total_registered).toHaveProperty('trend');
     expect(res.body.data).toHaveProperty('compared_to');
-    expect(res.body.data).toHaveProperty('previous_session_counts');
     expect(
       res.body.data.compared_to === null ||
         (res.body.data.compared_to.session_id && res.body.data.compared_to.label)
@@ -309,9 +339,9 @@ describe('Institution registrations — list / stats / by-university / export (0
     expect(res.status).toBe(200);
     expect(res.body.data.compared_to).not.toBeNull();
     expect(res.body.data.compared_to.session_id).toBe(session1.id);
-    expect(res.body.data.approved).toBe(2);
-    expect(res.body.data.growth.approved.delta_pct).toBe(100);
-    expect(res.body.data.growth.approved.trend).toBe('up');
+    expect(res.body.data.approved.value).toBe(2);
+    expect(res.body.data.approved.delta_pct).toBe(100);
+    expect(res.body.data.approved.trend).toBe('up');
   });
 
   it('GET /institution/overview/by-university returns top-N by registered_count (E.5)', async () => {
