@@ -218,6 +218,48 @@ class SubmissionService {
     return { reqRow, file };
   }
 
+  /**
+   * Institution document bind: file must be owned by the candidate, the acting
+   * staff user, or any user when the actor has ROLE_MANAGE_REQ.
+   */
+  async loadFileForRegistrationEdit(fileId, actorUserId, candidateUserId) {
+    if (!isUuid(fileId)) throw httpError(422, 'Invalid file_id');
+    const r = await pool.query(
+      `SELECT id, uploaded_by, file_size, file_type, deleted_at FROM files WHERE id = $1`,
+      [fileId]
+    );
+    const f = r.rows[0];
+    if (!f || f.deleted_at) throw httpError(404, 'File not found');
+    const instOk = await hasRoleIn(actorUserId, ROLE_INST_REVIEW);
+    if (!instOk) throw httpError(403, 'Forbidden');
+    const adminOverride = await hasRoleIn(actorUserId, ROLE_MANAGE_REQ);
+    if (adminOverride) return f;
+    const uploader = f.uploaded_by ? String(f.uploaded_by) : '';
+    if (candidateUserId && uploader === String(candidateUserId)) return f;
+    if (uploader === String(actorUserId)) return f;
+    throw httpError(
+      403,
+      'File must be uploaded by the candidate or the acting institution user'
+    );
+  }
+
+  async assertRequirementAndFileForInstitutionEdit(requirementId, fileId, actorUserId, candidateUserId) {
+    const reqRow = await documentRequirementModel.findById(requirementId);
+    if (!reqRow || reqRow.status !== 'active') {
+      throw httpError(404, 'Requirement not found or inactive');
+    }
+    const file = await this.loadFileForRegistrationEdit(fileId, actorUserId, candidateUserId);
+    const rawAllowed = reqRow.allowed_mime_types;
+    const allowed = Array.isArray(rawAllowed) ? rawAllowed : [];
+    if (!mimeAllowed(file.file_type, allowed)) {
+      throw httpError(422, 'File type is not allowed for this requirement');
+    }
+    if (!sizeAllowed(file.file_size, reqRow.max_file_size_mb)) {
+      throw httpError(422, 'File exceeds maximum size for this requirement');
+    }
+    return { reqRow, file };
+  }
+
   async getMeRequirements(userId, registrationIdOpt) {
     const reg = await this.resolveRegistrationForStudent(userId, registrationIdOpt);
     const reqs = await documentRequirementModel.findActiveForCompleteness();
@@ -417,6 +459,150 @@ class SubmissionService {
     const reg = await registrationModel.findById(registrationId);
     if (!reg) throw httpError(404, 'Registration not found');
     return registrationDocumentModel.findByRegistration(registrationId);
+  }
+
+  /**
+   * Staff (ROLE_INST_REVIEW): attach or replace documents for a registration on behalf of the candidate.
+   * Each entry is either `{ requirement_id, file_id, source?, sitting? }` (new slot, same rules as student attach)
+   * or `{ document_id, file_id, source?, sitting? }` (replace a submitted row).
+   */
+  async institutionReuploadDocuments(actorUserId, registrationId, documents, candidateUserId) {
+    if (!isUuid(registrationId)) throw httpError(422, 'Invalid registration id');
+    const ok = await hasRoleIn(actorUserId, ROLE_INST_REVIEW);
+    if (!ok) throw httpError(403, 'Forbidden');
+    if (!candidateUserId) {
+      throw httpError(422, 'Registration has no linked candidate user');
+    }
+    if (!Array.isArray(documents)) {
+      throw httpError(422, 'documents must be an array');
+    }
+    if (!documents.length) {
+      throw httpError(422, 'documents must be a non-empty array');
+    }
+    const reg = await registrationModel.findById(registrationId);
+    if (!reg) throw httpError(404, 'Registration not found');
+
+    const out = [];
+    for (const item of documents) {
+      if (!item || typeof item !== 'object') {
+        throw httpError(422, 'Each documents[] entry must be an object');
+      }
+      if (item.document_id) {
+        out.push(
+          await this._institutionReplaceDocument(actorUserId, candidateUserId, registrationId, item)
+        );
+      } else if (item.requirement_id && item.file_id) {
+        out.push(await this._institutionAttachDocument(actorUserId, candidateUserId, reg, item));
+      } else {
+        throw httpError(
+          422,
+          'Each document entry requires document_id+file_id or requirement_id+file_id'
+        );
+      }
+    }
+    return out;
+  }
+
+  async _institutionReplaceDocument(actorUserId, candidateUserId, registrationId, item) {
+    const { document_id, file_id, source, sitting } = item;
+    if (!isUuid(document_id)) throw httpError(422, 'Invalid document id');
+    const row = await registrationDocumentModel.findById(document_id);
+    if (!row || row.registration_id !== registrationId) {
+      throw httpError(404, 'Document not found');
+    }
+    if (!['submitted'].includes(row.status)) {
+      throw httpError(422, 'Only submitted documents can be replaced');
+    }
+    if (!file_id) throw httpError(422, 'file_id is required');
+    await this.assertRequirementAndFileForInstitutionEdit(
+      row.requirement_id,
+      file_id,
+      actorUserId,
+      candidateUserId
+    );
+    const requirement = await documentRequirementModel.findById(row.requirement_id);
+    const vs = validateSourceSitting({
+      requirementKey: requirement ? requirement.key : null,
+      source: source !== undefined ? source : row.source,
+      sitting: sitting !== undefined ? sitting : row.sitting,
+    });
+    await registrationDocumentModel.markReplaced(row.id);
+    const document = await registrationDocumentModel.create({
+      registration_id: row.registration_id,
+      requirement_id: row.requirement_id,
+      file_id,
+      status: 'submitted',
+      source: vs.source,
+      sitting: vs.sitting,
+    });
+    const ocr_job = await dispatchOcrForDocument({
+      document,
+      requirement,
+      userId: candidateUserId,
+      registrationId: row.registration_id,
+    });
+    return ocr_job ? { ...document, ocr_job } : document;
+  }
+
+  async _institutionAttachDocument(actorUserId, candidateUserId, reg, body) {
+    const { requirement_id, file_id } = body;
+    if (!requirement_id || !file_id) {
+      throw httpError(422, 'requirement_id and file_id are required');
+    }
+    if (!isUuid(requirement_id)) throw httpError(422, 'Invalid requirement_id');
+    await this.assertRequirementAndFileForInstitutionEdit(
+      requirement_id,
+      file_id,
+      actorUserId,
+      candidateUserId
+    );
+
+    const requirement = await documentRequirementModel.findById(requirement_id);
+    if (!requirement) throw httpError(404, 'Requirement not found');
+
+    const { source, sitting } = validateSourceSitting({
+      requirementKey: requirement.key,
+      source: body.source,
+      sitting: body.sitting,
+    });
+
+    if (source && sitting) {
+      const sameTuple = await registrationDocumentModel.findCurrentBySourceSitting(reg.id, source, sitting);
+      if (sameTuple) {
+        const err = httpError(
+          409,
+          'Result already uploaded for this source and sitting. Use document_id+file_id to replace.'
+        );
+        err.details = {
+          error_code: 'duplicate_source_sitting',
+          existing_document_id: sameTuple.id,
+        };
+        throw err;
+      }
+    } else {
+      const existing = await registrationDocumentModel.findCurrentSubmittedOrAccepted(reg.id, requirement_id);
+      if (existing) {
+        await registrationDocumentModel.markReplaced(existing.id);
+      }
+    }
+
+    const document = await registrationDocumentModel.create({
+      registration_id: reg.id,
+      requirement_id,
+      file_id,
+      status: 'submitted',
+      source,
+      sitting,
+    });
+
+    const ocr_job = await dispatchOcrForDocument({
+      document,
+      requirement,
+      userId: candidateUserId,
+      registrationId: reg.id,
+    });
+
+    return ocr_job ? { ...document, ocr_job } : document;
   }
 
   async institutionReviewDocument(userId, documentId, status, review_note) {

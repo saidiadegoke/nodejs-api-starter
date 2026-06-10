@@ -52,6 +52,19 @@ class IdentityController {
     }
   }
 
+  static async patchNinIntake(req, res) {
+    try {
+      const data = await identityService.patchNinIntake(
+        req.params.verificationId,
+        req.body,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'NIN intake updated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async createBiometric(req, res) {
     try {
       const row = await identityService.createBiometric(req.body, req.user.user_id);

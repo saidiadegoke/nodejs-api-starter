@@ -472,4 +472,109 @@ describe('JUPEB identity API', () => {
       expect(fireCalls[0][2]).toMatchObject({ verification_id: verificationId });
     });
   });
+
+  describe('PATCH /identity/nin/verifications/:id/intake', () => {
+    it('requires auth', async () => {
+      if (!identityMigrated) return;
+      const res = await request(app)
+        .patch('/identity/nin/verifications/00000000-0000-1000-8000-000000000001/intake')
+        .send({ intake_payload: { email: 'x@y.com' } });
+      expect(res.status).toBe(401);
+    });
+
+    it('merges intake_payload for admin when verification has no registration', async () => {
+      if (!identityMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const nin = `7${String(Date.now()).slice(-10)}`;
+      const v = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, provider: 'mock', idempotency_key: `idem-intake-patch-${Date.now()}` });
+      expect(v.status).toBe(200);
+      const vid = v.body.data.verification_id;
+
+      const patch = await request(app)
+        .patch(`/identity/nin/verifications/${vid}/intake`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ intake_payload: { email: 'merged-intake@example.com', phone: '08001112222' } });
+      expect(patch.status).toBe(200);
+      expect(patch.body.data.intake_payload.email).toBe('merged-intake@example.com');
+      expect(patch.body.data.intake_payload.phone).toBe('08001112222');
+    });
+
+    it('merges flat root JSON body for admin when verification has no registration', async () => {
+      if (!identityMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const nin = `6${String(Date.now()).slice(-10)}`;
+      const v = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, provider: 'mock', idempotency_key: `idem-intake-flat-${Date.now()}` });
+      expect(v.status).toBe(200);
+      const vid = v.body.data.verification_id;
+
+      const patch = await request(app)
+        .patch(`/identity/nin/verifications/${vid}/intake`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ email: 'flat-intake@example.com', phone: '08002223344' });
+      expect(patch.status).toBe(200);
+      expect(patch.body.data.intake_payload.email).toBe('flat-intake@example.com');
+      expect(patch.body.data.intake_payload.phone).toBe('08002223344');
+    });
+
+    it('root-level intake keys override legacy intake_payload when both are sent', async () => {
+      if (!identityMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const nin = `8${String(Date.now()).slice(-10)}`;
+      const v = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, provider: 'mock', idempotency_key: `idem-intake-override-${Date.now()}` });
+      expect(v.status).toBe(200);
+      const vid = v.body.data.verification_id;
+
+      const patch = await request(app)
+        .patch(`/identity/nin/verifications/${vid}/intake`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          intake_payload: { email: 'nested@example.com' },
+          email: 'root-wins@example.com',
+        });
+      expect(patch.status).toBe(200);
+      expect(patch.body.data.intake_payload.email).toBe('root-wins@example.com');
+    });
+
+    it('422 when no allowed intake keys are present', async () => {
+      if (!identityMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const nin = `5${String(Date.now()).slice(-10)}`;
+      const v = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, provider: 'mock', idempotency_key: `idem-intake-empty-${Date.now()}` });
+      expect(v.status).toBe(200);
+      const vid = v.body.data.verification_id;
+
+      const patch = await request(app)
+        .patch(`/identity/nin/verifications/${vid}/intake`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ intake_payload: { not_a_key: 'x' } });
+      expect(patch.status).toBe(422);
+    });
+
+    it('404 for unknown verification id', async () => {
+      if (!identityMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const patch = await request(app)
+        .patch('/identity/nin/verifications/00000000-0000-1000-8000-000000000003/intake')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ intake_payload: { email: 'a@b.com' } });
+      expect(patch.status).toBe(404);
+    });
+  });
 });

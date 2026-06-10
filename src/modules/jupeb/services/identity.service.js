@@ -8,6 +8,7 @@ const { emitNinResolved } = require('./nin-events.service');
 const FileService = require('../../files/services/file.service');
 const { normalizeNin, hashNin, ninLast4, validateBiometricPayload } = require('../utils/identity-crypto');
 const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -427,6 +428,72 @@ class IdentityService {
       throw httpError(403, 'Access denied');
     }
     return sanitizeVerification(row);
+  }
+
+  /**
+   * Shallow-merge allowed intake fields on a verification without re-calling the NIN provider.
+   * Body: flat `{ name?, email?, phone?, subject_combination_id? }` (preferred), or legacy
+   * `{ intake_payload: { ... } }`. Root-level keys override the same keys inside `intake_payload`.
+   */
+  async patchNinIntake(verificationId, body, userId) {
+    if (!isUuid(verificationId)) throw httpError(422, 'Invalid verification id');
+    const row = await ninVerificationModel.findById(verificationId);
+    if (!row) throw httpError(404, 'Verification not found');
+
+    const regRes = await pool.query(
+      `SELECT id, university_id, status FROM jupeb_registrations
+       WHERE nin_verification_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [verificationId]
+    );
+    const reg = regRes.rows[0] || null;
+    const TERMINAL_STATUSES = new Set(['approved', 'rejected', 'withdrawn']);
+    if (reg && TERMINAL_STATUSES.has(reg.status)) {
+      throw httpError(422, 'NIN intake cannot be updated for a registration in a terminal state');
+    }
+
+    if (reg) {
+      await assertInstitutionUniversityAccess(userId, reg.university_id);
+    } else {
+      const privileged = await userHasPrivilegedIdentityRole(userId);
+      if (!privileged) throw httpError(403, 'Access denied');
+    }
+
+    const fromNested =
+      body && body.intake_payload && typeof body.intake_payload === 'object'
+        ? pickIntake(body.intake_payload)
+        : {};
+    const fromRoot = body && typeof body === 'object' ? pickIntake(body) : {};
+    const intake = { ...fromNested, ...fromRoot };
+    if (!Object.keys(intake).length) {
+      throw httpError(
+        422,
+        'Provide at least one of: name, email, phone, subject_combination_id (on the request body or inside intake_payload)'
+      );
+    }
+
+    if (intake.subject_combination_id !== undefined && intake.subject_combination_id !== null) {
+      const scid = String(intake.subject_combination_id).trim();
+      if (!isUuid(scid)) throw httpError(422, 'subject_combination_id must be a valid UUID');
+      if (!reg) {
+        throw httpError(
+          422,
+          'subject_combination_id can only be set when a registration exists for this verification'
+        );
+      }
+      const combo = await subjectCombinationModel.findById(scid);
+      if (!combo || combo.status !== 'active') {
+        throw httpError(404, 'Subject combination not found or inactive');
+      }
+      if (!combo.is_global && String(combo.university_id || '') !== String(reg.university_id)) {
+        throw httpError(422, 'Subject combination is not available for this university');
+      }
+    }
+
+    const updated = await ninVerificationModel.mergeIntakePayload(verificationId, intake);
+    const fresh = updated || (await ninVerificationModel.findById(verificationId));
+    return sanitizeVerification(fresh);
   }
 
   async assertRegistrationAccess(userId, registration) {

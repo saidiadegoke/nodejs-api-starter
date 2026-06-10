@@ -7,6 +7,7 @@ const sessionModel = require('../models/session.model');
 const ninVerificationModel = require('../models/nin-verification.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationDocumentModel = require('../models/registration-document.model');
+const resultEntriesModel = require('../models/result-entries.model');
 const FileService = require('../../files/services/file.service');
 const { canTransition } = require('./registration-state.service');
 const { formatCandidateNumber, makeInstitutionCode } = require('../utils/registration-numbering');
@@ -18,6 +19,7 @@ const {
 const { emitRegistrationApproved } = require('./registration-events.service');
 const jupebMailer = require('./jupeb-mailer.service');
 const registrationKpi = require('./registration-kpi.service');
+const submissionService = require('./submission.service');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -113,6 +115,106 @@ async function assertComboForUniversity(subjectCombinationId, universityId) {
   }
   if (combo.is_global || combo.university_id === universityId) return combo;
   throw httpError(422, 'Subject combination is not available for this university');
+}
+
+/**
+ * Shared M.2 profile patch: validates body against NIN-immutable rules and
+ * updates `profiles` + `users` in one transaction. Used by student self-service
+ * and institution candidate edit.
+ */
+async function applyUserProfilePatch(targetUserId, body, ninPayload) {
+  if (!body || typeof body !== 'object') throw httpError(422, 'Body is required');
+
+  const errors = [];
+  const NIN_IMMUTABLE = ['date_of_birth', 'gender', 'first_name', 'last_name', 'name', 'middle_name'];
+  for (const field of NIN_IMMUTABLE) {
+    if (body[field] !== undefined && ninPayload && Object.prototype.hasOwnProperty.call(ninPayload, field)) {
+      const incoming = String(body[field] || '').toLowerCase().trim();
+      const onFile = String(ninPayload[field] || '').toLowerCase().trim();
+      if (incoming && incoming !== onFile) {
+        errors.push({ field, error_code: 'nin_field_immutable' });
+      }
+    }
+  }
+
+  const editable = {
+    title: body.title !== undefined ? String(body.title || '').trim() : undefined,
+    residential_address:
+      body.residential_address !== undefined ? String(body.residential_address || '').trim() : undefined,
+    state_of_origin:
+      body.state_of_origin !== undefined ? String(body.state_of_origin || '').trim() : undefined,
+    lga: body.lga !== undefined ? String(body.lga || '').trim() : undefined,
+    place_of_birth:
+      body.place_of_birth !== undefined ? String(body.place_of_birth || '').trim() : undefined,
+  };
+  const phone = body.phone !== undefined ? String(body.phone || '').trim() : undefined;
+  const email = body.email !== undefined ? String(body.email || '').trim() : undefined;
+
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    errors.push({ field: 'email', error_code: 'invalid_email' });
+  }
+  if (phone && phone.length < 6) {
+    errors.push({ field: 'phone', error_code: 'phone_too_short' });
+  }
+
+  if (errors.length) {
+    const err = httpError(422, 'Profile update rejected');
+    err.details = { errors };
+    throw err;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const profileFields = Object.entries(editable).filter(([, v]) => v !== undefined);
+    if (profileFields.length) {
+      await client.query(
+        `INSERT INTO profiles (user_id) VALUES ($1)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [targetUserId]
+      );
+      const setSql = profileFields.map(([k], idx) => `${k} = $${idx + 2}`).join(', ');
+      const values = profileFields.map(([, v]) => (v === '' ? null : v));
+      await client.query(
+        `UPDATE profiles
+            SET ${setSql}, updated_at = NOW()
+          WHERE user_id = $1`,
+        [targetUserId, ...values]
+      );
+    }
+
+    if (phone !== undefined) {
+      await client.query(`UPDATE users SET phone = $2, updated_at = NOW() WHERE id = $1`, [
+        targetUserId,
+        phone === '' ? null : phone,
+      ]);
+    }
+    if (email !== undefined && email) {
+      const dup = await client.query(`SELECT id FROM users WHERE email = $1 AND id <> $2 LIMIT 1`, [
+        email,
+        targetUserId,
+      ]);
+      if (dup.rows.length) {
+        throw httpError(409, 'Email already in use');
+      }
+      await client.query(`UPDATE users SET email = $2, updated_at = NOW() WHERE id = $1`, [
+        targetUserId,
+        email,
+      ]);
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -564,8 +666,6 @@ class RegistrationService {
     // Pull related rows in parallel. Each model returns null/[] when
     // there's nothing — the detail page renders graceful empty states.
     const nokModel = require('../models/next-of-kin.model');
-    const documentModel = require('../models/registration-document.model');
-    const resultEntriesModel = require('../models/result-entries.model');
 
     const [
       displays,
@@ -573,7 +673,7 @@ class RegistrationService {
       candidate,
       biometrics,
       next_of_kin,
-      documents,
+      documentsRaw,
       result_entries,
       history,
     ] = await Promise.all([
@@ -593,20 +693,8 @@ class RegistrationService {
       Promise.resolve()
         .then(() => nokModel.findActiveByRegistration(reg.id))
         .catch(() => null),
-      Promise.resolve()
-        .then(() => documentModel.findByRegistrationIdWithRequirements
-          ? documentModel.findByRegistrationIdWithRequirements(reg.id)
-          : documentModel.findByRegistrationId
-            ? documentModel.findByRegistrationId(reg.id)
-            : [])
-        .catch(() => []),
-      Promise.resolve()
-        .then(() => resultEntriesModel.listByRegistrationId
-          ? resultEntriesModel.listByRegistrationId(reg.id)
-          : resultEntriesModel.findByRegistrationId
-            ? resultEntriesModel.findByRegistrationId(reg.id)
-            : [])
-        .catch(() => []),
+      registrationDocumentModel.findByRegistration(reg.id).catch(() => []),
+      resultEntriesModel.findByRegistration(reg.id).catch(() => []),
       pool.query(
         `SELECT from_status, to_status, reason, changed_by, created_at
            FROM jupeb_registration_status_history
@@ -615,6 +703,58 @@ class RegistrationService {
         [reg.id]
       ).then((r) => r.rows).catch(() => []),
     ]);
+
+    const fileOwnerId = reg.user_id || null;
+    const documents = await Promise.all(
+      (documentsRaw || []).map(async (d) => {
+        let download_url = null;
+        if (d.file_id && fileOwnerId) {
+          try {
+            const file = await FileService.getFile(d.file_id, fileOwnerId);
+            download_url = file ? file.file_url : null;
+          } catch {
+            download_url = null;
+          }
+        }
+        return {
+          id: d.id,
+          requirement_id: d.requirement_id,
+          status: d.status,
+          file_id: d.file_id,
+          source: d.source,
+          sitting: d.sitting,
+          download_url,
+          review_note: d.review_note || null,
+          reviewed_at: d.reviewed_at || null,
+          reviewed_by: d.reviewed_by || null,
+          created_at: d.created_at,
+          updated_at: d.updated_at,
+        };
+      })
+    );
+
+    const biometricsOut = await Promise.all(
+      (biometrics || []).map(async (b) => {
+        let preview_url = null;
+        if (b.file_id && fileOwnerId) {
+          try {
+            const file = await FileService.getFile(b.file_id, fileOwnerId);
+            preview_url = file ? file.file_url : null;
+          } catch {
+            preview_url = null;
+          }
+        }
+        return {
+          id: b.id,
+          capture_type: b.capture_type,
+          quality_score: b.quality_score,
+          captured_at: b.captured_at,
+          external_reference: b.external_reference || null,
+          file_id: b.file_id || null,
+          preview_url,
+        };
+      })
+    );
 
     const { nin_verification, ninPayload, intake } = ninBundle;
     const mergedCandidate = mergeInstitutionCandidateFromNin(candidate, ninPayload, intake);
@@ -667,15 +807,9 @@ class RegistrationService {
       nin_verification,
       candidate: mergedCandidate,
       next_of_kin: next_of_kin_response,
-      documents: documents || [],
+      documents,
       result_entries: result_entries || [],
-      biometrics: (biometrics || []).map((b) => ({
-        id: b.id,
-        capture_type: b.capture_type,
-        quality_score: b.quality_score,
-        captured_at: b.captured_at,
-        external_reference: b.external_reference || null,
-      })),
+      biometrics: biometricsOut,
       biometric_status,
       biometric_skips: skipped,
       status_history: history || [],
@@ -701,6 +835,103 @@ class RegistrationService {
       subject_combination_id: body.subject_combination_id,
     });
     return updated;
+  }
+
+  /**
+   * Institution M.2 — patch candidate profile, subject combination, and/or documents for a claimed registration.
+   * Profile fields follow the same rules as `PATCH /registration/me/profile` (NIN-immutable fields).
+   * Optional `subject_combination_id` updates `jupeb_registrations` when the combo is active and allowed for the university.
+   * Optional `documents` is a non-empty array of `{ document_id, file_id }` (replace submitted row) or
+   * `{ requirement_id, file_id, source?, sitting? }` (attach; same duplicate rules as student POST).
+   */
+  async institutionPatchCandidate(registrationId, body, actorUserId) {
+    await assertInstitutionRegistration(actorUserId);
+    if (!isUuid(registrationId)) throw httpError(422, 'Invalid registration id');
+    const reg = await registrationModel.findById(registrationId);
+    if (!reg) throw httpError(404, 'Registration not found');
+    await assertInstitutionUniversityAccess(actorUserId, reg.university_id);
+    if (!reg.user_id) {
+      throw httpError(422, 'Candidate profile cannot be edited until the registration code is claimed');
+    }
+    const editableStatuses = new Set([
+      'claimed',
+      'pending_student_confirm',
+      'pending_documents',
+      'pending_institution_review',
+    ]);
+    if (!editableStatuses.has(reg.status)) {
+      throw httpError(422, 'Candidate profile cannot be edited in the current registration status');
+    }
+
+    let ninPayload = {};
+    if (reg.nin_verification_id) {
+      const ninRow = await ninVerificationModel.findById(reg.nin_verification_id);
+      if (ninRow && ninRow.status === 'verified') {
+        ninPayload = ninRow.response_payload || {};
+      }
+    }
+
+    await applyUserProfilePatch(reg.user_id, body, ninPayload);
+
+    if (body.subject_combination_id !== undefined && body.subject_combination_id !== null) {
+      const scid = String(body.subject_combination_id).trim();
+      if (!isUuid(scid)) throw httpError(422, 'subject_combination_id must be a valid UUID');
+      await assertComboForUniversity(scid, reg.university_id);
+      await registrationModel.updateRegistration(registrationId, {
+        subject_combination_id: scid,
+      });
+    }
+
+    if (body.documents !== undefined && body.documents !== null) {
+      if (!Array.isArray(body.documents)) {
+        throw httpError(422, 'documents must be an array');
+      }
+      if (body.documents.length) {
+        await submissionService.institutionReuploadDocuments(
+          actorUserId,
+          reg.id,
+          body.documents,
+          reg.user_id
+        );
+      }
+    }
+
+    return this.institutionGetCandidate(registrationId, actorUserId);
+  }
+
+  /**
+   * Re-send the institution-issued registration code email (same template as create).
+   * Does not rotate the code or extend expiry.
+   */
+  async institutionResendCode(registrationId, actorUserId) {
+    await assertInstitutionRegistration(actorUserId);
+    if (!isUuid(registrationId)) throw httpError(422, 'Invalid registration id');
+    const reg = await registrationModel.findById(registrationId);
+    if (!reg) throw httpError(404, 'Registration not found');
+    await assertInstitutionUniversityAccess(actorUserId, reg.university_id);
+    if (reg.status !== 'code_issued') {
+      throw httpError(422, 'Registration code can only be resent while the registration is awaiting claim');
+    }
+    if (reg.user_id) {
+      throw httpError(422, 'Registration code was already claimed');
+    }
+    if (reg.institution_code_expires_at && new Date(reg.institution_code_expires_at).getTime() < Date.now()) {
+      const err = httpError(410, 'This institution code has expired');
+      err.details = {
+        error_code: 'code_expired',
+        expires_at: reg.institution_code_expires_at,
+      };
+      throw err;
+    }
+    setImmediate(() => {
+      jupebMailer.sendCodeIssued(registrationId);
+    });
+    return {
+      id: reg.id,
+      institution_issued_code: reg.institution_issued_code,
+      institution_code_expires_at: reg.institution_code_expires_at,
+      resent: true,
+    };
   }
 
   async institutionList(query, userId) {
@@ -1182,8 +1413,6 @@ class RegistrationService {
     const reg = await registrationModel.findLatestForUser(userId);
     if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
     // M.8d — pull result entries (parsed grades) alongside docs/biometrics
-    // eslint-disable-next-line global-require
-    const resultEntriesModel = require('../models/result-entries.model');
     const [profile, biometrics, documents, resultEntries] = await Promise.all([
       this.getMeProfile(userId),
       biometricCaptureModel.findByRegistrationId(reg.id),
@@ -1351,8 +1580,6 @@ class RegistrationService {
    * verified NIN payload is present.
    */
   async updateMeProfile(userId, body) {
-    if (!body || typeof body !== 'object') throw httpError(422, 'Body is required');
-
     const reg = await registrationModel.findLatestForUser(userId);
     if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
 
@@ -1364,100 +1591,7 @@ class RegistrationService {
       }
     }
 
-    const errors = [];
-
-    // Reject NIN-immutable fields when present in the body.
-    const NIN_IMMUTABLE = ['date_of_birth', 'gender', 'first_name', 'last_name', 'name', 'middle_name'];
-    for (const field of NIN_IMMUTABLE) {
-      if (body[field] !== undefined && ninPayload && Object.prototype.hasOwnProperty.call(ninPayload, field)) {
-        const incoming = String(body[field] || '').toLowerCase().trim();
-        const onFile = String(ninPayload[field] || '').toLowerCase().trim();
-        if (incoming && incoming !== onFile) {
-          errors.push({ field, error_code: 'nin_field_immutable' });
-        }
-      }
-    }
-
-    const editable = {
-      // `title` is a free-text honorific — not NIN-derived, freely editable.
-      title: body.title !== undefined ? String(body.title || '').trim() : undefined,
-      residential_address:
-        body.residential_address !== undefined ? String(body.residential_address || '').trim() : undefined,
-      state_of_origin:
-        body.state_of_origin !== undefined ? String(body.state_of_origin || '').trim() : undefined,
-      lga: body.lga !== undefined ? String(body.lga || '').trim() : undefined,
-      place_of_birth:
-        body.place_of_birth !== undefined ? String(body.place_of_birth || '').trim() : undefined,
-    };
-    const phone = body.phone !== undefined ? String(body.phone || '').trim() : undefined;
-    const email = body.email !== undefined ? String(body.email || '').trim() : undefined;
-
-    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      errors.push({ field: 'email', error_code: 'invalid_email' });
-    }
-    if (phone && phone.length < 6) {
-      errors.push({ field: 'phone', error_code: 'phone_too_short' });
-    }
-
-    if (errors.length) {
-      const err = httpError(422, 'Profile update rejected');
-      err.details = { errors };
-      throw err;
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Upsert profile row (legacy users may not have one yet)
-      const profileFields = Object.entries(editable).filter(([, v]) => v !== undefined);
-      if (profileFields.length) {
-        // Make sure a profile row exists
-        await client.query(
-          `INSERT INTO profiles (user_id) VALUES ($1)
-           ON CONFLICT (user_id) DO NOTHING`,
-          [userId]
-        );
-        const setSql = profileFields
-          .map(([k], idx) => `${k} = $${idx + 2}`)
-          .join(', ');
-        const values = profileFields.map(([, v]) => (v === '' ? null : v));
-        await client.query(
-          `UPDATE profiles
-              SET ${setSql}, updated_at = NOW()
-            WHERE user_id = $1`,
-          [userId, ...values]
-        );
-      }
-
-      if (phone !== undefined) {
-        await client.query(
-          `UPDATE users SET phone = $2, updated_at = NOW() WHERE id = $1`,
-          [userId, phone === '' ? null : phone]
-        );
-      }
-      if (email !== undefined && email) {
-        const dup = await client.query(
-          `SELECT id FROM users WHERE email = $1 AND id <> $2 LIMIT 1`,
-          [email, userId]
-        );
-        if (dup.rows.length) {
-          throw httpError(409, 'Email already in use');
-        }
-        await client.query(
-          `UPDATE users SET email = $2, updated_at = NOW() WHERE id = $1`,
-          [userId, email]
-        );
-      }
-
-      await client.query('COMMIT');
-    } catch (err) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
-      throw err;
-    } finally {
-      client.release();
-    }
-
+    await applyUserProfilePatch(userId, body, ninPayload);
     return this.getMeProfile(userId);
   }
 
