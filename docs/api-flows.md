@@ -1780,7 +1780,8 @@ POST /registration/institution/registrations/{registrationId}/withdraw     (inst
 `req` optional `{ "reason": "..." }`. Also available via batch with `action: withdraw`.
 
 **Withdraw is not delete:** the registration row stays in the database; `status` becomes `withdrawn`
-(a terminal state). Lists and analytics typically exclude withdrawn rows, but history and audit
+(a terminal state). Lists and many analytics breakdowns exclude withdrawn rows, but **`total_registered`**
+on `GET /dashboard/stat-cards` and institution overview KPIs counts every registration in scope (withdrawn included). History and audit
 data remain. There is no hard-delete API on this path.
 
 ### Candidate: 13 — Dashboard unlocked

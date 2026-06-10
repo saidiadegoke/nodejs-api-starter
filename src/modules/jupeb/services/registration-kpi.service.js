@@ -59,6 +59,8 @@ function growthTrend(curVal, prevVal) {
 }
 
 /**
+ * `total` counts every registration in scope (including `withdrawn`). Biometric and
+ * `total_subject_combinations` counts exclude withdrawn (see SQL FILTER clauses).
  * @param {string|null|undefined} universityId
  * @param {string|null|undefined} sessionId
  * @returns {Promise<{
@@ -88,7 +90,7 @@ async function kpiCounts(universityId, sessionId) {
   params.push(PENDING_STATUSES);
   const sql = `
     SELECT
-      COUNT(*) FILTER (WHERE r.status <> 'withdrawn')::int AS total,
+      COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE r.status = 'approved')::int AS approved,
       COUNT(*) FILTER (WHERE r.status = ANY($${pendingIdx}::text[]))::int AS pending,
       COUNT(*) FILTER (WHERE r.status = 'rejected')::int AS rejected,

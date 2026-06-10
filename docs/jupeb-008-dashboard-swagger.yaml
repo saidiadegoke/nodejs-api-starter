@@ -20,7 +20,8 @@ info:
     - `approved` ← `approved`
     - `rejected` ← `rejected`
     - `pending`  ← `provisional`, `code_issued`, `claimed`, `pending_student_confirm`, `pending_documents`, `pending_institution_review`
-    - `withdrawn` rows are excluded from totals everywhere.
+    - `withdrawn` rows still count toward **`total_registered`**; other stat-card metrics below
+      exclude withdrawn where stated.
 
 servers:
   - url: http://localhost:5000
@@ -199,7 +200,7 @@ paths:
 
         - `institutions_onboarded` is a count of active universities. There's no
           session-scoped notion of "prior institutions", so `delta_pct` is always `null` here.
-        - `total_registered` excludes `withdrawn`.
+        - `total_registered` counts every registration in scope (**including** `withdrawn`).
         - `pending` rolls up the six pending-bucket statuses (see top of doc).
         - `with_biometrics` counts non-withdrawn registrations that have at least one
           non-replaced biometric capture.

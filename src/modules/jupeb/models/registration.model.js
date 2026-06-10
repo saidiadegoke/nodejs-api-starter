@@ -271,7 +271,7 @@ class RegistrationModel {
   /**
    * E.4 — bucket counts scoped to (university_id?, session_id?).
    * Returns { total, approved, pending, rejected, with_biometrics, total_subject_combinations }.
-   * Uses shared KPI SQL (aligned with program dashboard stat-cards).
+   * Uses shared KPI SQL (aligned with program dashboard stat-cards). `total` includes withdrawn.
    */
   async statsInstitution({ university_id, session_id }) {
     const row = await registrationKpi.kpiCounts(university_id || null, session_id || null);
