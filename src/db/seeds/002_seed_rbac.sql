@@ -23,11 +23,53 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 ('system.config', 'system', 'config', 'Manage system configuration'),
 ('system.logs', 'system', 'logs', 'View system logs'),
 
--- User permissions
+-- Permission management (RBAC)
+('permissions.view', 'permissions', 'view', 'View permissions'),
+('permissions.remove', 'permissions', 'remove', 'Remove permissions from users'),
+
+-- Role management
+('roles.create', 'roles', 'create', 'Create new roles'),
+('roles.update', 'roles', 'update', 'Edit roles'),
+('roles.delete', 'roles', 'delete', 'Delete roles'),
+('roles.view', 'roles', 'view', 'View role details'),
+
+-- Session management
+('sessions.create', 'sessions', 'create', 'Create new sessions'),
+('sessions.update', 'sessions', 'update', 'Edit sessions'),
+('sessions.delete', 'sessions', 'delete', 'Delete sessions'),
+('sessions.view', 'sessions', 'view', 'View sessions'),
+
+-- User management
 ('users.view', 'users', 'view', 'View user profiles'),
 ('users.create', 'users', 'create', 'Create new users'),
 ('users.update', 'users', 'update', 'Update user profiles'),
 ('users.delete', 'users', 'delete', 'Delete users'),
+
+-- Institution management
+('institutions.create', 'institutions', 'create', 'Create institutions'),
+('institutions.update', 'institutions', 'update', 'Edit institutions'),
+('institutions.delete', 'institutions', 'delete', 'Delete institutions'),
+('institutions.view', 'institutions', 'view', 'View institutions'),
+
+-- Subject management
+('subject.create', 'subject', 'create', 'Create subjects'),
+('subject.view', 'subject', 'view', 'View subject details'),
+('subject.update', 'subject', 'update', 'Edit subjects'),
+('subject.delete', 'subject', 'delete', 'Delete subjects'),
+
+-- Subject combination management
+('subject_combinations.create', 'subject_combinations', 'create', 'Create subject combinations'),
+('subject_combinations.update', 'subject_combinations', 'update', 'Edit subject combinations'),
+('subject_combinations.view', 'subject_combinations', 'view', 'View subject combinations'),
+('subject_combinations.delete', 'subject_combinations', 'delete', 'Delete subject combinations'),
+
+-- Payments & reporting
+('payments.view', 'payments', 'view', 'View payments'),
+('activity_logs.view', 'activity_logs', 'view', 'View activity log'),
+('reports.view', 'reports', 'view', 'View reports'),
+('reports.export', 'reports', 'export', 'Export reports'),
+
+-- JUPEB
 ('jupeb.catalog.manage', 'jupeb', 'catalog', 'Manage JUPEB catalog (universities, subject combinations)'),
 ('jupeb.identity.verify', 'jupeb', 'identity_verify', 'Verify NIN and access identity proofs'),
 ('profiles.jupeb_university_id', 'profiles', 'jupeb_university_id', 'Owns profiles.jupeb_university_id — institution-scope binding for JUPEB actions')

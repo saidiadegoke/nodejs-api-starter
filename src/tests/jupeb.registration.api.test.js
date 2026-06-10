@@ -808,3 +808,149 @@ describe('JUPEB registration API', () => {
     });
   });
 });
+
+describe('POST /registration/institution/registrations/:id/resend-code', () => {
+  let registrationMigrated = false;
+
+  beforeAll(async () => {
+    try {
+      await pool.query('SELECT 1 FROM jupeb_registrations LIMIT 1');
+      registrationMigrated = true;
+    } catch {
+      registrationMigrated = false;
+    }
+    process.env.JUPEB_INSTITUTION_CODE_TTL_HOURS = '0';
+  });
+
+  async function getAdminToken() {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'admin@example.com', password: 'Admin@12' });
+    return res.body.data?.access_token || null;
+  }
+
+  it('returns 200 and resent:true for unclaimed code_issued registration', async () => {
+    if (!registrationMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+
+    const suffix = Date.now();
+    const uniRes = await request(app)
+      .post('/catalog/universities')
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        buildCatalogUniversityPayload('RSC', {
+          code: nextJupebTestUniversityCode('RSC'),
+          name: `Resend Code Uni ${suffix}`,
+        })
+      );
+    expect(uniRes.status).toBe(201);
+
+    const scRes = await request(app)
+      .post('/catalog/subject-combinations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: nextJupebTestUniversityCode('RSCSC'),
+        title: 'Resend Combo',
+        subjects: ['M', 'P', 'C'],
+        is_global: true,
+      });
+    expect(scRes.status).toBe(201);
+
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+    const sessRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+      });
+    expect(sessRes.status).toBe(201);
+    await closeAllOpenJupebSessions(token);
+    await request(app).post(`/sessions/${sessRes.body.data.id}/open`).set('Authorization', `Bearer ${token}`);
+
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        session_id: sessRes.body.data.id,
+        university_id: uniRes.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+    expect(createReg.status).toBe(201);
+    const registrationId = createReg.body.data.id;
+
+    const resend = await request(app)
+      .post(`/registration/institution/registrations/${registrationId}/resend-code`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(resend.status).toBe(200);
+    expect(resend.body.data.resent).toBe(true);
+    expect(resend.body.data.institution_issued_code).toBe(createReg.body.data.institution_issued_code);
+  });
+
+  it('422 after code is claimed', async () => {
+    if (!registrationMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+
+    const uniRes = await request(app)
+      .post('/catalog/universities')
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        buildCatalogUniversityPayload('RSC2', {
+          code: nextJupebTestUniversityCode('RSC2'),
+          name: `Resend Code Uni 2 ${Date.now()}`,
+        })
+      );
+    if (uniRes.status !== 201) return;
+    const scRes = await request(app)
+      .post('/catalog/subject-combinations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: nextJupebTestUniversityCode('RSC2SC'),
+        title: 'Resend Combo 2',
+        subjects: ['M', 'P', 'C'],
+        is_global: true,
+      });
+    if (scRes.status !== 201) return;
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+    const sessRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+      });
+    if (sessRes.status !== 201) return;
+    await closeAllOpenJupebSessions(token);
+    await request(app).post(`/sessions/${sessRes.body.data.id}/open`).set('Authorization', `Bearer ${token}`);
+
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        session_id: sessRes.body.data.id,
+        university_id: uniRes.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+    expect(createReg.status).toBe(201);
+    const registrationId = createReg.body.data.id;
+
+    await request(app)
+      .post('/auth/complete-registration')
+      .send({
+        code: createReg.body.data.institution_issued_code,
+        password: 'Strong@Password1',
+        email: `rsc-claim-${Date.now()}@example.com`,
+      });
+
+    const resend = await request(app)
+      .post(`/registration/institution/registrations/${registrationId}/resend-code`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(resend.status).toBe(422);
+  });
+});

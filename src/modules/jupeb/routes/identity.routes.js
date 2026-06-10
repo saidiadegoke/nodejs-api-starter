@@ -8,6 +8,7 @@ const ninVerifyRoles = [
 ];
 
 router.post('/nin/verify', ninVerifyRoles, IdentityController.verifyNin);
+router.patch('/nin/verifications/:verificationId/intake', ninVerifyRoles, IdentityController.patchNinIntake);
 router.post('/nin/verifications/:verificationId/retry', ninVerifyRoles, IdentityController.retryVerification);
 router.get('/nin/verifications/:verificationId', requireAuth, IdentityController.getVerification);
 

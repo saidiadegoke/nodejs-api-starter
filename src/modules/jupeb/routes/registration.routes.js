@@ -12,6 +12,8 @@ router.get('/sessions/:sessionId/numbering-preview', finalizeRole, RegistrationC
 
 router.post('/institution/registrations', instReg, RegistrationController.institutionCreate);
 router.patch('/institution/registrations/:registrationId', instReg, RegistrationController.institutionPatch);
+router.patch('/institution/registrations/:registrationId/candidate', instReg, RegistrationController.institutionPatchCandidate);
+router.post('/institution/registrations/:registrationId/resend-code', instReg, RegistrationController.institutionResendCode);
 router.delete('/institution/registrations/:registrationId', instReg, RegistrationController.institutionDelete);
 router.get('/institution/registrations', instReg, RegistrationController.institutionList);
 router.get('/institution/registrations/export', instReg, RegistrationController.institutionExportCsv);

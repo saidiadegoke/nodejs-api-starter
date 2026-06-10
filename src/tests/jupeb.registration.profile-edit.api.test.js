@@ -6,6 +6,7 @@ const {
   nextJupebTestPrefix,
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
+  buildCatalogUniversityPayload,
 } = require('./jupeb-session-test-helpers');
 
 describe('PATCH /registration/me/profile (M.2)', () => {
@@ -50,15 +51,16 @@ describe('PATCH /registration/me/profile (M.2)', () => {
 
   async function newClaimedRegistration(adminToken, tag, ninVerificationId = null) {
     let uniRes;
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 30; i += 1) {
       uniRes = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} ProfileEdit University`,
-          jupeb_prefix: nextJupebTestPrefix(),
-        });
+        .send(
+          buildCatalogUniversityPayload(`${tag}${i}`, {
+            code: nextJupebTestUniversityCode(tag),
+            name: `${tag} ProfileEdit University`,
+          })
+        );
       if (uniRes.status === 201) break;
     }
     let scRes;
@@ -240,5 +242,285 @@ describe('PATCH /registration/me/profile (M.2)', () => {
       .set('Authorization', `Bearer ${studentToken}`)
       .send({ email: existingEmail });
     expect(res.status).toBe(409);
+  });
+});
+
+describe('PATCH /registration/institution/registrations/:id/candidate', () => {
+  let registrationMigrated = false;
+  let addressColumnsMigrated = false;
+
+  beforeAll(async () => {
+    try {
+      await pool.query('SELECT 1 FROM jupeb_registrations LIMIT 1');
+      registrationMigrated = true;
+    } catch {
+      registrationMigrated = false;
+    }
+    try {
+      const r = await pool.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'profiles' AND column_name = 'residential_address'`
+      );
+      addressColumnsMigrated = r.rowCount > 0;
+    } catch {
+      addressColumnsMigrated = false;
+    }
+    process.env.JUPEB_INSTITUTION_CODE_TTL_HOURS = '0';
+  });
+
+  async function getAdminToken() {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'admin@example.com', password: 'Admin@12' });
+    return res.body.data?.access_token || null;
+  }
+
+  async function newClaimedRegistration(adminToken, tag) {
+    let uniRes;
+    for (let i = 0; i < 30; i += 1) {
+      uniRes = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(
+          buildCatalogUniversityPayload(`${tag}${i}`, {
+            code: nextJupebTestUniversityCode(tag),
+            name: `${tag} InstCand University`,
+          })
+        );
+      if (uniRes.status === 201) break;
+    }
+    expect(uniRes.status).toBe(201);
+    let scRes;
+    for (let i = 0; i < 5; i += 1) {
+      scRes = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: nextJupebTestUniversityCode(`${tag}SC`),
+          title: `${tag} Combo`,
+          subjects: ['Math', 'Phys', 'Chem'],
+          is_global: true,
+        });
+      if (scRes.status === 201) break;
+    }
+    let sessRes;
+    for (let i = 0; i < 5; i += 1) {
+      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      sessRes = await request(app)
+        .post('/sessions')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          academic_year: academicYear,
+          year_short: yearShort,
+          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        });
+      if (sessRes.status === 201) break;
+    }
+    await closeAllOpenJupebSessions(adminToken);
+    await request(app).post(`/sessions/${sessRes.body.data.id}/open`).set('Authorization', `Bearer ${adminToken}`);
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        session_id: sessRes.body.data.id,
+        university_id: uniRes.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+    const stamp = Date.now() + Math.floor(Math.random() * 1000);
+    const studentEmail = `icand-${tag.toLowerCase()}-${stamp}@example.com`;
+    const reg = await request(app)
+      .post('/auth/complete-registration')
+      .send({
+        code: createReg.body.data.institution_issued_code,
+        password: 'Strong@Password1',
+        email: studentEmail,
+      });
+    return {
+      registrationId: createReg.body.data.id,
+      studentToken: reg.body.data.access_token,
+    };
+  }
+
+  async function ensureRequirement(adminToken, key, label) {
+    const create = await request(app)
+      .post('/submission/requirements')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        key,
+        label,
+        title: label,
+        description: `${label} test`,
+        is_mandatory: false,
+        allowed_mime_types: ['application/pdf'],
+        max_file_size_mb: 5,
+      });
+    if (create.status === 201) return create.body.data;
+    const list = await request(app)
+      .get('/submission/requirements?limit=200')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const arr = Array.isArray(list.body.data) ? list.body.data : list.body.data?.rows || [];
+    return arr.find((r) => r.key === key) || null;
+  }
+
+  async function uploadDummyFile(token, name = 'fake.pdf') {
+    const tinyPdf = '%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF';
+    const base64 = Buffer.from(tinyPdf).toString('base64');
+    const res = await request(app)
+      .post('/files/upload-base64')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        file_data: `data:application/pdf;base64,${base64}`,
+        context: 'submission_test',
+        file_name: name,
+      });
+    return res.body.data && (res.body.data.file_id || res.body.data.id);
+  }
+
+  it('admin updates candidate profile via institution path', async () => {
+    if (!registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const { registrationId } = await newClaimedRegistration(adminToken, 'ICAND');
+
+    const patch = await request(app)
+      .patch(`/registration/institution/registrations/${registrationId}/candidate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ residential_address: 'Institution candidate patch road' });
+    expect(patch.status).toBe(200);
+    expect(patch.body.data.candidate.residential_address).toBe('Institution candidate patch road');
+  });
+
+  it('admin updates subject_combination_id via institution candidate path', async () => {
+    if (!registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const { registrationId } = await newClaimedRegistration(adminToken, 'ICSC');
+
+    let sc2;
+    for (let i = 0; i < 5; i += 1) {
+      sc2 = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: nextJupebTestUniversityCode('ICSC2'),
+          title: 'Inst cand combo 2',
+          subjects: ['Bio', 'Chem', 'Phys'],
+          is_global: true,
+        });
+      if (sc2.status === 201) break;
+    }
+    if (sc2.status !== 201) return;
+
+    const patch = await request(app)
+      .patch(`/registration/institution/registrations/${registrationId}/candidate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ subject_combination_id: sc2.body.data.id });
+    expect(patch.status).toBe(200);
+    expect(patch.body.data.subject_combination.id).toBe(sc2.body.data.id);
+  });
+
+  it('admin replaces a submitted document via institution candidate path', async () => {
+    let submissionMigrated = false;
+    try {
+      await pool.query('SELECT 1 FROM jupeb_document_requirements LIMIT 1');
+      submissionMigrated = true;
+    } catch {
+      submissionMigrated = false;
+    }
+    if (!submissionMigrated || !registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const requirement = await ensureRequirement(adminToken, 'inst_cand_reupload', 'Inst cand reupload');
+    if (!requirement) return;
+
+    const { registrationId, studentToken } = await newClaimedRegistration(adminToken, 'ICDOC');
+    delete process.env.FEATURE_OCR_ENABLED;
+    const file1 = await uploadDummyFile(studentToken, 'cand-v1.pdf');
+    if (!file1) return;
+    const attach = await request(app)
+      .post('/submission/me/documents')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({ requirement_id: requirement.id, file_id: file1 });
+    expect(attach.status).toBe(201);
+    const documentId = attach.body.data.id;
+
+    const file2 = await uploadDummyFile(adminToken, 'staff-v2.pdf');
+    if (!file2) return;
+    const patch = await request(app)
+      .patch(`/registration/institution/registrations/${registrationId}/candidate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ documents: [{ document_id: documentId, file_id: file2 }] });
+    expect(patch.status).toBe(200);
+    const submitted = (patch.body.data.documents || []).filter(
+      (d) => d.requirement_id === requirement.id && d.status === 'submitted'
+    );
+    expect(submitted.length).toBeGreaterThanOrEqual(1);
+    expect(submitted.some((d) => d.file_id === file2)).toBe(true);
+  });
+
+  it('422 when registration is not yet claimed', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    let uniRes;
+    for (let i = 0; i < 30; i += 1) {
+      uniRes = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(
+          buildCatalogUniversityPayload(`UCLM${i}`, {
+            code: nextJupebTestUniversityCode('UCLM'),
+            name: 'Unclaimed Inst Uni',
+          })
+        );
+      if (uniRes.status === 201) break;
+    }
+    expect(uniRes.status).toBe(201);
+    let scRes;
+    for (let i = 0; i < 5; i += 1) {
+      scRes = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: nextJupebTestUniversityCode('UCLMSC'),
+          title: 'Unclaimed Combo',
+          subjects: ['M', 'P', 'C'],
+          is_global: true,
+        });
+      if (scRes.status === 201) break;
+    }
+    let sessRes;
+    for (let i = 0; i < 5; i += 1) {
+      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      sessRes = await request(app)
+        .post('/sessions')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          academic_year: academicYear,
+          year_short: yearShort,
+          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        });
+      if (sessRes.status === 201) break;
+    }
+    await closeAllOpenJupebSessions(adminToken);
+    await request(app).post(`/sessions/${sessRes.body.data.id}/open`).set('Authorization', `Bearer ${adminToken}`);
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        session_id: sessRes.body.data.id,
+        university_id: uniRes.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+    expect(createReg.status).toBe(201);
+
+    const patch = await request(app)
+      .patch(`/registration/institution/registrations/${createReg.body.data.id}/candidate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ residential_address: 'Should fail' });
+    expect(patch.status).toBe(422);
   });
 });

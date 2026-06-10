@@ -25,6 +25,31 @@ class RegistrationController {
     }
   }
 
+  static async institutionPatchCandidate(req, res) {
+    try {
+      const data = await registrationService.institutionPatchCandidate(
+        req.params.registrationId,
+        req.body,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Candidate updated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
+  static async institutionResendCode(req, res) {
+    try {
+      const data = await registrationService.institutionResendCode(
+        req.params.registrationId,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Registration code email queued');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
   /** Hard-delete a registration row (guarded: rejected, withdrawn, or unclaimed code). */
   static async institutionDelete(req, res) {
     try {

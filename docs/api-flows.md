@@ -1780,7 +1780,8 @@ POST /registration/institution/registrations/{registrationId}/withdraw     (inst
 `req` optional `{ "reason": "..." }`. Also available via batch with `action: withdraw`.
 
 **Withdraw is not delete:** the registration row stays in the database; `status` becomes `withdrawn`
-(a terminal state). Lists and analytics typically exclude withdrawn rows, but history and audit
+(a terminal state). Lists and many analytics breakdowns exclude withdrawn rows, but **`total_registered`**
+on `GET /dashboard/stat-cards` and institution overview KPIs counts every registration in scope (withdrawn included). History and audit
 data remain. There is no hard-delete API on this path.
 
 ### Candidate: 13 — Dashboard unlocked
@@ -1868,11 +1869,22 @@ GET /registration/institution/registrations/{registrationId}     (inst)
       "email": null, "address": "...", "source": "nin"
     },
 
-    "documents":      [ /* registration_documents */ ],
-    "result_entries": [ /* grouped by source+sitting */ ],
+    "documents": [
+      {
+        "id": "uuid", "requirement_id": "uuid", "status": "submitted",
+        "file_id": "uuid", "source": "waec", "sitting": 1,
+        "download_url": "https://…signed-or-public…",
+        "review_note": null, "reviewed_at": null, "reviewed_by": null,
+        "created_at": "...", "updated_at": "..."
+      }
+    ],
+    "result_entries": [ /* jupeb_result_entries rows for this registration */ ],
     "biometrics": [
-      { "id": "...", "capture_type": "face", "quality_score": 0.85,
-        "captured_at": "..." }
+      {
+        "id": "uuid", "capture_type": "face", "quality_score": 0.85,
+        "captured_at": "...", "external_reference": null,
+        "file_id": "uuid", "preview_url": "https://…signed-or-public…"
+      }
     ],
     "biometric_status": "yes",
     "biometric_skips": { "face": false, "fingerprint": false },
@@ -1894,6 +1906,62 @@ Errors:
 institution dashboard (admin / super_admin / registrar /
 program_director / institution_admin) and scoped to the registration's
 `university_id` via `assertInstitutionUniversityAccess`.
+
+### 6a. PATCH NIN intake (no provider round-trip)
+
+```
+PATCH /identity/nin/verifications/{verificationId}/intake     (ninVerifyRoles)
+```
+
+Body (preferred — flat keys on the root object; shallow-merge into `jupeb_nin_verifications.intake_payload`):
+
+```json
+{
+  "name": "Adebayo Salami",
+  "email": "adebayo@example.com",
+  "phone": "+2348012345678",
+  "subject_combination_id": "00000000-0000-4000-8000-000000000001"
+}
+```
+
+Legacy `{ "intake_payload": { ... } }` is still accepted; if both root and `intake_payload` set the same key, the **root** value wins. Same allowed keys as `POST /identity/nin/verify`. When a registration row references this verification, `program_director` / `institution_admin` callers must be scoped to that registration’s `university_id`; registrar/admin may update verifications that are not yet linked to a registration. Updates return **422** when the linked registration is terminal (`approved`, `rejected`, `withdrawn`).
+
+### 6b. Institution PATCH candidate profile
+
+```
+PATCH /registration/institution/registrations/{registrationId}/candidate     (inst)
+```
+
+Same editable profile fields and NIN-immutable rules as `PATCH /registration/me/profile`, applied to the registration’s linked `user_id`. Additionally you may send:
+
+- `subject_combination_id` (UUID) — updates the registration’s combination when it is active and valid for the university.
+- `documents` — non-empty array of re-upload operations. Each element is either `{ "document_id", "file_id" }` (replace an existing **submitted** document row) or `{ "requirement_id", "file_id", "source"?, "sitting"? }` (attach; same metadata rules as `POST /submission/me/documents` for result requirements).
+
+Example (profile + address + phone + combo + one document replace):
+
+```json
+{
+  "residential_address": "12 Institution Rd, Ibadan",
+  "phone": "+2348099988776",
+  "subject_combination_id": "00000000-0000-4000-8000-000000000002",
+  "documents": [
+    {
+      "document_id": "00000000-0000-4000-8000-0000000000aa",
+      "file_id": "00000000-0000-4000-8000-0000000000bb"
+    }
+  ]
+}
+```
+
+**422** if the code is not yet claimed (`user_id` is null) or the registration status is outside `claimed` / `pending_student_confirm` / `pending_documents` / `pending_institution_review`. Returns the same composite shape as **§6** (`GET …/registrations/{id}`).
+
+### 6c. Resend institution registration code email
+
+```
+POST /registration/institution/registrations/{registrationId}/resend-code     (inst)
+```
+
+Re-queues the same `jupeb-code-issued` email as create (`jupebMailer.sendCodeIssued`). Allowed only when `status` is `code_issued`, `user_id` is null, and the code is not expired (`institution_code_expires_at`). Does **not** rotate the code or extend expiry. **410** with `details.error_code: code_expired` when past `institution_code_expires_at`.
 
 ---
 
@@ -2262,7 +2330,10 @@ max 100) for pagination and return a
 
 | Endpoint | Tab on the portal | `q` matches against | Other filters |
 |---|---|---|---|
-| `GET /registration/institution/registrations` | Candidates / Recent Registrations table | `display_name`, `first_name`, `last_name`, `email`, `provisional_candidate_code`, `jupeb_candidate_number`, `institution_issued_code` | `bucket` / `status`, `university_id`, `session_id` |
+| `GET /registration/institution/registrations/{id}` | Candidate detail | `documents[].download_url`, `biometrics[].preview_url`, `result_entries[]` | Same as list filters for auth scope |
+| `PATCH /registration/institution/registrations/{id}/candidate` | Correct candidate profile after claim | `residential_address`, `phone`, `email`, … | Same rules as student `PATCH /registration/me/profile` |
+| `POST /registration/institution/registrations/{id}/resend-code` | Re-send code email | — | `code_issued`, unclaimed, not expired |
+| `PATCH /identity/nin/verifications/{id}/intake` | Correct NIN-side intake without provider | Root: `name`, `email`, `phone`, `subject_combination_id` (or legacy `intake_payload`) | Not when registration is terminal |
 | `GET /registration/institution/registrations/export` | Same filters as list (CSV) | — | Same query params as the list endpoint |
 | `GET /registration/institution/overview/stats` | Dashboard KPI cards | — | `university_id`, `session_id`; includes **`total_subject_combinations`** (distinct non-withdrawn `subject_combination_id` in scope); card metrics use `value` / `delta_pct` / `trend`; `compared_to` |
 | `DELETE /registration/institution/registrations/{id}` | Remove enrollment row | — | Hard-delete when `rejected`, `withdrawn`, or `code_issued` with no linked student |
