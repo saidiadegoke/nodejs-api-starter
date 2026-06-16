@@ -81,10 +81,15 @@ class RbacService {
   }
 
   // ---------- Permissions ----------
-  async listPermissions({ page, limit, resource, group_by }) {
+  async listPermissions({ page, limit, resource, group_by, q }) {
     if (group_by === 'role') {
-      const grouped = await rbacModel.listPermissionsGroupedByRole();
-      return { grouped: true, rows: grouped };
+      const safePage = Math.max(1, parseInt(page, 10) || 1);
+      const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+      const offset = (safePage - 1) * safeLimit;
+      const searchTerm = q ? String(q).trim() : null;
+      const rows = await rbacModel.listPermissionsGroupedByRole({ limit: safeLimit, offset, q: searchTerm });
+      const total = await rbacModel.countRolesGrouped({ q: searchTerm });
+      return { grouped: true, rows, page: safePage, limit: safeLimit, total };
     }
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 100));

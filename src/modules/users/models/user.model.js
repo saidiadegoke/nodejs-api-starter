@@ -32,13 +32,26 @@ class User {
   /**
    * Find all users (non-deleted) with profile and role names
    */
-  static async findAll(limit = 10, offset = 0) {
+  static async findAll(limit = 10, offset = 0, q = null) {
+    const values = [limit, offset];
+    let searchClause = '';
+    if (q) {
+      const pattern = `%${q}%`;
+      searchClause = `
+        AND (
+          u.email ILIKE $3
+          OR p.first_name ILIKE $3
+          OR p.last_name ILIKE $3
+          OR p.display_name ILIKE $3
+        )`;
+      values.push(pattern);
+    }
     const result = await pool.query(
       `${USER_LIST_SELECT}
-       WHERE u.deleted_at IS NULL
+       WHERE u.deleted_at IS NULL${searchClause}
        ORDER BY u.created_at DESC
        LIMIT $1 OFFSET $2`,
-      [limit, offset]
+      values
     );
     return result.rows;
   }
@@ -46,7 +59,23 @@ class User {
   /**
    * Count total non-deleted users
    */
-  static async count() {
+  static async count(q = null) {
+    if (q) {
+      const pattern = `%${q}%`;
+      const result = await pool.query(
+        `SELECT COUNT(*) FROM users u
+         LEFT JOIN profiles p ON u.id = p.user_id
+         WHERE u.deleted_at IS NULL
+         AND (
+           u.email ILIKE $1
+           OR p.first_name ILIKE $1
+           OR p.last_name ILIKE $1
+           OR p.display_name ILIKE $1
+         )`,
+        [pattern]
+      );
+      return parseInt(result.rows[0].count, 10);
+    }
     const result = await pool.query(
       'SELECT COUNT(*) FROM users WHERE deleted_at IS NULL'
     );

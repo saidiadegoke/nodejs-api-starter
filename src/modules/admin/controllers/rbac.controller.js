@@ -60,9 +60,10 @@ class RbacController {
         limit: req.query.limit,
         resource: req.query.resource,
         group_by: req.query.group_by,
+        q: req.query.q,
       });
       if (result.grouped) {
-        return sendSuccess(res, result.rows, 'Permissions grouped by role');
+        return sendPaginated(res, result.rows, result.page, result.limit, result.total);
       }
       return sendPaginated(res, result.rows, result.page, result.limit, result.total);
     } catch (err) {

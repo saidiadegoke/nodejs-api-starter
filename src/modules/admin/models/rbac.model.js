@@ -146,15 +146,37 @@ class RbacModel {
     return r.rows;
   }
 
-  async listPermissionsGroupedByRole() {
+  async listPermissionsGroupedByRole({ limit, offset, q } = {}) {
+    const values = [];
+    let idx = 1;
+
+    let whereClause = '';
+    if (q) {
+      const pattern = `%${q}%`;
+      whereClause = `WHERE r.name ILIKE $${idx} OR r.display_name ILIKE $${idx}`;
+      values.push(pattern);
+      idx++;
+    }
+
+    const roleIdsResult = await pool.query(
+      `SELECT id FROM roles ${whereClause} ORDER BY name ASC LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limit, offset]
+    );
+    const roleIds = roleIdsResult.rows.map((row) => row.id);
+
+    if (!roleIds.length) return [];
+
     const r = await pool.query(
       `SELECT r.id AS role_id, r.name AS role_name, r.display_name,
               p.id AS permission_id, p.name AS permission_name, p.resource, p.action
        FROM roles r
        LEFT JOIN role_permissions rp ON rp.role_id = r.id
        LEFT JOIN permissions p ON p.id = rp.permission_id
-       ORDER BY r.name ASC, p.resource ASC, p.action ASC`
+       WHERE r.id = ANY($1)
+       ORDER BY r.name ASC, p.resource ASC, p.action ASC`,
+      [roleIds]
     );
+
     const grouped = new Map();
     for (const row of r.rows) {
       if (!grouped.has(row.role_id)) {
@@ -175,6 +197,17 @@ class RbacModel {
       }
     }
     return [...grouped.values()];
+  }
+
+  async countRolesGrouped({ q } = {}) {
+    const values = [];
+    let whereClause = '';
+    if (q) {
+      whereClause = `WHERE name ILIKE $1 OR display_name ILIKE $1`;
+      values.push(`%${q}%`);
+    }
+    const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);
+    return r.rows[0].c;
   }
 
   async attachPermissionToRole(roleId, permissionId) {

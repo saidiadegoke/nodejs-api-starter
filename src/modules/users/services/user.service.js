@@ -2,14 +2,17 @@ const User = require('../models/user.model');
 
 class UserService {
   /**
-   * Get all users with pagination
+   * Get all users with pagination and optional search
    */
-  static async getAllUsers(page = 1, limit = 10) {
-    const offset = (page - 1) * limit;
-    const users = await User.findAll(limit, offset);
-    const total = await User.count();
-    
-    return { users, total, page, limit };
+  static async getAllUsers(page = 1, limit = 10, q = null) {
+    const safePage = Math.max(1, parseInt(page, 10) || 1);
+    const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const offset = (safePage - 1) * safeLimit;
+    const searchTerm = q ? String(q).trim() : null;
+    const users = await User.findAll(safeLimit, offset, searchTerm);
+    const total = await User.count(searchTerm);
+
+    return { users, total, page: safePage, limit: safeLimit };
   }
 
   /**

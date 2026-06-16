@@ -8,9 +8,9 @@ class UserController {
    */
   static async getAllUsers(req, res) {
     try {
-      const { page = 1, limit = 10 } = req.query;
-      const { users, total } = await UserService.getAllUsers(page, limit);
-      sendPaginated(res, users, page, limit, total);
+      const { page = 1, limit = 10, q } = req.query;
+      const result = await UserService.getAllUsers(page, limit, q);
+      sendPaginated(res, result.users, result.page, result.limit, result.total);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
     }
