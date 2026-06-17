@@ -1,6 +1,7 @@
 const AuthModel = require('../models/auth.model');
 const CountryModel = require('../../../shared/models/country.model');
 const universityModel = require('../../jupeb/models/university.model');
+const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -611,6 +612,8 @@ class AuthService {
       university = await universityModel.resolveForUser(user.id);
     } catch { /* jupeb tables absent — non-fatal */ }
 
+    const permissions = await getUserPermissions(user.id);
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -624,6 +627,7 @@ class AuthService {
         email: user.email,
         role: roleNames[0] || null,
         roles: roleNames,
+        permissions,
         profile_photo: user.profile_photo_url || null,
         rating: null,
         verified: user.email_verified && user.phone_verified,

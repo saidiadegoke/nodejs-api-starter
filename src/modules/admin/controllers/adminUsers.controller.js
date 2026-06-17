@@ -2,8 +2,9 @@ const pool = require('../../../db/pool');
 const AuthModel = require('../../auth/models/auth.model');
 const UserUniversityModel = require('../../../shared/models/user-university.model');
 const universityModel = require('../../jupeb/models/university.model');
+const AdminUsersService = require('../services/adminUsers.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { CREATED, BAD_REQUEST, CONFLICT, UNPROCESSABLE_ENTITY, NOT_FOUND } =
+const { CREATED, BAD_REQUEST, CONFLICT, UNPROCESSABLE_ENTITY, NOT_FOUND, INTERNAL_SERVER_ERROR } =
   require('../../../shared/constants/statusCodes');
 
 const VALID_ROLES = [
@@ -19,6 +20,15 @@ const VALID_ROLES = [
 ];
 
 class AdminUsersController {
+  static async getStats(req, res) {
+    try {
+      const stats = await AdminUsersService.getStats();
+      return sendSuccess(res, stats, 'User and role management stats');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   /**
    * POST /admin/users
    *

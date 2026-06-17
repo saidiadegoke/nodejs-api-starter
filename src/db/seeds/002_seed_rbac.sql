@@ -119,6 +119,13 @@ WHERE r.name = 'institution_admin'
 AND p.name = 'profiles.jupeb_university_id'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
+-- institution_admin: role management (view + create)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'institution_admin'
+AND p.name IN ('roles.view', 'roles.create')
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
 -- user has no resource permissions by default; add as needed
 
 -- ==================== DEFAULT ADMIN ASSIGNMENT ====================

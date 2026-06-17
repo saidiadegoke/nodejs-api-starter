@@ -47,8 +47,8 @@ router.get('/audit', requireAuth, requireAdmin, AdminAuditController.list);
 // RBAC: roles, permissions, user-role assignment
 // ============================================================================
 
-router.get('/roles', requireAuth, requireAdmin, RbacController.listRoles);
-router.post('/roles', requireAuth, requireAdmin, RbacController.createRole);
+router.get('/roles', requireAuth, requirePermission('roles.view'), RbacController.listRoles);
+router.post('/roles', requireAuth, requirePermission('roles.create'), RbacController.createRole);
 router.get('/roles/:roleId', requireAuth, requireAdmin, RbacController.getRole);
 router.patch('/roles/:roleId', requireAuth, requireAdmin, RbacController.patchRole);
 router.delete('/roles/:roleId', requireAuth, requireAdmin, RbacController.deleteRole);
@@ -72,6 +72,9 @@ router.post('/permissions', requireAuth, requireAdmin, RbacController.createPerm
 router.get('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.getPermission);
 router.patch('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.patchPermission);
 router.delete('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.deletePermission);
+
+/** GET /admin/users/stats — aggregate user + role management stats */
+router.get('/users/stats', requireAuth, requirePermission('users.view'), AdminUsersController.getStats);
 
 router.get('/users/:userId/roles', requireAuth, requireAdmin, RbacController.listUserRoles);
 router.patch('/users/:userId/roles', requireAuth, requireAdmin, RbacController.setUserRoles);

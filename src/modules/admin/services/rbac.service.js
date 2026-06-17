@@ -16,21 +16,35 @@ function isUuid(value) {
 }
 
 class RbacService {
+  // ---------- helpers ----------
+  async _enrichRolesWithPermissions(roles) {
+    if (!roles.length) return roles;
+    const ids = roles.map((r) => r.id);
+    const permMap = await rbacModel.getPermissionsForRoles(ids);
+    return roles.map((r) => ({ ...r, permissions: permMap.get(r.id) || [] }));
+  }
+
+  async _enrichRoleWithPermissions(role) {
+    const perms = await rbacModel.listRolePermissions(role.id);
+    return { ...role, permissions: perms };
+  }
+
   // ---------- Roles ----------
   async listRoles({ page, limit }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const offset = (safePage - 1) * safeLimit;
     const rows = await rbacModel.listRoles({ limit: safeLimit, offset });
+    const enriched = await this._enrichRolesWithPermissions(rows);
     const total = await rbacModel.countRoles();
-    return { rows, page: safePage, limit: safeLimit, total };
+    return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
   async getRoleById(id) {
     if (!isUuid(id)) throw httpError(422, 'Invalid role id');
     const row = await rbacModel.findRoleById(id);
     if (!row) throw httpError(404, 'Role not found');
-    return row;
+    return this._enrichRoleWithPermissions(row);
   }
 
   async createRole(body) {
@@ -42,12 +56,13 @@ class RbacService {
     }
     const existing = await rbacModel.findRoleByName(name);
     if (existing) throw httpError(409, 'Role with this name already exists');
-    return rbacModel.createRole({
+    const role = await rbacModel.createRole({
       name,
       display_name,
       description: body.description ?? null,
       is_system: false,
     });
+    return { ...role, permissions: [] };
   }
 
   async patchRole(id, body) {
@@ -70,7 +85,8 @@ class RbacService {
     }
     if (body.display_name !== undefined) fields.display_name = String(body.display_name).trim();
     if (body.description !== undefined) fields.description = body.description;
-    return rbacModel.updateRole(id, fields);
+    const updated = await rbacModel.updateRole(id, fields);
+    return this._enrichRoleWithPermissions(updated);
   }
 
   async deleteRole(id) {
@@ -81,10 +97,15 @@ class RbacService {
   }
 
   // ---------- Permissions ----------
-  async listPermissions({ page, limit, resource, group_by }) {
+  async listPermissions({ page, limit, resource, group_by, q }) {
     if (group_by === 'role') {
-      const grouped = await rbacModel.listPermissionsGroupedByRole();
-      return { grouped: true, rows: grouped };
+      const safePage = Math.max(1, parseInt(page, 10) || 1);
+      const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+      const offset = (safePage - 1) * safeLimit;
+      const searchTerm = q ? String(q).trim() : null;
+      const rows = await rbacModel.listPermissionsGroupedByRole({ limit: safeLimit, offset, q: searchTerm });
+      const total = await rbacModel.countRolesGrouped({ q: searchTerm });
+      return { grouped: true, rows, page: safePage, limit: safeLimit, total };
     }
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 100));
@@ -158,15 +179,19 @@ class RbacService {
   }
 
   async attachPermission(roleId, permissionId) {
-    await this.getRoleById(roleId);
+    const role = await this.getRoleById(roleId);
     await this.getPermissionById(permissionId);
-    return rbacModel.attachPermissionToRole(roleId, permissionId);
+    const attached = await rbacModel.attachPermissionToRole(roleId, permissionId);
+    const permissions = await rbacModel.listRolePermissions(roleId);
+    return { attached, role: { ...role, permissions } };
   }
 
   async detachPermission(roleId, permissionId) {
-    await this.getRoleById(roleId);
+    const role = await this.getRoleById(roleId);
     await this.getPermissionById(permissionId);
-    return rbacModel.detachPermissionFromRole(roleId, permissionId);
+    const detached = await rbacModel.detachPermissionFromRole(roleId, permissionId);
+    const permissions = await rbacModel.listRolePermissions(roleId);
+    return { detached, role: { ...role, permissions } };
   }
 
   // ---------- User ↔ Role ----------
