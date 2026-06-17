@@ -61,6 +61,7 @@ class UserProfileController {
       );
 
       const roles = rolesResult.rows.map(r => r.name);
+      const permissions = await getUserPermissions(userId);
 
       // The institution the user belongs to (best-effort).
       let university = null;
@@ -72,6 +73,7 @@ class UserProfileController {
         ...user,
         role: roles[0] || 'user',
         roles: roles,
+        permissions,
         university,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted', // TODO: Implement KYC

@@ -119,8 +119,8 @@ class RbacController {
 
   static async attachPermission(req, res) {
     try {
-      const ok = await rbacService.attachPermission(req.params.roleId, req.params.permissionId);
-      return sendSuccess(res, { attached: ok }, ok ? 'Permission attached' : 'Already attached');
+      const result = await rbacService.attachPermission(req.params.roleId, req.params.permissionId);
+      return sendSuccess(res, result, result.attached ? 'Permission attached' : 'Already attached');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
@@ -128,8 +128,8 @@ class RbacController {
 
   static async detachPermission(req, res) {
     try {
-      const ok = await rbacService.detachPermission(req.params.roleId, req.params.permissionId);
-      return sendSuccess(res, { detached: ok }, ok ? 'Permission detached' : 'Was not attached');
+      const result = await rbacService.detachPermission(req.params.roleId, req.params.permissionId);
+      return sendSuccess(res, result, result.detached ? 'Permission detached' : 'Was not attached');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

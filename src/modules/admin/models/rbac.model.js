@@ -134,6 +134,31 @@ class RbacModel {
   }
 
   // ---------- Role ↔ Permission ----------
+
+  async getPermissionsForRoles(roleIds) {
+    if (!roleIds.length) return new Map();
+    const r = await pool.query(
+      `SELECT rp.role_id, p.id, p.name, p.resource, p.action, p.description
+       FROM role_permissions rp
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE rp.role_id = ANY($1)
+       ORDER BY p.resource ASC, p.action ASC`,
+      [roleIds]
+    );
+    const map = new Map();
+    for (const id of roleIds) map.set(id, []);
+    for (const row of r.rows) {
+      map.get(row.role_id).push({
+        id: row.id,
+        name: row.name,
+        resource: row.resource,
+        action: row.action,
+        description: row.description,
+      });
+    }
+    return map;
+  }
+
   async listRolePermissions(roleId) {
     const r = await pool.query(
       `SELECT p.id, p.name, p.resource, p.action, p.description
