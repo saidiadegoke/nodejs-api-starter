@@ -1,7 +1,6 @@
 const AuthModel = require('../models/auth.model');
 const CountryModel = require('../../../shared/models/country.model');
 const universityModel = require('../../jupeb/models/university.model');
-const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -612,6 +611,9 @@ class AuthService {
       university = await universityModel.resolveForUser(user.id);
     } catch { /* jupeb tables absent — non-fatal */ }
 
+    // Lazy require to avoid circular dependency:
+    // authenticate.middleware → auth.service → rbac.middleware → authenticate.middleware
+    const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
     const permissions = await getUserPermissions(user.id);
 
     return {
