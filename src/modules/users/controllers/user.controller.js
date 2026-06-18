@@ -21,7 +21,7 @@ class UserController {
    */
   static async getUserById(req, res) {
     try {
-      const user = await UserService.getUserById(req.params.id);
+      const user = await UserService.getUserById(req.params.userId);
       sendSuccess(res, user, 'User retrieved successfully', OK);
     } catch (error) {
       sendError(res, error.message, NOT_FOUND);
@@ -45,19 +45,16 @@ class UserController {
    */
   static async updateUser(req, res) {
     try {
-      const user = await UserService.updateUser(req.params.id, req.body);
+      const user = await UserService.updateUser(req.params.userId, req.body);
       sendSuccess(res, user, 'User updated successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
     }
   }
 
-  /**
-   * Delete user
-   */
   static async deleteUser(req, res) {
     try {
-      await UserService.deleteUser(req.params.id);
+      await UserService.deleteUser(req.params.userId);
       sendSuccess(res, null, 'User deleted successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);

@@ -2,19 +2,36 @@ const pool = require('../../../db/pool');
 
 class RbacModel {
   // ---------- Roles ----------
-  async listRoles({ limit, offset }) {
+  async listRoles({ limit, offset, q }) {
+    const values = [];
+    let idx = 1;
+    let whereClause = '';
+    if (q) {
+      const pattern = `%${q}%`;
+      whereClause = `WHERE name ILIKE $${idx} OR display_name ILIKE $${idx} OR description ILIKE $${idx}`;
+      values.push(pattern);
+      idx++;
+    }
+    values.push(limit, offset);
     const r = await pool.query(
-      `SELECT id, name, display_name, description, is_system, created_at, updated_at
+      `SELECT id, name, display_name, description, is_system, status, created_at, updated_at
        FROM roles
+       ${whereClause}
        ORDER BY is_system DESC, name ASC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      values
     );
     return r.rows;
   }
 
-  async countRoles() {
-    const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles`);
+  async countRoles({ q } = {}) {
+    const values = [];
+    let whereClause = '';
+    if (q) {
+      whereClause = `WHERE name ILIKE $1 OR display_name ILIKE $1 OR description ILIKE $1`;
+      values.push(`%${q}%`);
+    }
+    const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);
     return r.rows[0].c;
   }
 
@@ -28,18 +45,18 @@ class RbacModel {
     return r.rows[0] || null;
   }
 
-  async createRole({ name, display_name, description = null, is_system = false }) {
+  async createRole({ name, display_name, description = null, is_system = false, status = 'active' }) {
     const r = await pool.query(
-      `INSERT INTO roles (name, display_name, description, is_system)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO roles (name, display_name, description, is_system, status)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name.trim(), display_name.trim(), description ? String(description).trim() : null, is_system]
+      [name.trim(), display_name.trim(), description ? String(description).trim() : null, is_system, status]
     );
     return r.rows[0];
   }
 
   async updateRole(id, fields) {
-    const allowed = ['name', 'display_name', 'description'];
+    const allowed = ['name', 'display_name', 'description', 'status'];
     const sets = [];
     const values = [];
     let i = 1;
@@ -244,6 +261,28 @@ class RbacModel {
       [roleId, permissionId]
     );
     return r.rowCount > 0;
+  }
+
+  async replaceRolePermissions(roleId, permissionIds) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM role_permissions WHERE role_id = $1`, [roleId]);
+      for (const pid of permissionIds) {
+        await client.query(
+          `INSERT INTO role_permissions (role_id, permission_id)
+           VALUES ($1, $2)
+           ON CONFLICT DO NOTHING`,
+          [roleId, pid]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async detachPermissionFromRole(roleId, permissionId) {

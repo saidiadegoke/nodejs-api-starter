@@ -30,13 +30,14 @@ class RbacService {
   }
 
   // ---------- Roles ----------
-  async listRoles({ page, limit }) {
+  async listRoles({ page, limit, q }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const offset = (safePage - 1) * safeLimit;
-    const rows = await rbacModel.listRoles({ limit: safeLimit, offset });
+    const searchTerm = q ? String(q).trim() : null;
+    const rows = await rbacModel.listRoles({ limit: safeLimit, offset, q: searchTerm });
     const enriched = await this._enrichRolesWithPermissions(rows);
-    const total = await rbacModel.countRoles();
+    const total = await rbacModel.countRoles({ q: searchTerm });
     return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
@@ -56,21 +57,35 @@ class RbacService {
     }
     const existing = await rbacModel.findRoleByName(name);
     if (existing) throw httpError(409, 'Role with this name already exists');
+    const validStatuses = ['active', 'inactive'];
+    const status = body.status && validStatuses.includes(body.status) ? body.status : 'active';
     const role = await rbacModel.createRole({
       name,
       display_name,
       description: body.description ?? null,
       is_system: false,
+      status,
     });
-    return { ...role, permissions: [] };
+
+    if (Array.isArray(body.permission_ids) && body.permission_ids.length) {
+      for (const pid of body.permission_ids) {
+        if (!isUuid(pid)) throw httpError(422, `Invalid permission id: ${pid}`);
+        const perm = await rbacModel.findPermissionById(pid);
+        if (!perm) throw httpError(404, `Permission not found: ${pid}`);
+        await rbacModel.attachPermissionToRole(role.id, pid);
+      }
+    }
+
+    return this._enrichRoleWithPermissions(role);
   }
 
   async patchRole(id, body) {
     const role = await this.getRoleById(id);
     if (role.is_system) {
-      const onlyDescription = Object.keys(body || {}).every((k) => k === 'description');
-      if (!onlyDescription) {
-        throw httpError(422, 'System roles can only have their description updated');
+      const allowedSystemKeys = ['description', 'status', 'permission_ids'];
+      const onlyAllowed = Object.keys(body || {}).every((k) => allowedSystemKeys.includes(k));
+      if (!onlyAllowed) {
+        throw httpError(422, 'System roles can only have their description, status, or permissions updated');
       }
     }
     const fields = {};
@@ -85,7 +100,19 @@ class RbacService {
     }
     if (body.display_name !== undefined) fields.display_name = String(body.display_name).trim();
     if (body.description !== undefined) fields.description = body.description;
+    if (body.status !== undefined) {
+      const validStatuses = ['active', 'inactive'];
+      if (!validStatuses.includes(body.status)) {
+        throw httpError(422, 'status must be one of: active, inactive');
+      }
+      fields.status = body.status;
+    }
     const updated = await rbacModel.updateRole(id, fields);
+
+    if (Array.isArray(body.permission_ids)) {
+      await rbacModel.replaceRolePermissions(id, body.permission_ids);
+    }
+
     return this._enrichRoleWithPermissions(updated);
   }
 
