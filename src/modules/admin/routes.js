@@ -49,27 +49,27 @@ router.get('/audit', requireAuth, requireAdmin, AdminAuditController.list);
 
 router.get('/roles', requireAuth, requirePermission('roles.view'), RbacController.listRoles);
 router.post('/roles', requireAuth, requirePermission('roles.create'), RbacController.createRole);
-router.get('/roles/:roleId', requireAuth, requireAdmin, RbacController.getRole);
-router.patch('/roles/:roleId', requireAuth, requireAdmin, RbacController.patchRole);
-router.delete('/roles/:roleId', requireAuth, requireAdmin, RbacController.deleteRole);
+router.get('/roles/:roleId', requireAuth, requirePermission('roles.view'), RbacController.getRole);
+router.patch('/roles/:roleId', requireAuth, requirePermission('roles.update'), RbacController.patchRole);
+router.delete('/roles/:roleId', requireAuth, requirePermission('roles.delete'), RbacController.deleteRole);
 
-router.get('/roles/:roleId/permissions', requireAuth, requireAdmin, RbacController.listRolePermissions);
+router.get('/roles/:roleId/permissions', requireAuth, requirePermission('roles.view'), RbacController.listRolePermissions);
 router.post(
   '/roles/:roleId/permissions/:permissionId',
   requireAuth,
-  requireAdmin,
+  requirePermission('roles.update'),
   RbacController.attachPermission
 );
 router.delete(
   '/roles/:roleId/permissions/:permissionId',
   requireAuth,
-  requireAdmin,
+  requirePermission('roles.update'),
   RbacController.detachPermission
 );
 
-router.get('/permissions', requireAuth, requireAdmin, RbacController.listPermissions);
+router.get('/permissions', requireAuth, requirePermission('permissions.view'), RbacController.listPermissions);
 router.post('/permissions', requireAuth, requireAdmin, RbacController.createPermission);
-router.get('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.getPermission);
+router.get('/permissions/:permissionId', requireAuth, requirePermission('permissions.view'), RbacController.getPermission);
 router.patch('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.patchPermission);
 router.delete('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.deletePermission);
 
@@ -82,6 +82,22 @@ router.patch('/users/:userId/roles', requireAuth, requireAdmin, RbacController.s
 // ============================================================================
 // Admin users
 // ============================================================================
+
+/** GET /admin/users/:userId — single user detail (requires users.view) */
+router.get(
+  '/users/:userId',
+  requireAuth,
+  requirePermission('users.view'),
+  UserController.getUserById
+);
+
+/** DELETE /admin/users/:userId — soft-delete a user (requires users.delete) */
+router.delete(
+  '/users/:userId',
+  requireAuth,
+  requirePermission('users.delete'),
+  UserController.deleteUser
+);
 
 /** GET /admin/users — paginated user list (requires users.view) */
 router.get(

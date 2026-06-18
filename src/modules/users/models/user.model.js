@@ -8,6 +8,7 @@ const USER_LIST_SELECT = `
     u.status,
     u.email_verified,
     u.phone_verified,
+    u.last_login_at,
     u.created_at,
     u.updated_at,
     p.first_name,
@@ -136,7 +137,10 @@ class User {
    * Delete user
    */
   static async delete(id) {
-    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    const result = await pool.query(
+      'UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+      [id]
+    );
     return result.rows[0];
   }
 }

@@ -9,6 +9,7 @@ class RbacController {
       const { rows, page, limit, total } = await rbacService.listRoles({
         page: req.query.page,
         limit: req.query.limit,
+        q: req.query.q,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
