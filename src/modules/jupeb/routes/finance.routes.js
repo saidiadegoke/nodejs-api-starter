@@ -1,12 +1,12 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
 const FinanceController = require('../controllers/finance.controller');
 const PaymentCatalogController = require('../controllers/payment-catalog.controller');
 
 const financeAdmin = [
   requireAuth,
-  requireRole('financial_admin', 'registrar', 'admin', 'super_admin'),
+  requirePermission('jupeb.finance.manage'),
 ];
 const jupebStudent = jupebStudentMiddleware();
 

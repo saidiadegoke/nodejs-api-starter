@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { body, query, param } = require('express-validator');
 const { isUUID } = require('validator');
 const { validate } = require('../../shared/validations/validator');
-const { requireAuth, requireRole } = require('../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../shared/middleware/rbac.middleware');
 const { optionalAuth } = require('../../shared/middleware/optional-auth.middleware');
 const PostController = require('./controllers/post.controller');
 const PostCommentController = require('./controllers/postComment.controller');
@@ -51,7 +51,7 @@ router.get(
 router.get(
   '/admin/all',
   requireAuth,
-  requireRole('admin', 'super_admin'),
+  requirePermission('posts.manage'),
   postReadLimiter,
   [
     query('page').optional().isInt({ min: 1 }),
@@ -66,7 +66,7 @@ router.get(
 router.get(
   '/admin/comments/pending',
   requireAuth,
-  requireRole('admin', 'super_admin'),
+  requirePermission('posts.manage'),
   postReadLimiter,
   [
     query('page').optional().isInt({ min: 1 }),
@@ -120,7 +120,7 @@ router.patch(
 router.patch(
   '/:postId/comments/:commentId/moderate',
   requireAuth,
-  requireRole('admin', 'super_admin'),
+  requirePermission('posts.manage'),
   [
     param('postId').isUUID(),
     param('commentId').isUUID(),

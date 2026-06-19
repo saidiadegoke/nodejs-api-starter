@@ -122,15 +122,69 @@ class User {
   }
 
   /**
-   * Update user
+   * Update user fields across users + profiles tables, then return
+   * the full enriched user object via USER_LIST_SELECT.
    */
   static async update(id, userData) {
-    const { full_name, phone, is_active } = userData;
-    const result = await pool.query(
-      'UPDATE users SET full_name = COALESCE($1, full_name), phone = COALESCE($2, phone), is_active = COALESCE($3, is_active), updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING id, email, username, full_name, phone, role, is_active, updated_at',
-      [full_name, phone, is_active, id]
-    );
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const userFields = {};
+      if (userData.email !== undefined) userFields.email = userData.email;
+      if (userData.phone !== undefined) userFields.phone = userData.phone;
+      if (userData.status !== undefined) userFields.status = userData.status;
+
+      if (Object.keys(userFields).length) {
+        const sets = [];
+        const vals = [];
+        let i = 1;
+        for (const [k, v] of Object.entries(userFields)) {
+          sets.push(`${k} = $${i++}`);
+          vals.push(v);
+        }
+        sets.push('updated_at = CURRENT_TIMESTAMP');
+        vals.push(id);
+        await client.query(
+          `UPDATE users SET ${sets.join(', ')} WHERE id = $${i} AND deleted_at IS NULL`,
+          vals
+        );
+      }
+
+      const profileFields = {};
+      if (userData.first_name !== undefined) profileFields.first_name = userData.first_name;
+      if (userData.last_name !== undefined) profileFields.last_name = userData.last_name;
+      if (userData.display_name !== undefined) profileFields.display_name = userData.display_name;
+
+      if (Object.keys(profileFields).length) {
+        const sets = [];
+        const vals = [];
+        let i = 1;
+        for (const [k, v] of Object.entries(profileFields)) {
+          sets.push(`${k} = $${i++}`);
+          vals.push(v);
+        }
+        sets.push('updated_at = CURRENT_TIMESTAMP');
+        vals.push(id);
+        await client.query(
+          `UPDATE profiles SET ${sets.join(', ')} WHERE user_id = $${i}`,
+          vals
+        );
+      }
+
+      await client.query('COMMIT');
+
+      const result = await pool.query(
+        `${USER_LIST_SELECT} WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [id]
+      );
+      return result.rows[0];
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   /**

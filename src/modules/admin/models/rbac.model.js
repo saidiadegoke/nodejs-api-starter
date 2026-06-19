@@ -2,35 +2,47 @@ const pool = require('../../../db/pool');
 
 class RbacModel {
   // ---------- Roles ----------
-  async listRoles({ limit, offset, q }) {
+  _roleListFilters({ q, status, is_system } = {}) {
+    const conditions = [];
     const values = [];
     let idx = 1;
-    let whereClause = '';
     if (q) {
-      const pattern = `%${q}%`;
-      whereClause = `WHERE name ILIKE $${idx} OR display_name ILIKE $${idx} OR description ILIKE $${idx}`;
-      values.push(pattern);
+      conditions.push(
+        `(name ILIKE $${idx} OR display_name ILIKE $${idx} OR COALESCE(description, '') ILIKE $${idx})`
+      );
+      values.push(`%${q}%`);
       idx++;
     }
+    if (status) {
+      conditions.push(`status = $${idx}`);
+      values.push(status);
+      idx++;
+    }
+    if (is_system !== null && is_system !== undefined) {
+      conditions.push(`is_system = $${idx}`);
+      values.push(is_system);
+      idx++;
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    return { whereClause, values, nextIdx: idx };
+  }
+
+  async listRoles({ limit, offset, q, status, is_system }) {
+    const { whereClause, values, nextIdx } = this._roleListFilters({ q, status, is_system });
     values.push(limit, offset);
     const r = await pool.query(
       `SELECT id, name, display_name, description, is_system, status, created_at, updated_at
        FROM roles
        ${whereClause}
        ORDER BY is_system DESC, name ASC
-       LIMIT $${idx} OFFSET $${idx + 1}`,
+       LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`,
       values
     );
     return r.rows;
   }
 
-  async countRoles({ q } = {}) {
-    const values = [];
-    let whereClause = '';
-    if (q) {
-      whereClause = `WHERE name ILIKE $1 OR display_name ILIKE $1 OR description ILIKE $1`;
-      values.push(`%${q}%`);
-    }
+  async countRoles({ q, status, is_system } = {}) {
+    const { whereClause, values } = this._roleListFilters({ q, status, is_system });
     const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);
     return r.rows[0].c;
   }

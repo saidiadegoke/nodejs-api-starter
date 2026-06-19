@@ -1,11 +1,11 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
 const RegistrationController = require('../controllers/registration.controller');
 const NextOfKinController = require('../controllers/next-of-kin.controller');
 
-const finalizeRole = [requireAuth, requireRole('admin', 'super_admin', 'registrar')];
-const instReg = [requireAuth, requireRole('program_director', 'institution_admin', 'admin', 'super_admin')];
+const finalizeRole = [requireAuth, requirePermission('sessions.update')];
+const instReg = [requireAuth, requirePermission('jupeb.registration.manage')];
 const jupebStudent = jupebStudentMiddleware();
 
 router.get('/sessions/:sessionId/numbering-preview', finalizeRole, RegistrationController.numberingPreview);

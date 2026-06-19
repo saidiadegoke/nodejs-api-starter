@@ -3,12 +3,12 @@ const router = express.Router();
 const PaymentMethod = require('../models/paymentMethod.model');
 const validationMiddleware = require('../middleware/validation.middleware');
 const { authenticate } = require('../../../shared/middleware/authenticate.middleware');
-const { requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requirePermission } = require('../../../shared/middleware/rbac.middleware');
 
 router.get(
   '/admin/all',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const page = parseInt(req.query.page, 10) || 1;
@@ -44,7 +44,7 @@ router.get(
 router.get(
   '/admin/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const paymentMethod = await PaymentMethod.findById(req.params.id);
@@ -61,7 +61,7 @@ router.get(
 router.post(
   '/admin',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   validationMiddleware.validatePaymentMethodData,
   async (req, res) => {
     try {
@@ -80,7 +80,7 @@ router.post(
 router.put(
   '/admin/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const paymentMethod = await PaymentMethod.update(req.params.id, req.body);
@@ -101,7 +101,7 @@ router.put(
 router.delete(
   '/admin/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const result = await PaymentMethod.delete(req.params.id);

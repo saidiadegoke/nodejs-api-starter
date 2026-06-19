@@ -1,10 +1,10 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const DashboardController = require('../controllers/dashboard.controller');
 
 const dashboardRead = [
   requireAuth,
-  requireRole('admin', 'super_admin', 'registrar', 'program_director', 'institution_admin'),
+  requirePermission('reports.view'),
 ];
 
 router.get('/scope', dashboardRead, DashboardController.getScope);

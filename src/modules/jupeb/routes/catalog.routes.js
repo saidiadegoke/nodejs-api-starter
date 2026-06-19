@@ -1,13 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const { csvUpload } = require('../../../shared/middleware/csv-upload.middleware');
 const CatalogController = require('../controllers/catalog.controller');
 
-const catalogWrite = [requireAuth, requireRole('admin', 'super_admin', 'registrar')];
-// Bulk CSV ingestion: accepts text/csv, JSON {csv:""}, or multipart file.
-// express.text() runs in parallel to handle the text/csv body case;
-// csvUpload normalizes all three shapes onto `req.csvText`.
+const perm = (action) => [requireAuth, requirePermission(action)];
+
 const csvParser = express.text({ type: ['text/csv', 'application/csv'], limit: '10mb' });
 const csvBulk = [csvParser, csvUpload];
 
@@ -16,37 +14,39 @@ router.get('/universities/public', CatalogController.listUniversitiesPublic);
 router.get('/subject-combinations/public', CatalogController.listSubjectCombinationsPublic);
 router.get('/subjects/public', CatalogController.listSubjectsPublic);
 
-/** Admin / registrar */
-router.get('/universities', catalogWrite, CatalogController.listUniversitiesAdmin);
-router.post('/universities', catalogWrite, CatalogController.createUniversity);
-router.post('/universities/bulk', ...csvBulk, catalogWrite, CatalogController.bulkUniversities);
-router.get('/universities/:universityId', catalogWrite, CatalogController.getUniversityById);
-router.patch('/universities/:universityId', catalogWrite, CatalogController.patchUniversity);
-router.post('/universities/:universityId/activate', catalogWrite, CatalogController.activateUniversity);
-router.post('/universities/:universityId/deactivate', catalogWrite, CatalogController.deactivateUniversity);
+/** Universities (institutions) */
+router.get('/universities', perm('institutions.view'), CatalogController.listUniversitiesAdmin);
+router.post('/universities', perm('institutions.create'), CatalogController.createUniversity);
+router.post('/universities/bulk', ...csvBulk, perm('institutions.create'), CatalogController.bulkUniversities);
+router.get('/universities/:universityId', perm('institutions.view'), CatalogController.getUniversityById);
+router.patch('/universities/:universityId', perm('institutions.update'), CatalogController.patchUniversity);
+router.post('/universities/:universityId/activate', perm('institutions.update'), CatalogController.activateUniversity);
+router.post('/universities/:universityId/deactivate', perm('institutions.update'), CatalogController.deactivateUniversity);
 
-router.get('/subject-combinations', catalogWrite, CatalogController.listSubjectCombinationsAdmin);
-router.post('/subject-combinations', catalogWrite, CatalogController.createSubjectCombination);
-router.post('/subject-combinations/bulk', ...csvBulk, catalogWrite, CatalogController.bulkSubjectCombinations);
-router.get('/subject-combinations/:subjectCombinationId', catalogWrite, CatalogController.getSubjectCombinationById);
-router.patch('/subject-combinations/:subjectCombinationId', catalogWrite, CatalogController.patchSubjectCombination);
+/** Subject combinations */
+router.get('/subject-combinations', perm('subject_combinations.view'), CatalogController.listSubjectCombinationsAdmin);
+router.post('/subject-combinations', perm('subject_combinations.create'), CatalogController.createSubjectCombination);
+router.post('/subject-combinations/bulk', ...csvBulk, perm('subject_combinations.create'), CatalogController.bulkSubjectCombinations);
+router.get('/subject-combinations/:subjectCombinationId', perm('subject_combinations.view'), CatalogController.getSubjectCombinationById);
+router.patch('/subject-combinations/:subjectCombinationId', perm('subject_combinations.update'), CatalogController.patchSubjectCombination);
 router.post(
   '/subject-combinations/:subjectCombinationId/activate',
-  catalogWrite,
+  perm('subject_combinations.update'),
   CatalogController.activateSubjectCombination
 );
 router.post(
   '/subject-combinations/:subjectCombinationId/deactivate',
-  catalogWrite,
+  perm('subject_combinations.update'),
   CatalogController.deactivateSubjectCombination
 );
 
-router.get('/subjects', catalogWrite, CatalogController.listSubjectsAdmin);
-router.post('/subjects', catalogWrite, CatalogController.createSubject);
-router.post('/subjects/bulk', ...csvBulk, catalogWrite, CatalogController.bulkSubjects);
-router.get('/subjects/:subjectId', catalogWrite, CatalogController.getSubjectById);
-router.patch('/subjects/:subjectId', catalogWrite, CatalogController.patchSubject);
-router.post('/subjects/:subjectId/activate', catalogWrite, CatalogController.activateSubject);
-router.post('/subjects/:subjectId/deactivate', catalogWrite, CatalogController.deactivateSubject);
+/** Subjects */
+router.get('/subjects', perm('subject.view'), CatalogController.listSubjectsAdmin);
+router.post('/subjects', perm('subject.create'), CatalogController.createSubject);
+router.post('/subjects/bulk', ...csvBulk, perm('subject.create'), CatalogController.bulkSubjects);
+router.get('/subjects/:subjectId', perm('subject.view'), CatalogController.getSubjectById);
+router.patch('/subjects/:subjectId', perm('subject.update'), CatalogController.patchSubject);
+router.post('/subjects/:subjectId/activate', perm('subject.update'), CatalogController.activateSubject);
+router.post('/subjects/:subjectId/deactivate', perm('subject.update'), CatalogController.deactivateSubject);
 
 module.exports = router;

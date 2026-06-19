@@ -1,10 +1,10 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const AcademicController = require('../controllers/academic.controller');
 
-const courseWrite = [requireAuth, requireRole('registrar', 'admin', 'super_admin')];
-const resultEntry = [requireAuth, requireRole('registrar', 'institution_admin', 'admin', 'super_admin')];
-const recompute = [requireAuth, requireRole('registrar', 'admin', 'super_admin')];
+const courseWrite = [requireAuth, requirePermission('jupeb.academic.manage')];
+const resultEntry = [requireAuth, requirePermission('jupeb.academic.manage')];
+const recompute = [requireAuth, requirePermission('jupeb.academic.manage')];
 const readAuth = [requireAuth];
 
 router.get('/courses', AcademicController.listCourses);

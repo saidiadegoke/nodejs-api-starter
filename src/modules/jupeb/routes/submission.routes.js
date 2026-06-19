@@ -1,10 +1,10 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
 const SubmissionController = require('../controllers/submission.controller');
 const ResultEntriesController = require('../controllers/result-entries.controller');
 
-const manageReq = [requireAuth, requireRole('admin', 'super_admin', 'registrar')];
+const manageReq = [requireAuth, requirePermission('jupeb.submission.manage')];
 const jupebStudent = jupebStudentMiddleware();
 
 router.get('/requirements', manageReq, SubmissionController.listRequirementsAdmin);
