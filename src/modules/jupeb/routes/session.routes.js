@@ -1,10 +1,10 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const SessionController = require('../controllers/session.controller');
 
 const sessionRead = [requireAuth];
-const sessionWrite = [requireAuth, requireRole('admin', 'super_admin', 'registrar')];
-const superAdminOnly = [requireAuth, requireRole('super_admin')];
+const sessionWrite = [requireAuth, requirePermission('sessions.update')];
+const superAdminOnly = [requireAuth, requirePermission('system.admin')];
 
 router.get('/', sessionRead, SessionController.list);
 router.get('/export', sessionWrite, SessionController.exportCsv);

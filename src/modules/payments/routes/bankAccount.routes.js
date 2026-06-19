@@ -2,12 +2,12 @@ const express = require('express');
 const router = express.Router();
 const BankAccount = require('../models/bankAccount.model');
 const { authenticate } = require('../../../shared/middleware/authenticate.middleware');
-const { requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requirePermission } = require('../../../shared/middleware/rbac.middleware');
 
 router.get(
   '/admin/all',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const page = parseInt(req.query.page, 10) || 1;
@@ -39,7 +39,7 @@ router.get(
 router.post(
   '/admin',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const { bank_name, account_number, account_name, is_active } = req.body;
@@ -54,7 +54,7 @@ router.post(
 router.put(
   '/admin/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       const { bank_name, account_number, account_name, is_active } = req.body;
@@ -74,7 +74,7 @@ router.put(
 router.delete(
   '/admin/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       await BankAccount.delete(req.params.id);
@@ -88,7 +88,7 @@ router.delete(
 router.post(
   '/admin/:id/set-active',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   async (req, res) => {
     try {
       await BankAccount.setActive(req.params.id);

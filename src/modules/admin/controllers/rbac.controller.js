@@ -10,6 +10,8 @@ class RbacController {
         page: req.query.page,
         limit: req.query.limit,
         q: req.query.q,
+        status: req.query.status,
+        is_system: req.query.is_system,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {

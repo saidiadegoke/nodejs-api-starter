@@ -4,7 +4,7 @@ const paymentController = require('../controllers/payment.controller');
 const validationMiddleware = require('../middleware/validation.middleware');
 const { authenticate } = require('../../../shared/middleware/authenticate.middleware');
 const { optionalAuth } = require('../../../shared/middleware/optional-auth.middleware');
-const { requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const { uploadSingle } = require('../../../shared/middleware/upload.middleware');
 
 router.post(
@@ -43,44 +43,44 @@ router.post('/:id/receipt', authenticate, (req, res) => paymentController.genera
 router.get(
   '/admin/all',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   (req, res) => paymentController.getAllPayments(req, res)
 );
 router.get(
   '/admin/stats',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   (req, res) => paymentController.getPaymentStats(req, res)
 );
 router.get(
   '/admin/summary',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   (req, res) => paymentController.adminSummary(req, res)
 );
 router.get(
   '/admin/payment/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   (req, res) => paymentController.getPaymentAdmin(req, res)
 );
 router.post(
   '/admin/:id/requery',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   (req, res) => paymentController.requeryPayment(req, res)
 );
 router.post(
   '/admin/:id/refund',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   validationMiddleware.validateRefundData,
   (req, res) => paymentController.refundPayment(req, res)
 );
 router.put(
   '/admin/:id',
   authenticate,
-  requireRole('admin', 'super_admin'),
+  requirePermission('payments.manage'),
   (req, res) => paymentController.updatePayment(req, res)
 );
 

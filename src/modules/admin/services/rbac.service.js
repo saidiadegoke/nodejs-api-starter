@@ -30,14 +30,33 @@ class RbacService {
   }
 
   // ---------- Roles ----------
-  async listRoles({ page, limit, q }) {
+  async listRoles({ page, limit, q, status, is_system }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const offset = (safePage - 1) * safeLimit;
     const searchTerm = q ? String(q).trim() : null;
-    const rows = await rbacModel.listRoles({ limit: safeLimit, offset, q: searchTerm });
+
+    let statusFilter = null;
+    if (status !== undefined && status !== null && String(status).trim() !== '') {
+      const s = String(status).trim().toLowerCase();
+      if (!['active', 'inactive'].includes(s)) {
+        throw httpError(422, 'status must be one of: active, inactive');
+      }
+      statusFilter = s;
+    }
+
+    let isSystemFilter = null;
+    if (is_system !== undefined && is_system !== null && String(is_system).trim() !== '') {
+      const v = String(is_system).trim().toLowerCase();
+      if (v === 'true') isSystemFilter = true;
+      else if (v === 'false') isSystemFilter = false;
+      else throw httpError(422, 'is_system must be true or false');
+    }
+
+    const filters = { q: searchTerm, status: statusFilter, is_system: isSystemFilter };
+    const rows = await rbacModel.listRoles({ limit: safeLimit, offset, ...filters });
     const enriched = await this._enrichRolesWithPermissions(rows);
-    const total = await rbacModel.countRoles({ q: searchTerm });
+    const total = await rbacModel.countRoles(filters);
     return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
@@ -59,33 +78,53 @@ class RbacService {
     if (existing) throw httpError(409, 'Role with this name already exists');
     const validStatuses = ['active', 'inactive'];
     const status = body.status && validStatuses.includes(body.status) ? body.status : 'active';
-    const role = await rbacModel.createRole({
-      name,
-      display_name,
-      description: body.description ?? null,
-      is_system: false,
-      status,
-    });
 
-    if (Array.isArray(body.permission_ids) && body.permission_ids.length) {
-      for (const pid of body.permission_ids) {
-        if (!isUuid(pid)) throw httpError(422, `Invalid permission id: ${pid}`);
-        const perm = await rbacModel.findPermissionById(pid);
-        if (!perm) throw httpError(404, `Permission not found: ${pid}`);
-        await rbacModel.attachPermissionToRole(role.id, pid);
-      }
+    const permIds = Array.isArray(body.permission_ids) ? body.permission_ids
+      : Array.isArray(body.permissions) ? body.permissions
+      : [];
+
+    for (const pid of permIds) {
+      if (!isUuid(pid)) throw httpError(422, `Invalid permission id: ${pid}`);
+      // eslint-disable-next-line no-await-in-loop
+      const perm = await rbacModel.findPermissionById(pid);
+      if (!perm) throw httpError(404, `Permission not found: ${pid}`);
     }
 
-    return this._enrichRoleWithPermissions(role);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const roleResult = await client.query(
+        `INSERT INTO roles (name, display_name, description, is_system, status)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [name, display_name, body.description ?? null, false, status]
+      );
+      const role = roleResult.rows[0];
+
+      for (const pid of permIds) {
+        // eslint-disable-next-line no-await-in-loop
+        await client.query(
+          `INSERT INTO role_permissions (role_id, permission_id)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [role.id, pid]
+        );
+      }
+      await client.query('COMMIT');
+      return this._enrichRoleWithPermissions(role);
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async patchRole(id, body) {
     const role = await this.getRoleById(id);
     if (role.is_system) {
-      const allowedSystemKeys = ['description', 'status', 'permission_ids'];
+      const allowedSystemKeys = ['description', 'display_name', 'status', 'permission_ids', 'permissions'];
       const onlyAllowed = Object.keys(body || {}).every((k) => allowedSystemKeys.includes(k));
       if (!onlyAllowed) {
-        throw httpError(422, 'System roles can only have their description, status, or permissions updated');
+        throw httpError(422, 'System roles can only have their display_name, description, status, or permissions updated');
       }
     }
     const fields = {};
@@ -109,8 +148,11 @@ class RbacService {
     }
     const updated = await rbacModel.updateRole(id, fields);
 
-    if (Array.isArray(body.permission_ids)) {
-      await rbacModel.replaceRolePermissions(id, body.permission_ids);
+    const permIds = Array.isArray(body.permission_ids) ? body.permission_ids
+      : Array.isArray(body.permissions) ? body.permissions
+      : null;
+    if (permIds !== null) {
+      await rbacModel.replaceRolePermissions(id, permIds);
     }
 
     return this._enrichRoleWithPermissions(updated);

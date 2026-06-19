@@ -7,41 +7,38 @@ const AdminUsersController = require('./controllers/adminUsers.controller');
 const UserController = require('../users/controllers/user.controller');
 const {
   requireAuth,
-  requireRole,
   requirePermission,
 } = require('../../shared/middleware/rbac.middleware');
-
-const requireAdmin = requireRole('admin', 'super_admin');
 
 // ============================================================================
 // Error / Request logs
 // ============================================================================
 
 /** GET /admin/error-logs/stats — aggregate error + traffic stats */
-router.get('/error-logs/stats', requireAuth, requireAdmin, AdminErrorLogController.getStats);
+router.get('/error-logs/stats', requireAuth, requirePermission('system.logs'), AdminErrorLogController.getStats);
 
 /** GET /admin/error-logs — paginated list (filter by type/method/path/from/to) */
-router.get('/error-logs', requireAuth, requireAdmin, AdminErrorLogController.list);
+router.get('/error-logs', requireAuth, requirePermission('system.logs'), AdminErrorLogController.list);
 
 /** GET /admin/error-logs/:id — full log entry with bodies */
-router.get('/error-logs/:id', requireAuth, requireAdmin, AdminErrorLogController.getById);
+router.get('/error-logs/:id', requireAuth, requirePermission('system.logs'), AdminErrorLogController.getById);
 
 // ============================================================================
 // Platform settings (runtime config / feature flags)
 // ============================================================================
 
 /** GET /admin/settings — list all settings */
-router.get('/settings', requireAuth, requireAdmin, AdminSettingsController.getAll);
+router.get('/settings', requireAuth, requirePermission('system.config'), AdminSettingsController.getAll);
 
 /** PUT /admin/settings — upsert a setting (body: { key, value, description? }) */
-router.put('/settings', requireAuth, requireAdmin, AdminSettingsController.update);
+router.put('/settings', requireAuth, requirePermission('system.config'), AdminSettingsController.update);
 
 // ============================================================================
 // Audit log
 // ============================================================================
 
 /** GET /admin/audit — paginated audit log */
-router.get('/audit', requireAuth, requireAdmin, AdminAuditController.list);
+router.get('/audit', requireAuth, requirePermission('activity_logs.view'), AdminAuditController.list);
 
 // ============================================================================
 // RBAC: roles, permissions, user-role assignment
@@ -68,16 +65,16 @@ router.delete(
 );
 
 router.get('/permissions', requireAuth, requirePermission('permissions.view'), RbacController.listPermissions);
-router.post('/permissions', requireAuth, requireAdmin, RbacController.createPermission);
+router.post('/permissions', requireAuth, requirePermission('system.admin'), RbacController.createPermission);
 router.get('/permissions/:permissionId', requireAuth, requirePermission('permissions.view'), RbacController.getPermission);
-router.patch('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.patchPermission);
-router.delete('/permissions/:permissionId', requireAuth, requireAdmin, RbacController.deletePermission);
+router.patch('/permissions/:permissionId', requireAuth, requirePermission('system.admin'), RbacController.patchPermission);
+router.delete('/permissions/:permissionId', requireAuth, requirePermission('system.admin'), RbacController.deletePermission);
 
 /** GET /admin/users/stats — aggregate user + role management stats */
 router.get('/users/stats', requireAuth, requirePermission('users.view'), AdminUsersController.getStats);
 
-router.get('/users/:userId/roles', requireAuth, requireAdmin, RbacController.listUserRoles);
-router.patch('/users/:userId/roles', requireAuth, requireAdmin, RbacController.setUserRoles);
+router.get('/users/:userId/roles', requireAuth, requirePermission('roles.view'), RbacController.listUserRoles);
+router.patch('/users/:userId/roles', requireAuth, requirePermission('roles.update'), RbacController.setUserRoles);
 
 // ============================================================================
 // Admin users
@@ -89,6 +86,14 @@ router.get(
   requireAuth,
   requirePermission('users.view'),
   UserController.getUserById
+);
+
+/** PATCH /admin/users/:userId — update a user (requires users.update) */
+router.patch(
+  '/users/:userId',
+  requireAuth,
+  requirePermission('users.update'),
+  UserController.updateUser
 );
 
 /** DELETE /admin/users/:userId — soft-delete a user (requires users.delete) */

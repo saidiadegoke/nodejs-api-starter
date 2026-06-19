@@ -1,10 +1,10 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const IdentityController = require('../controllers/identity.controller');
 
 const ninVerifyRoles = [
   requireAuth,
-  requireRole('admin', 'super_admin', 'registrar', 'program_director', 'institution_admin'),
+  requirePermission('jupeb.identity.verify'),
 ];
 
 router.post('/nin/verify', ninVerifyRoles, IdentityController.verifyNin);

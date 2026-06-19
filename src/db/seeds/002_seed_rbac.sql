@@ -72,7 +72,18 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 -- JUPEB
 ('jupeb.catalog.manage', 'jupeb', 'catalog', 'Manage JUPEB catalog (universities, subject combinations)'),
 ('jupeb.identity.verify', 'jupeb', 'identity_verify', 'Verify NIN and access identity proofs'),
-('profiles.jupeb_university_id', 'profiles', 'jupeb_university_id', 'Owns profiles.jupeb_university_id — institution-scope binding for JUPEB actions')
+('jupeb.registration.manage', 'jupeb', 'registration', 'Manage JUPEB institution registrations'),
+('jupeb.submission.manage', 'jupeb', 'submission', 'Manage JUPEB submission requirements'),
+('jupeb.academic.manage', 'jupeb', 'academic', 'Manage JUPEB courses and result entries'),
+('jupeb.finance.manage', 'jupeb', 'finance', 'Manage JUPEB finance, payment catalog and reconciliation'),
+('jupeb.student.access', 'jupeb', 'student_access', 'Access JUPEB student-facing routes'),
+('profiles.jupeb_university_id', 'profiles', 'jupeb_university_id', 'Owns profiles.jupeb_university_id — institution-scope binding for JUPEB actions'),
+
+-- Payments (admin)
+('payments.manage', 'payments', 'manage', 'Manage payment methods, bank accounts and transactions'),
+
+-- Posts (admin)
+('posts.manage', 'posts', 'manage', 'Moderate and manage all posts')
 ON CONFLICT (resource, action) DO NOTHING;
 
 -- ==================== ROLE PERMISSIONS ====================
@@ -96,11 +107,22 @@ WHERE r.name = 'agent'
 AND p.name IN ('users.view', 'users.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- registrar: JUPEB catalog management
+-- registrar: catalog (granular), sessions, submissions, academic, finance, registration, dashboard
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'registrar'
-AND p.name = 'jupeb.catalog.manage'
+AND p.name IN (
+  'institutions.view', 'institutions.create', 'institutions.update', 'institutions.delete',
+  'subject.view', 'subject.create', 'subject.update', 'subject.delete',
+  'subject_combinations.view', 'subject_combinations.create', 'subject_combinations.update', 'subject_combinations.delete',
+  'jupeb.registration.manage',
+  'jupeb.submission.manage',
+  'jupeb.academic.manage',
+  'jupeb.finance.manage',
+  'sessions.create', 'sessions.update', 'sessions.view',
+  'reports.view',
+  'profiles.jupeb_university_id'
+)
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- institution roles: NIN / identity verify
@@ -110,23 +132,46 @@ WHERE r.name IN ('program_director', 'institution_admin', 'registrar')
 AND p.name = 'jupeb.identity.verify'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- institution_admin owns its profiles.jupeb_university_id binding —
--- src/modules/jupeb/utils/institution-scope.js refuses every JUPEB action
--- for a member of this role whose profile has no jupeb_university_id set.
+-- program_director: registration, dashboard, academic results
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'program_director'
+AND p.name IN (
+  'jupeb.registration.manage',
+  'jupeb.academic.manage',
+  'reports.view'
+)
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- institution_admin: registration, dashboard, academic, role management, scope
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'institution_admin'
-AND p.name = 'profiles.jupeb_university_id'
+AND p.name IN (
+  'profiles.jupeb_university_id',
+  'jupeb.registration.manage',
+  'jupeb.academic.manage',
+  'reports.view',
+  'roles.view', 'roles.create', 'roles.update', 'roles.delete',
+  'permissions.view'
+)
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- institution_admin: role & permission management
+-- financial_admin: JUPEB finance
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'institution_admin'
-AND p.name IN ('roles.view', 'roles.create', 'roles.update', 'roles.delete', 'permissions.view')
+WHERE r.name = 'financial_admin'
+AND p.name IN ('jupeb.finance.manage', 'reports.view')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- user has no resource permissions by default; add as needed
+-- student + user: JUPEB student-facing routes
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name IN ('student', 'user')
+AND p.name = 'jupeb.student.access'
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- user has no other resource permissions by default; add as needed
 
 -- ==================== DEFAULT ADMIN ASSIGNMENT ====================
 
