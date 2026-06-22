@@ -8,16 +8,20 @@ const financeAdmin = [
   requireAuth,
   requirePermission('jupeb.finance.manage'),
 ];
+const feeCheckoutRead = [
+  requireAuth,
+  requirePermission('payments.pay_fees', 'jupeb.finance.manage', 'jupeb.student.access'),
+];
 const jupebStudent = jupebStudentMiddleware();
 
 // Available payment methods for the checkout UI — any authenticated
-// user; the checkout offers exactly what an admin has configured.
-router.get('/payment-methods', requireAuth, FinanceController.listPaymentMethods);
+// user with fee-pay, finance admin, or student access.
+router.get('/payment-methods', feeCheckoutRead, FinanceController.listPaymentMethods);
 
 // Payment catalog — what to pay for (items) + how (structures). The
 // active lists drive the "Make Payment" dropdowns.
-router.get('/payment-items', requireAuth, PaymentCatalogController.listItems);
-router.get('/payment-structures', requireAuth, PaymentCatalogController.listStructures);
+router.get('/payment-items', feeCheckoutRead, PaymentCatalogController.listItems);
+router.get('/payment-structures', feeCheckoutRead, PaymentCatalogController.listStructures);
 
 router.get('/me/fee-preview', jupebStudent, FinanceController.feePreview);
 router.post('/me/checkout', jupebStudent, FinanceController.createCheckout);

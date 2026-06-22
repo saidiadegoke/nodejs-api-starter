@@ -2,7 +2,7 @@ const pool = require('../../../db/pool');
 
 class RbacModel {
   // ---------- Roles ----------
-  _roleListFilters({ q, status, is_system } = {}) {
+  _roleListFilters({ q, status, is_system, scope } = {}) {
     const conditions = [];
     const values = [];
     let idx = 1;
@@ -23,15 +23,21 @@ class RbacModel {
       values.push(is_system);
       idx++;
     }
+    if (scope && scope.mode === 'institution') {
+      conditions.push(`(is_system = true OR created_by = $${idx})`);
+      values.push(scope.actorId);
+      idx++;
+    }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     return { whereClause, values, nextIdx: idx };
   }
 
-  async listRoles({ limit, offset, q, status, is_system }) {
-    const { whereClause, values, nextIdx } = this._roleListFilters({ q, status, is_system });
+  async listRoles({ limit, offset, q, status, is_system, scope }) {
+    const { whereClause, values, nextIdx } = this._roleListFilters({ q, status, is_system, scope });
     values.push(limit, offset);
     const r = await pool.query(
-      `SELECT id, name, display_name, description, is_system, status, created_at, updated_at
+      `SELECT id, name, display_name, description, is_system, status,
+              created_by, owner_jupeb_university_id, created_at, updated_at
        FROM roles
        ${whereClause}
        ORDER BY is_system DESC, name ASC
@@ -41,8 +47,8 @@ class RbacModel {
     return r.rows;
   }
 
-  async countRoles({ q, status, is_system } = {}) {
-    const { whereClause, values } = this._roleListFilters({ q, status, is_system });
+  async countRoles({ q, status, is_system, scope } = {}) {
+    const { whereClause, values } = this._roleListFilters({ q, status, is_system, scope });
     const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);
     return r.rows[0].c;
   }
@@ -57,12 +63,28 @@ class RbacModel {
     return r.rows[0] || null;
   }
 
-  async createRole({ name, display_name, description = null, is_system = false, status = 'active' }) {
+  async createRole({
+    name,
+    display_name,
+    description = null,
+    is_system = false,
+    status = 'active',
+    created_by = null,
+    owner_jupeb_university_id = null,
+  }) {
     const r = await pool.query(
-      `INSERT INTO roles (name, display_name, description, is_system, status)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO roles (name, display_name, description, is_system, status, created_by, owner_jupeb_university_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [name.trim(), display_name.trim(), description ? String(description).trim() : null, is_system, status]
+      [
+        name.trim(),
+        display_name.trim(),
+        description ? String(description).trim() : null,
+        is_system,
+        status,
+        created_by,
+        owner_jupeb_university_id,
+      ]
     );
     return r.rows[0];
   }
@@ -200,20 +222,26 @@ class RbacModel {
     return r.rows;
   }
 
-  async listPermissionsGroupedByRole({ limit, offset, q } = {}) {
+  async listPermissionsGroupedByRole({ limit, offset, q, scope } = {}) {
     const values = [];
     let idx = 1;
 
-    let whereClause = '';
+    const conditions = [];
     if (q) {
       const pattern = `%${q}%`;
-      whereClause = `WHERE r.name ILIKE $${idx} OR r.display_name ILIKE $${idx}`;
+      conditions.push(`(r.name ILIKE $${idx} OR r.display_name ILIKE $${idx})`);
       values.push(pattern);
       idx++;
     }
+    if (scope && scope.mode === 'institution') {
+      conditions.push(`(r.is_system = true OR r.created_by = $${idx})`);
+      values.push(scope.actorId);
+      idx++;
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const roleIdsResult = await pool.query(
-      `SELECT id FROM roles ${whereClause} ORDER BY name ASC LIMIT $${idx} OFFSET $${idx + 1}`,
+      `SELECT id FROM roles r ${whereClause} ORDER BY r.name ASC LIMIT $${idx} OFFSET $${idx + 1}`,
       [...values, limit, offset]
     );
     const roleIds = roleIdsResult.rows.map((row) => row.id);
@@ -253,13 +281,21 @@ class RbacModel {
     return [...grouped.values()];
   }
 
-  async countRolesGrouped({ q } = {}) {
+  async countRolesGrouped({ q, scope } = {}) {
     const values = [];
-    let whereClause = '';
+    const conditions = [];
+    let idx = 1;
     if (q) {
-      whereClause = `WHERE name ILIKE $1 OR display_name ILIKE $1`;
+      conditions.push(`(name ILIKE $${idx} OR display_name ILIKE $${idx})`);
       values.push(`%${q}%`);
+      idx++;
     }
+    if (scope && scope.mode === 'institution') {
+      conditions.push(`(is_system = true OR created_by = $${idx})`);
+      values.push(scope.actorId);
+      idx++;
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);
     return r.rows[0].c;
   }

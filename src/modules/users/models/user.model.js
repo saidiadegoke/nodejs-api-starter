@@ -33,23 +33,30 @@ class User {
   /**
    * Find all users (non-deleted) with profile and role names
    */
-  static async findAll(limit = 10, offset = 0, q = null) {
+  static async findAll(limit = 10, offset = 0, q = null, universityId = null) {
     const values = [limit, offset];
-    let searchClause = '';
+    let idx = 3;
+    let extraClause = '';
     if (q) {
       const pattern = `%${q}%`;
-      searchClause = `
+      extraClause += `
         AND (
-          u.email ILIKE $3
-          OR p.first_name ILIKE $3
-          OR p.last_name ILIKE $3
-          OR p.display_name ILIKE $3
+          u.email ILIKE $${idx}
+          OR p.first_name ILIKE $${idx}
+          OR p.last_name ILIKE $${idx}
+          OR p.display_name ILIKE $${idx}
         )`;
       values.push(pattern);
+      idx++;
+    }
+    if (universityId) {
+      extraClause += ` AND p.jupeb_university_id = $${idx}`;
+      values.push(universityId);
+      idx++;
     }
     const result = await pool.query(
       `${USER_LIST_SELECT}
-       WHERE u.deleted_at IS NULL${searchClause}
+       WHERE u.deleted_at IS NULL${extraClause}
        ORDER BY u.created_at DESC
        LIMIT $1 OFFSET $2`,
       values
@@ -60,25 +67,31 @@ class User {
   /**
    * Count total non-deleted users
    */
-  static async count(q = null) {
+  static async count(q = null, universityId = null) {
+    const values = [];
+    let idx = 1;
+    const conditions = ['u.deleted_at IS NULL'];
     if (q) {
       const pattern = `%${q}%`;
-      const result = await pool.query(
-        `SELECT COUNT(*) FROM users u
-         LEFT JOIN profiles p ON u.id = p.user_id
-         WHERE u.deleted_at IS NULL
-         AND (
-           u.email ILIKE $1
-           OR p.first_name ILIKE $1
-           OR p.last_name ILIKE $1
-           OR p.display_name ILIKE $1
-         )`,
-        [pattern]
-      );
-      return parseInt(result.rows[0].count, 10);
+      conditions.push(`(
+           u.email ILIKE $${idx}
+           OR p.first_name ILIKE $${idx}
+           OR p.last_name ILIKE $${idx}
+           OR p.display_name ILIKE $${idx}
+         )`);
+      values.push(pattern);
+      idx++;
+    }
+    if (universityId) {
+      conditions.push(`p.jupeb_university_id = $${idx}`);
+      values.push(universityId);
+      idx++;
     }
     const result = await pool.query(
-      'SELECT COUNT(*) FROM users WHERE deleted_at IS NULL'
+      `SELECT COUNT(*) FROM users u
+       LEFT JOIN profiles p ON u.id = p.user_id
+       WHERE ${conditions.join(' AND ')}`,
+      values
     );
     return parseInt(result.rows[0].count, 10);
   }

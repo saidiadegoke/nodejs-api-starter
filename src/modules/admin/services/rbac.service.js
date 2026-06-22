@@ -1,5 +1,9 @@
 const rbacModel = require('../models/rbac.model');
 const pool = require('../../../db/pool');
+const {
+  resolveAdminRbacScope,
+  assertRoleAccessible,
+} = require('../utils/admin-rbac-scope');
 
 function httpError(status, message, details) {
   const err = new Error(message);
@@ -30,7 +34,8 @@ class RbacService {
   }
 
   // ---------- Roles ----------
-  async listRoles({ page, limit, q, status, is_system }) {
+  async listRoles({ page, limit, q, status, is_system, actorUserId }) {
+    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const offset = (safePage - 1) * safeLimit;
@@ -53,21 +58,25 @@ class RbacService {
       else throw httpError(422, 'is_system must be true or false');
     }
 
-    const filters = { q: searchTerm, status: statusFilter, is_system: isSystemFilter };
+    const filters = { q: searchTerm, status: statusFilter, is_system: isSystemFilter, scope };
     const rows = await rbacModel.listRoles({ limit: safeLimit, offset, ...filters });
     const enriched = await this._enrichRolesWithPermissions(rows);
     const total = await rbacModel.countRoles(filters);
     return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
-  async getRoleById(id) {
+  async getRoleById(id, actorUserId = null) {
     if (!isUuid(id)) throw httpError(422, 'Invalid role id');
     const row = await rbacModel.findRoleById(id);
     if (!row) throw httpError(404, 'Role not found');
+    if (actorUserId) {
+      const scope = await resolveAdminRbacScope(actorUserId);
+      assertRoleAccessible(row, scope);
+    }
     return this._enrichRoleWithPermissions(row);
   }
 
-  async createRole(body) {
+  async createRole(body, actorUserId = null) {
     const name = body && body.name ? String(body.name).trim() : '';
     const display_name = body && body.display_name ? String(body.display_name).trim() : '';
     if (!name || !display_name) throw httpError(422, 'name and display_name are required');
@@ -90,13 +99,18 @@ class RbacService {
       if (!perm) throw httpError(404, `Permission not found: ${pid}`);
     }
 
+    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
+    const createdBy = actorUserId || null;
+    const ownerUniversityId =
+      scope.mode === 'institution' ? scope.universityId : null;
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const roleResult = await client.query(
-        `INSERT INTO roles (name, display_name, description, is_system, status)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [name, display_name, body.description ?? null, false, status]
+        `INSERT INTO roles (name, display_name, description, is_system, status, created_by, owner_jupeb_university_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [name, display_name, body.description ?? null, false, status, createdBy, ownerUniversityId]
       );
       const role = roleResult.rows[0];
 
@@ -118,8 +132,8 @@ class RbacService {
     }
   }
 
-  async patchRole(id, body) {
-    const role = await this.getRoleById(id);
+  async patchRole(id, body, actorUserId = null) {
+    const role = await this.getRoleById(id, actorUserId);
     if (role.is_system) {
       const allowedSystemKeys = ['description', 'display_name', 'status', 'permission_ids', 'permissions'];
       const onlyAllowed = Object.keys(body || {}).every((k) => allowedSystemKeys.includes(k));
@@ -158,22 +172,28 @@ class RbacService {
     return this._enrichRoleWithPermissions(updated);
   }
 
-  async deleteRole(id) {
-    const role = await this.getRoleById(id);
+  async deleteRole(id, actorUserId = null) {
+    const role = await this.getRoleById(id, actorUserId);
     if (role.is_system) throw httpError(422, 'System roles cannot be deleted');
     const ok = await rbacModel.deleteRole(id);
     if (!ok) throw httpError(404, 'Role not found');
   }
 
   // ---------- Permissions ----------
-  async listPermissions({ page, limit, resource, group_by, q }) {
+  async listPermissions({ page, limit, resource, group_by, q, actorUserId }) {
+    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
     if (group_by === 'role') {
       const safePage = Math.max(1, parseInt(page, 10) || 1);
       const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
       const offset = (safePage - 1) * safeLimit;
       const searchTerm = q ? String(q).trim() : null;
-      const rows = await rbacModel.listPermissionsGroupedByRole({ limit: safeLimit, offset, q: searchTerm });
-      const total = await rbacModel.countRolesGrouped({ q: searchTerm });
+      const rows = await rbacModel.listPermissionsGroupedByRole({
+        limit: safeLimit,
+        offset,
+        q: searchTerm,
+        scope,
+      });
+      const total = await rbacModel.countRolesGrouped({ q: searchTerm, scope });
       return { grouped: true, rows, page: safePage, limit: safeLimit, total };
     }
     const safePage = Math.max(1, parseInt(page, 10) || 1);
@@ -242,21 +262,21 @@ class RbacService {
   }
 
   // ---------- Role ↔ Permission ----------
-  async listRolePermissions(roleId) {
-    await this.getRoleById(roleId);
+  async listRolePermissions(roleId, actorUserId = null) {
+    await this.getRoleById(roleId, actorUserId);
     return rbacModel.listRolePermissions(roleId);
   }
 
-  async attachPermission(roleId, permissionId) {
-    const role = await this.getRoleById(roleId);
+  async attachPermission(roleId, permissionId, actorUserId = null) {
+    const role = await this.getRoleById(roleId, actorUserId);
     await this.getPermissionById(permissionId);
     const attached = await rbacModel.attachPermissionToRole(roleId, permissionId);
     const permissions = await rbacModel.listRolePermissions(roleId);
     return { attached, role: { ...role, permissions } };
   }
 
-  async detachPermission(roleId, permissionId) {
-    const role = await this.getRoleById(roleId);
+  async detachPermission(roleId, permissionId, actorUserId = null) {
+    const role = await this.getRoleById(roleId, actorUserId);
     await this.getPermissionById(permissionId);
     const detached = await rbacModel.detachPermissionFromRole(roleId, permissionId);
     const permissions = await rbacModel.listRolePermissions(roleId);

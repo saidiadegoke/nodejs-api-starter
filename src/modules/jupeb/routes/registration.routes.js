@@ -5,27 +5,30 @@ const RegistrationController = require('../controllers/registration.controller')
 const NextOfKinController = require('../controllers/next-of-kin.controller');
 
 const finalizeRole = [requireAuth, requirePermission('sessions.update')];
-const instReg = [requireAuth, requirePermission('jupeb.registration.manage')];
+const candidateView = [requireAuth, requirePermission('candidate.view', 'jupeb.registration.manage')];
+const candidateCreate = [requireAuth, requirePermission('candidate.create', 'jupeb.registration.manage')];
+const candidateUpdate = [requireAuth, requirePermission('candidate.update', 'jupeb.registration.manage')];
+const candidateDelete = [requireAuth, requirePermission('candidate.delete', 'jupeb.registration.manage')];
 const jupebStudent = jupebStudentMiddleware();
 
 router.get('/sessions/:sessionId/numbering-preview', finalizeRole, RegistrationController.numberingPreview);
 
-router.post('/institution/registrations', instReg, RegistrationController.institutionCreate);
-router.patch('/institution/registrations/:registrationId', instReg, RegistrationController.institutionPatch);
-router.patch('/institution/registrations/:registrationId/candidate', instReg, RegistrationController.institutionPatchCandidate);
-router.post('/institution/registrations/:registrationId/resend-code', instReg, RegistrationController.institutionResendCode);
-router.delete('/institution/registrations/:registrationId', instReg, RegistrationController.institutionDelete);
-router.get('/institution/registrations', instReg, RegistrationController.institutionList);
-router.get('/institution/registrations/export', instReg, RegistrationController.institutionExportCsv);
+router.post('/institution/registrations', candidateCreate, RegistrationController.institutionCreate);
+router.patch('/institution/registrations/:registrationId', candidateUpdate, RegistrationController.institutionPatch);
+router.patch('/institution/registrations/:registrationId/candidate', candidateUpdate, RegistrationController.institutionPatchCandidate);
+router.post('/institution/registrations/:registrationId/resend-code', candidateUpdate, RegistrationController.institutionResendCode);
+router.delete('/institution/registrations/:registrationId', candidateDelete, RegistrationController.institutionDelete);
+router.get('/institution/registrations', candidateView, RegistrationController.institutionList);
+router.get('/institution/registrations/export', candidateView, RegistrationController.institutionExportCsv);
 // NOTE: must come AFTER the literal /export route above, otherwise
 // Express matches `:registrationId === "export"`.
-router.get('/institution/registrations/:registrationId', instReg, RegistrationController.institutionGetCandidate);
-router.get('/institution/overview/stats', instReg, RegistrationController.institutionStats);
-router.get('/institution/overview/by-university', instReg, RegistrationController.institutionByUniversity);
-router.post('/institution/registrations/batch', instReg, RegistrationController.institutionBatchAction);
-router.post('/institution/registrations/:registrationId/approve', instReg, RegistrationController.institutionApprove);
-router.post('/institution/registrations/:registrationId/reject', instReg, RegistrationController.institutionReject);
-router.post('/institution/registrations/:registrationId/withdraw', instReg, RegistrationController.institutionWithdraw);
+router.get('/institution/registrations/:registrationId', candidateView, RegistrationController.institutionGetCandidate);
+router.get('/institution/overview/stats', candidateView, RegistrationController.institutionStats);
+router.get('/institution/overview/by-university', candidateView, RegistrationController.institutionByUniversity);
+router.post('/institution/registrations/batch', candidateCreate, RegistrationController.institutionBatchAction);
+router.post('/institution/registrations/:registrationId/approve', candidateUpdate, RegistrationController.institutionApprove);
+router.post('/institution/registrations/:registrationId/reject', candidateUpdate, RegistrationController.institutionReject);
+router.post('/institution/registrations/:registrationId/withdraw', candidateUpdate, RegistrationController.institutionWithdraw);
 
 router.get('/me/code-status', jupebStudent, RegistrationController.getCodeStatus);
 router.post('/me/claim-code', jupebStudent, RegistrationController.claimCode);

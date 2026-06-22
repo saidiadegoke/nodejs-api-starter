@@ -3,6 +3,7 @@ const AuthModel = require('../../auth/models/auth.model');
 const UserUniversityModel = require('../../../shared/models/user-university.model');
 const universityModel = require('../../jupeb/models/university.model');
 const AdminUsersService = require('../services/adminUsers.service');
+const { resolveAdminRbacScope } = require('../utils/admin-rbac-scope');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 const { CREATED, BAD_REQUEST, CONFLICT, UNPROCESSABLE_ENTITY, NOT_FOUND, INTERNAL_SERVER_ERROR } =
   require('../../../shared/constants/statusCodes');
@@ -22,7 +23,7 @@ const VALID_ROLES = [
 class AdminUsersController {
   static async getStats(req, res) {
     try {
-      const stats = await AdminUsersService.getStats();
+      const stats = await AdminUsersService.getStats(req.user && req.user.user_id);
       return sendSuccess(res, stats, 'User and role management stats');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -89,6 +90,17 @@ class AdminUsersController {
     }
 
     try {
+      const scope = req.user && req.user.user_id
+        ? await resolveAdminRbacScope(req.user.user_id)
+        : { mode: 'full' };
+      if (scope.mode === 'institution' && String(university_id) !== String(scope.universityId)) {
+        return sendError(
+          res,
+          'Cannot create users for a university outside your institution scope',
+          403
+        );
+      }
+
       const uni = await universityModel.findById(university_id);
       if (!uni || uni.status !== 'active') {
         return sendError(res, 'JUPEB university not found or inactive', NOT_FOUND);

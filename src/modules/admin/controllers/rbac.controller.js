@@ -12,6 +12,7 @@ class RbacController {
         q: req.query.q,
         status: req.query.status,
         is_system: req.query.is_system,
+        actorUserId: req.user && req.user.user_id,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
@@ -21,7 +22,7 @@ class RbacController {
 
   static async getRole(req, res) {
     try {
-      const role = await rbacService.getRoleById(req.params.roleId);
+      const role = await rbacService.getRoleById(req.params.roleId, req.user && req.user.user_id);
       return sendSuccess(res, role, 'Role retrieved');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -30,7 +31,7 @@ class RbacController {
 
   static async createRole(req, res) {
     try {
-      const role = await rbacService.createRole(req.body);
+      const role = await rbacService.createRole(req.body, req.user && req.user.user_id);
       return sendSuccess(res, role, 'Role created', CREATED);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -39,7 +40,7 @@ class RbacController {
 
   static async patchRole(req, res) {
     try {
-      const role = await rbacService.patchRole(req.params.roleId, req.body);
+      const role = await rbacService.patchRole(req.params.roleId, req.body, req.user && req.user.user_id);
       return sendSuccess(res, role, 'Role updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -48,7 +49,7 @@ class RbacController {
 
   static async deleteRole(req, res) {
     try {
-      await rbacService.deleteRole(req.params.roleId);
+      await rbacService.deleteRole(req.params.roleId, req.user && req.user.user_id);
       return sendSuccess(res, null, 'Role deleted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -64,6 +65,7 @@ class RbacController {
         resource: req.query.resource,
         group_by: req.query.group_by,
         q: req.query.q,
+        actorUserId: req.user && req.user.user_id,
       });
       if (result.grouped) {
         return sendPaginated(res, result.rows, result.page, result.limit, result.total);
@@ -113,7 +115,10 @@ class RbacController {
   // Role <-> Permission
   static async listRolePermissions(req, res) {
     try {
-      const rows = await rbacService.listRolePermissions(req.params.roleId);
+      const rows = await rbacService.listRolePermissions(
+        req.params.roleId,
+        req.user && req.user.user_id
+      );
       return sendSuccess(res, rows, 'Role permissions retrieved');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -122,7 +127,11 @@ class RbacController {
 
   static async attachPermission(req, res) {
     try {
-      const result = await rbacService.attachPermission(req.params.roleId, req.params.permissionId);
+      const result = await rbacService.attachPermission(
+        req.params.roleId,
+        req.params.permissionId,
+        req.user && req.user.user_id
+      );
       return sendSuccess(res, result, result.attached ? 'Permission attached' : 'Already attached');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -131,7 +140,11 @@ class RbacController {
 
   static async detachPermission(req, res) {
     try {
-      const result = await rbacService.detachPermission(req.params.roleId, req.params.permissionId);
+      const result = await rbacService.detachPermission(
+        req.params.roleId,
+        req.params.permissionId,
+        req.user && req.user.user_id
+      );
       return sendSuccess(res, result, result.detached ? 'Permission detached' : 'Was not attached');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
