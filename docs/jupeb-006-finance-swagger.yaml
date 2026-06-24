@@ -32,6 +32,7 @@ components:
 
 tags:
   - name: Finance — student
+  - name: Finance — institution
   - name: Finance — admin
 
 paths:
@@ -85,6 +86,125 @@ paths:
       responses:
         '200': { description: Paginated; rows include jupeb_projection }
 
+  /finance/institution/overview:
+    get:
+      tags: [Finance — institution]
+      summary: Institution payment dashboard KPI cards
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: university_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Overview with growth cards vs previous session }
+
+  /finance/institution/fees:
+    get:
+      tags: [Finance — institution]
+      summary: Affiliation or examination fee summary for one payment item
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: university_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: payment_item
+          in: query
+          required: true
+          schema: { type: string, example: affiliation_fee }
+      responses:
+        '200': { description: total_expected / paid / outstanding cards }
+
+  /finance/institution/fee-preview:
+    get:
+      tags: [Finance — institution]
+      summary: Outstanding balance before institution checkout
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: payment_item
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: full_fee, already_paid, outstanding }
+
+  /finance/institution/checkout:
+    post:
+      tags: [Finance — institution]
+      summary: Start institution-scoped payment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_method, payment_item, payment_structure, amount]
+              properties:
+                session_id: { type: string, format: uuid }
+                university_id: { type: string, format: uuid }
+                payment_method: { type: string }
+                payment_item: { type: string }
+                payment_structure: { type: string }
+                amount: { type: number }
+                description: { type: string, maxLength: 250 }
+      responses:
+        '201': { description: Payment intent created }
+
+  /finance/institution/payments:
+    get:
+      tags: [Finance — institution]
+      summary: Paginated institution payment history
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: payment_item
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: Paginated payment rows }
+
+  /finance/institution/payments/{paymentId}/receipt:
+    get:
+      tags: [Finance — institution]
+      summary: Institution-scoped transaction receipt
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Receipt composite }
+
   /finance/payments:
     get:
       tags: [Finance — admin]
@@ -105,6 +225,110 @@ paths:
       responses:
         '200': { description: Paginated }
         '403': { description: Forbidden }
+
+  /finance/overview:
+    get:
+      tags: [Finance — admin]
+      summary: Foundation finance portal KPI cards
+      description: |
+        Aggregates all institutions in a session. Returns projected and collected
+        affiliation/examination totals with growth vs the previous session.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Overview KPI object in response data }
+
+  /finance/analytics/exam-fee-by-institution:
+    get:
+      tags: [Finance — admin]
+      summary: Exam fee bar chart — projected vs collected examination fee per institution
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, maximum: 100 }
+      responses:
+        '200': { description: Institutions ordered by projected exam fee descending }
+
+  /finance/analytics/payment-trends:
+    get:
+      tags: [Finance — admin]
+      summary: Monthly collected payment totals (registration + institution checkout)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: year
+          in: query
+          schema: { type: integer }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Current + previous year monthly series }
+
+  /finance/analytics/institution-fee-records:
+    get:
+      tags: [Finance — admin]
+      summary: Paginated per-institution fee records table
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: Paginated rows with jupeb_prefix, email, status }
+
+  /finance/analytics/institutions/{universityId}/payments:
+    get:
+      tags: [Finance — admin]
+      summary: Institution payment history for foundation admin (eye-icon drawer)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: universityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: payment_item
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: Paginated payment rows }
 
   /finance/registrations/{registrationId}/payment-summary:
     get:

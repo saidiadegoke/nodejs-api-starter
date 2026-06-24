@@ -63,8 +63,15 @@ INSERT INTO permissions (name, resource, action, description) VALUES
 ('subject_combinations.view', 'subject_combinations', 'view', 'View subject combinations'),
 ('subject_combinations.delete', 'subject_combinations', 'delete', 'Delete subject combinations'),
 
+-- Candidate management
+('candidate.view', 'candidate', 'view', 'View JUPEB candidates/registrations'),
+('candidate.create', 'candidate', 'create', 'Create candidates'),
+('candidate.update', 'candidate', 'update', 'Update candidate records'),
+('candidate.delete', 'candidate', 'delete', 'Delete/withdraw candidates'),
+
 -- Payments & reporting
 ('payments.view', 'payments', 'view', 'View payments'),
+('payments.pay_fees', 'payments', 'pay_fees', 'Initiate and pay institution/session fees'),
 ('activity_logs.view', 'activity_logs', 'view', 'View activity log'),
 ('reports.view', 'reports', 'view', 'View reports'),
 ('reports.export', 'reports', 'export', 'Export reports'),
@@ -132,18 +139,21 @@ WHERE r.name IN ('program_director', 'institution_admin', 'registrar')
 AND p.name = 'jupeb.identity.verify'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- program_director: registration, dashboard, academic results
+-- program_director: registration, dashboard, academic results, candidates, payments, users
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'program_director'
 AND p.name IN (
   'jupeb.registration.manage',
   'jupeb.academic.manage',
-  'reports.view'
+  'reports.view',
+  'candidate.view', 'candidate.create', 'candidate.update', 'candidate.delete',
+  'payments.view', 'payments.pay_fees',
+  'users.view', 'users.create', 'users.update', 'users.delete'
 )
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- institution_admin: registration, dashboard, academic, role management, scope
+-- institution_admin: registration, dashboard, academic, role management, scope, candidates, payments, users
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'institution_admin'
@@ -153,7 +163,10 @@ AND p.name IN (
   'jupeb.academic.manage',
   'reports.view',
   'roles.view', 'roles.create', 'roles.update', 'roles.delete',
-  'permissions.view'
+  'permissions.view',
+  'candidate.view', 'candidate.create', 'candidate.update', 'candidate.delete',
+  'payments.view', 'payments.pay_fees',
+  'users.view', 'users.create', 'users.update', 'users.delete'
 )
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 

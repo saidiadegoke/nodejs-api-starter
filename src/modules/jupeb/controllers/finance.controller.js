@@ -120,6 +120,88 @@ class FinanceController {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
   }
+
+  static async institutionOverview(req, res) {
+    try {
+      const data = await financeService.institutionOverview(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Institution payment overview');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async institutionFees(req, res) {
+    try {
+      const data = await financeService.institutionFees(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Institution fee summary');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async institutionFeePreview(req, res) {
+    try {
+      const data = await financeService.institutionFeePreview(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Institution fee preview');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async institutionCheckout(req, res) {
+    try {
+      const row = await financeService.createInstitutionCheckout(req.user.user_id, req.body);
+      return sendSuccess(res, row, 'Payment intent created', CREATED);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async listInstitutionPayments(req, res) {
+    try {
+      const { rows, page, limit, total } = await financeService.listInstitutionPayments(
+        req.query,
+        req.user.user_id
+      );
+      return sendPaginated(res, rows, page, limit, total);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async institutionPaymentReceipt(req, res) {
+    try {
+      const data = await financeService.getInstitutionPaymentReceipt(
+        req.params.paymentId,
+        req.user.user_id
+      );
+      return sendSuccess(res, data, 'Transaction receipt');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async foundationOverview(req, res) {
+    try {
+      const data = await financeService.foundationOverview(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Foundation finance overview');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async listFoundationInstitutionPayments(req, res) {
+    try {
+      const { rows, page, limit, total } = await financeService.listFoundationInstitutionPayments(
+        req.params.universityId,
+        req.query,
+        req.user.user_id
+      );
+      return sendPaginated(res, rows, page, limit, total);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
 }
 
 module.exports = FinanceController;

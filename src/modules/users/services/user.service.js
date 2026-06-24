@@ -1,16 +1,29 @@
 const User = require('../models/user.model');
+const {
+  resolveAdminRbacScope,
+  assertUserAccessible,
+} = require('../../admin/utils/admin-rbac-scope');
+
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
 
 class UserService {
   /**
    * Get all users with pagination and optional search
    */
-  static async getAllUsers(page = 1, limit = 10, q = null) {
+  static async getAllUsers(page = 1, limit = 10, q = null, actorUserId = null) {
+    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
+    const universityId = scope.mode === 'institution' ? scope.universityId : null;
+
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const offset = (safePage - 1) * safeLimit;
     const searchTerm = q ? String(q).trim() : null;
-    const users = await User.findAll(safeLimit, offset, searchTerm);
-    const total = await User.count(searchTerm);
+    const users = await User.findAll(safeLimit, offset, searchTerm, universityId);
+    const total = await User.count(searchTerm, universityId);
 
     return { users, total, page: safePage, limit: safeLimit };
   }
@@ -18,10 +31,14 @@ class UserService {
   /**
    * Get user by ID
    */
-  static async getUserById(id) {
+  static async getUserById(id, actorUserId = null) {
     const user = await User.findById(id);
     if (!user) {
-      throw new Error('User not found');
+      throw httpError(404, 'User not found');
+    }
+    if (actorUserId) {
+      const scope = await resolveAdminRbacScope(actorUserId);
+      assertUserAccessible(user, scope);
     }
     return user;
   }
@@ -30,14 +47,10 @@ class UserService {
    * Create new user
    */
   static async createUser(userData) {
-    // Check if user already exists
     const existingUser = await User.findByEmail(userData.email);
     if (existingUser) {
-      throw new Error('User with this email already exists');
+      throw httpError(409, 'User with this email already exists');
     }
-
-    // In production, hash the password here
-    // userData.password_hash = await bcrypt.hash(userData.password, 10);
 
     const user = await User.create(userData);
     return user;
@@ -46,10 +59,13 @@ class UserService {
   /**
    * Update user
    */
-  static async updateUser(id, userData) {
+  static async updateUser(id, userData, actorUserId = null) {
+    if (actorUserId) {
+      await UserService.getUserById(id, actorUserId);
+    }
     const user = await User.update(id, userData);
     if (!user) {
-      throw new Error('User not found');
+      throw httpError(404, 'User not found');
     }
     return user;
   }
@@ -57,15 +73,16 @@ class UserService {
   /**
    * Delete user
    */
-  static async deleteUser(id) {
+  static async deleteUser(id, actorUserId = null) {
+    if (actorUserId) {
+      await UserService.getUserById(id, actorUserId);
+    }
     const user = await User.delete(id);
     if (!user) {
-      throw new Error('User not found');
+      throw httpError(404, 'User not found');
     }
     return user;
   }
 }
 
 module.exports = UserService;
-
-

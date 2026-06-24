@@ -90,7 +90,7 @@ function normalizeInstitutionListFilters(query) {
   return { ...q, status, bucket };
 }
 
-const ROLE_INST_REG = new Set(['program_director', 'institution_admin', 'admin', 'super_admin']);
+const ROLE_INST_REG = new Set(['program_director', 'institution_admin', 'registrar', 'admin', 'super_admin']);
 const ROLE_FINALIZE = new Set(['admin', 'super_admin', 'registrar']);
 
 async function userHasAnyRole(userId, set) {
