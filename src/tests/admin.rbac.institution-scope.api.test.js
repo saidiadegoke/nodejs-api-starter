@@ -228,4 +228,55 @@ describe('Admin RBAC — institution-scoped lists', () => {
       });
     expect(bad.status).toBe(403);
   });
+
+  it('POST /admin/users without university_id defaults to institution scope', async () => {
+    if (!dbReady || !rolesOwnershipMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniA = await createUniversity(adminToken, `${suffix}a`);
+    const instEmail = `inst_nouni_${suffix}@example.com`;
+    await createInstitutionAdmin({ email: instEmail, universityId: uniA });
+    const instToken = await login(instEmail);
+    if (!instToken) return;
+
+    const targetEmail = `scoped_default_${suffix}@example.com`;
+    const created = await request(app)
+      .post('/admin/users')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        email: targetEmail,
+        password: 'Password@12',
+        first_name: 'Scoped',
+        last_name: 'Default',
+        role: 'program_director',
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.data.university.id).toBe(uniA);
+    expect(created.body.data.binding).toBeDefined();
+  });
+
+  it('POST /admin/users without university_id allows full admin role-only create', async () => {
+    if (!dbReady) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const targetEmail = `role_only_${suffix}@example.com`;
+    const created = await request(app)
+      .post('/admin/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        email: targetEmail,
+        password: 'Password@12',
+        first_name: 'Role',
+        last_name: 'Only',
+        role: 'agent',
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.data.user.email).toBe(targetEmail);
+    expect(created.body.data.university).toBeNull();
+    expect(created.body.data.binding).toBeNull();
+  });
 });

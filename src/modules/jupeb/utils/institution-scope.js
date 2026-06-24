@@ -50,8 +50,18 @@ async function effectiveInstitutionListUniversityId(userId, queryUniversityId) {
   return scoped;
 }
 
+const ROLE_INST_FINANCE = new Set(['program_director', 'institution_admin', 'admin', 'super_admin']);
+
+async function assertInstitutionFinanceAccess(userId) {
+  const roles = await getUserRoles(userId);
+  if (!roles.some((r) => ROLE_INST_FINANCE.has(r))) {
+    throw httpError(403, 'Forbidden');
+  }
+}
+
 module.exports = {
   getProfileJupebUniversityId,
   assertInstitutionUniversityAccess,
+  assertInstitutionFinanceAccess,
   effectiveInstitutionListUniversityId,
 };

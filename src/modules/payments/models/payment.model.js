@@ -32,6 +32,8 @@ class Payment {
       registration_id,
       payment_item_id,
       payment_structure_id,
+      jupeb_university_id,
+      jupeb_session_id,
     } = data;
 
     const result = await pool.query(
@@ -41,11 +43,11 @@ class Payment {
         anonymous_donor_first_name, anonymous_donor_last_name, anonymous_donor_email, anonymous_donor_phone,
         campaign_id, subscription_id, purpose, metadata, user_agent, ip_address,
         source, is_recurring, recurring_interval, notes, internal_notes, registration_id,
-        payment_item_id, payment_structure_id
+        payment_item_id, payment_structure_id, jupeb_university_id, jupeb_session_id
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,
         $12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::inet,
-        $22,$23,$24,$25,$26,$27,$28,$29
+        $22,$23,$24,$25,$26,$27,$28,$29,$30,$31
       ) RETURNING *`,
       [
         payment_id,
@@ -77,9 +79,83 @@ class Payment {
         registration_id || null,
         payment_item_id || null,
         payment_structure_id || null,
+        jupeb_university_id || null,
+        jupeb_session_id || null,
       ]
     );
     return result.rows[0];
+  }
+
+  /** Institution portal: pending checkout for one fee type at institution scope. */
+  async countPendingForInstitution(universityId, sessionId, paymentItemId) {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payments
+       WHERE jupeb_university_id = $1 AND jupeb_session_id = $2
+         AND payment_item_id = $3
+         AND status IN ('pending', 'pending_transfer', 'processing', 'pending_verification')`,
+      [universityId, sessionId, paymentItemId]
+    );
+    return result.rows[0].c;
+  }
+
+  /**
+   * Paginated institution payment history — direct institution rows and
+   * registration-linked rows for the same university + session.
+   */
+  async findInstitutionPayments({
+    university_id,
+    session_id,
+    payment_item_id,
+    status,
+    q,
+    limit = 20,
+    offset = 0,
+  }) {
+    const values = [university_id, session_id];
+    let idx = 3;
+    const scope = `(
+      (p.jupeb_university_id = $1 AND p.jupeb_session_id = $2)
+      OR (r.university_id = $1 AND r.session_id = $2)
+    )`;
+    let where = `WHERE ${scope}`;
+    if (payment_item_id) {
+      where += ` AND p.payment_item_id = $${idx++}`;
+      values.push(payment_item_id);
+    }
+    if (status) {
+      where += ` AND p.status = $${idx++}`;
+      values.push(status);
+    }
+    if (q) {
+      where += ` AND (
+        p.payment_id ILIKE $${idx}
+        OR COALESCE(p.purpose, '') ILIKE $${idx}
+        OR COALESCE(pi.name, '') ILIKE $${idx}
+      )`;
+      values.push(`%${q}%`);
+      idx += 1;
+    }
+    const from = `
+      FROM payments p
+      LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
+      LEFT JOIN payment_structures ps ON ps.id = p.payment_structure_id
+      LEFT JOIN jupeb_registrations r ON r.id = p.registration_id`;
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total ${from} ${where}`,
+      values
+    );
+    const total = countResult.rows[0].total;
+    const dataResult = await pool.query(
+      `SELECT p.*,
+              pi.code AS item_code, pi.name AS item_name,
+              ps.code AS structure_code, ps.name AS structure_name
+       ${from}
+       ${where}
+       ORDER BY COALESCE(p.paid_at, p.created_at) DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limit, offset]
+    );
+    return { rows: dataResult.rows, total };
   }
 
   async findById(id) {

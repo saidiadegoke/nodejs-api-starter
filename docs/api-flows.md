@@ -808,7 +808,11 @@ admin, student, …).
 ```
 
 - At least one of `email` / `phone`; `password` ≥ 8; `first_name`,
-  `last_name`, `role`, `university_id` all required.
+  `last_name`, `role` required. `university_id` is **optional**:
+  - omitted by an institution-scoped admin → defaults to the caller's
+    `profiles.jupeb_university_id` and binds as today;
+  - omitted by `admin` / `super_admin` → creates the user + role only
+    (no `user_universities` row; `university` / `binding` are `null`).
 - `role` — any of the system roles (`super_admin`, `admin`, `agent`,
   `user`, `registrar`, `program_director`, `institution_admin`,
   `financial_admin`, `student`).
@@ -2549,6 +2553,9 @@ without hard-coding a code→card mapping:
 | `online` | Online Payment (card / USSD) | `paystack`, `flutterwave` |
 | `pay_at_bank` | Pay at Bank (generate teller) | `remita` |
 
+Each method also includes optional `label` and `subtitle` for the
+institution portal payment-method cards.
+
 ```json
 { "data": [
   { "code": "direct_transfer", "group": "bank_transfer", "type": "manual", "...": "..." },
@@ -2722,6 +2729,46 @@ GET /finance/me/payments/{paymentId}/receipt     (payment owner)
 }
 ```
 
+#### Institution portal — payment dashboard
+
+Gated by `payments.view` / `payments.pay_fees` and scoped to the caller's
+`profiles.jupeb_university_id` (institution admins) or an explicit
+`university_id` (full admins). Defaults `session_id` to the open session.
+
+| Screen | Endpoint |
+|---|---|
+| Payment overview KPI cards | `GET /finance/institution/overview?session_id=` |
+| Affiliation / exam fee cards | `GET /finance/institution/fees?payment_item=affiliation_fee\|examination_fee` |
+| Payment history table | `GET /finance/institution/payments?payment_item=&status=&q=` |
+| Make Payment step 1 preview | `GET /finance/institution/fee-preview?payment_item=` |
+| Make Payment step 3 submit | `POST /finance/institution/checkout` |
+| Transaction receipt | `GET /finance/institution/payments/{paymentId}/receipt` |
+| Export button | **Frontend-only** — paginate `GET /finance/institution/payments` |
+
+Overview cards use `{ value, delta_pct, trend }` vs the previous session
+(same pattern as registration overview stats).
+
+`POST /finance/institution/checkout` body:
+```json
+{
+  "session_id": "uuid",
+  "university_id": "uuid",
+  "payment_method": "direct_transfer",
+  "payment_item": "affiliation_fee",
+  "payment_structure": "partial",
+  "amount": 50000,
+  "description": "Q2 2026 Payment"
+}
+```
+
+Institution checkout writes `jupeb_university_id` + `jupeb_session_id`
+on the `payments` row (migration 022). Affiliation fee is **once per
+institution per session**; examination fee is
+`exam_fee_per_candidate × non-withdrawn candidates`.
+
+Demo seed: `unilag-admin@example.com` / `Admin@12` (see
+`008_seed_institution_finance_demo.sql`).
+
 #### Admin: payment catalog CRUD
 
 Manage the catalogs (registrar / financial_admin / admin / super_admin):
@@ -2742,7 +2789,52 @@ sort_order? }`.
 
 ---
 
-## 10. Finance analytics — fees, trends, per-institution records
+## 10. Foundation finance portal (JUPEB admin)
+
+Roles: `financial_admin`, `registrar`, `admin`, `super_admin` (`jupeb.finance.manage`).
+
+Sidebar quick stats reuse `GET /dashboard/quick-stats` (`reports.view` — also
+granted to `financial_admin`). Registration status card can use either
+`GET /finance/overview` (`registration_status`) or
+`GET /dashboard/session-timeline?session_id=`.
+
+### Overview KPI cards
+
+```
+GET /finance/overview?session_id=     (financeAdmin)
+```
+
+Defaults to the active registration session when `session_id` is omitted.
+Aggregates all institutions with registrations in the session.
+
+| UI card | Response field |
+|---|---|
+| Institutions | `institutions_with_registrations` |
+| Total candidates | `total_candidates_registered` |
+| Total affiliation fee (expected) | `total_affiliation_fee.projected` |
+| Total affiliation fee (paid) | `total_affiliation_fee.collected` |
+| Total examination fee (expected) | `total_examination_fee.projected` |
+| Total examination fee (paid) | `total_examination_fee.collected` |
+| Registration status | `registration_status` |
+
+Each metric uses `{ value, delta_pct, trend }` vs the previous session
+(same pattern as institution overview).
+
+### Frontend endpoint map
+
+| Screen | Endpoint |
+|---|---|
+| Payment page KPI cards | `GET /finance/overview?session_id=` → `*.projected` |
+| Dashboard fees-paid cards | `GET /finance/overview?session_id=` → `*.collected` |
+| Exam fees bar chart (top N) | `GET /finance/analytics/exam-fee-by-institution?session_id=&limit=6` |
+| Payment trends line chart | `GET /finance/analytics/payment-trends?year=&session_id=` |
+| All Payment Records table | `GET /finance/analytics/institution-fee-records?session_id=&page=&q=` |
+| Eye icon payment history | `GET /finance/analytics/institutions/{universityId}/payments?session_id=` |
+| Export | Client paginates `institution-fee-records` |
+
+---
+
+## 11. Finance analytics — fees, trends, per-institution records
 
 Three reporting endpoints under `/finance/analytics/*`, all gated by the
 `financeAdmin` role set (`financial_admin` / `registrar` / `admin` /
@@ -2752,9 +2844,9 @@ Three reporting endpoints under `/finance/analytics/*`, all gated by the
 fee config (`affiliation_fee_existing` / `affiliation_fee_new` /
 `exam_fee_per_candidate`) × candidate counts — what an institution
 *owes*. "Collected" sums real `payments` rows with `status='completed'`
-— what's actually *been paid*. The `payments` table doesn't tag a
-payment as affiliation-vs-exam, so `collected` is a single total, not
-split by fee type.
+— what's actually *been paid*. Institution portal endpoints and analytics
+rows also expose `collected.affiliation_fee` / `collected.examination_fee`
+when split by `payment_item` is available.
 
 **Affiliation rate.** An institution pays `affiliation_fee_new` for the
 **first** session it ever has registrations in (earliest `opens_at`),
@@ -2764,11 +2856,12 @@ and `affiliation_fee_existing` for every later session. The
 ### Exam fee by institution
 
 ```
-GET /finance/analytics/exam-fee-by-institution?session_id=…     (financeAdmin)
+GET /finance/analytics/exam-fee-by-institution?session_id=…&limit=6     (financeAdmin)
 ```
 
 Projected exam fee per institution — for plotting fee against
-institutions. `session_id` is required.
+institutions. `session_id` is required. Optional `limit` (max 100) returns
+top N by projected exam fee.
 
 `res 200`
 ```json
@@ -2781,14 +2874,15 @@ institutions. `session_id` is required.
     "institutions": [
       { "institution_id": "uuid", "institution_name": "University of Lagos",
         "institution_code": "UNILAG", "number_of_candidates": 120,
-        "exam_fee": 6000000, "collected": 4200000 }
+        "exam_fee": 6000000, "collected": 4200000, "collected_examination": 3800000 }
     ]
   }
 }
 ```
 `institutions` is ordered by `exam_fee` descending. `exam_fee` is
 projected (`exam_fee_per_candidate × number_of_candidates`); `collected`
-is the institution's total completed payments.
+is total completed payments; `collected_examination` is the examination-fee
+portion for the chart "Current" bar.
 
 ### Payment trends
 
@@ -2797,9 +2891,10 @@ GET /finance/analytics/payment-trends?year=YYYY&session_id=…     (financeAdmin
 ```
 
 Monthly collected-payment totals — completed JUPEB payments bucketed by
-`paid_at` (falling back to `created_at`). Current + previous calendar
-year, Jan–Dec. `year` defaults to the current year; `session_id`
-optionally scopes to one session's registrations.
+`paid_at` (falling back to `created_at`). Includes registration-linked
+payments and institution checkout rows (`jupeb_university_id` +
+`jupeb_session_id`). Current + previous calendar year, Jan–Dec. `year`
+defaults to the current year; `session_id` optionally scopes to one session.
 
 `res 200`
 ```json
@@ -2834,10 +2929,18 @@ institution name or code.
       "institution_id": "uuid",
       "institution_name": "University of Lagos",
       "institution_code": "UNILAG",
+      "jupeb_prefix": "001",
+      "email": "finance@unilag.edu.ng",
+      "status": "active",
       "number_of_candidates": 120,
       "is_new_affiliate": false,
       "projected": { "affiliation_fee": 250000, "exam_fee": 6000000, "total": 6250000 },
-      "collected": { "total": 4200000, "payment_count": 84 },
+      "collected": {
+        "affiliation_fee": 250000,
+        "examination_fee": 4200000,
+        "total": 4450000,
+        "payment_count": 84
+      },
       "pending": { "total": 900000 },
       "outstanding": 2050000
     }

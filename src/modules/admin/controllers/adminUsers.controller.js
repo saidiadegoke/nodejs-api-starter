@@ -45,7 +45,7 @@ class AdminUsersController {
    *   password,               // min 8 chars
    *   first_name, last_name,
    *   role,                   // one of VALID_ROLES
-   *   university_id,          // jupeb_universities.id
+   *   university_id?,          // jupeb_universities.id — optional; institution admins default to scope
    *   is_primary?: boolean,   // default true
    *   country_id?: int,       // for phone formatting
    * }
@@ -64,7 +64,7 @@ class AdminUsersController {
       first_name,
       last_name,
       role,
-      university_id,
+      university_id: bodyUniversityId,
       is_primary = true,
       country_id,
     } = body;
@@ -85,15 +85,18 @@ class AdminUsersController {
         UNPROCESSABLE_ENTITY
       );
     }
-    if (!university_id) {
-      return sendError(res, 'university_id is required', UNPROCESSABLE_ENTITY);
-    }
 
     try {
       const scope = req.user && req.user.user_id
         ? await resolveAdminRbacScope(req.user.user_id)
         : { mode: 'full' };
-      if (scope.mode === 'institution' && String(university_id) !== String(scope.universityId)) {
+
+      let university_id = bodyUniversityId || null;
+      if (!university_id && scope.mode === 'institution') {
+        university_id = scope.universityId;
+      }
+
+      if (university_id && scope.mode === 'institution' && String(university_id) !== String(scope.universityId)) {
         return sendError(
           res,
           'Cannot create users for a university outside your institution scope',
@@ -101,9 +104,12 @@ class AdminUsersController {
         );
       }
 
-      const uni = await universityModel.findById(university_id);
-      if (!uni || uni.status !== 'active') {
-        return sendError(res, 'JUPEB university not found or inactive', NOT_FOUND);
+      let uni = null;
+      if (university_id) {
+        uni = await universityModel.findById(university_id);
+        if (!uni || uni.status !== 'active') {
+          return sendError(res, 'JUPEB university not found or inactive', NOT_FOUND);
+        }
       }
 
       // Reuse the existing AuthModel.createUser (handles bcrypt + role
@@ -128,6 +134,28 @@ class AdminUsersController {
         last_name,
         role,
       });
+
+      if (!university_id) {
+        return sendSuccess(
+          res,
+          {
+            user: {
+              user_id: user.id,
+              email: user.email,
+              phone: user.phone,
+              first_name,
+              last_name,
+              role,
+              status: user.status,
+              created_at: user.created_at,
+            },
+            university: null,
+            binding: null,
+          },
+          'User created',
+          CREATED
+        );
+      }
 
       const client = await pool.connect();
       try {
