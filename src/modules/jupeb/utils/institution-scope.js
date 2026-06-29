@@ -50,7 +50,14 @@ async function effectiveInstitutionListUniversityId(userId, queryUniversityId) {
   return scoped;
 }
 
-const ROLE_INST_FINANCE = new Set(['program_director', 'institution_admin', 'admin', 'super_admin']);
+const ROLE_INST_FINANCE = new Set([
+  'program_director',
+  'institution_admin',
+  'financial_admin',
+  'registrar',
+  'admin',
+  'super_admin',
+]);
 
 async function assertInstitutionFinanceAccess(userId) {
   const roles = await getUserRoles(userId);

@@ -63,6 +63,29 @@ describe('JUPEB institution finance API', () => {
     return userId;
   }
 
+  async function createFinancialAdmin(email) {
+    await pool.query(
+      `INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status)
+       VALUES ($1, $2, true, true, $3, 'active')
+       ON CONFLICT DO NOTHING`,
+      [email, `+2348${String(Date.now()).slice(-9)}`, passwordHash]
+    );
+    const userRow = await pool.query(`SELECT id FROM users WHERE email = $1`, [email]);
+    const userId = userRow.rows[0].id;
+    await pool.query(
+      `INSERT INTO profiles (user_id, first_name, last_name, display_name)
+       VALUES ($1, 'Fin', 'Admin', 'Fin Admin')
+       ON CONFLICT (user_id) DO NOTHING`,
+      [userId]
+    );
+    const roleRow = await pool.query(`SELECT id FROM roles WHERE name = 'financial_admin' LIMIT 1`);
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [userId, roleRow.rows[0].id]
+    );
+    return userId;
+  }
+
   async function login(email) {
     const res = await request(app).post('/auth/login').send({ identifier: email, password });
     return res.body.data?.access_token || null;
@@ -216,5 +239,100 @@ describe('JUPEB institution finance API', () => {
     if (methods.body.data.length > 0) {
       expect(methods.body.data[0].group).toBeDefined();
     }
+  });
+
+  it('financial_admin can view institution metrics and payments via university_id query', async () => {
+    if (!financeMigrated || !institutionPaymentsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uni = await request(app)
+      .post('/catalog/universities')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(
+        buildCatalogUniversityPayload(String(suffix).slice(-3), {
+          name: `Foundation Fin Uni ${suffix}`,
+        })
+      );
+    expect(uni.status).toBe(201);
+
+    const scRes = await request(app)
+      .post('/catalog/subject-combinations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        code: nextJupebTestUniversityCode('FFN'),
+        title: 'Foundation Fin Combo',
+        subjects: ['A', 'B', 'C'],
+        is_global: true,
+      });
+    expect(scRes.status).toBe(201);
+
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+    const sessRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        affiliation_fee_existing: 250000,
+        affiliation_fee_new: 350000,
+        exam_fee_per_candidate: 45000,
+      });
+    expect(sessRes.status).toBe(201);
+    const sessionId = sessRes.body.data.id;
+    await closeAllOpenJupebSessions(adminToken);
+    await request(app).post(`/sessions/${sessionId}/open`).set('Authorization', `Bearer ${adminToken}`);
+
+    await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        session_id: sessionId,
+        university_id: uni.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+
+    const finEmail = `fin_admin_${suffix}@example.com`;
+    await createFinancialAdmin(finEmail);
+    const finToken = await login(finEmail);
+    expect(finToken).toBeTruthy();
+
+    const universityId = uni.body.data.id;
+    const overview = await request(app)
+      .get(`/finance/overview?session_id=${sessionId}&university_id=${universityId}`)
+      .set('Authorization', `Bearer ${finToken}`);
+    expect(overview.status).toBe(200);
+    expect(overview.body.data.university_id).toBe(universityId);
+
+    const fees = await request(app)
+      .get(
+        `/finance/fees?session_id=${sessionId}&university_id=${universityId}&payment_item=affiliation_fee`
+      )
+      .set('Authorization', `Bearer ${finToken}`);
+    expect(fees.status).toBe(200);
+    expect(fees.body.data.total_expected.value).toBeGreaterThan(0);
+    expect(fees.body.data).toHaveProperty('total_payment_count');
+
+    const instFees = await request(app)
+      .get(
+        `/finance/institution/fees?session_id=${sessionId}&university_id=${universityId}&payment_item=affiliation_fee`
+      )
+      .set('Authorization', `Bearer ${finToken}`);
+    expect(instFees.status).toBe(200);
+
+    const payments = await request(app)
+      .get(`/finance/payments?session_id=${sessionId}&university_id=${universityId}`)
+      .set('Authorization', `Bearer ${finToken}`);
+    expect(payments.status).toBe(200);
+    expect(Array.isArray(payments.body.data)).toBe(true);
+
+    const pathPayments = await request(app)
+      .get(`/finance/analytics/institutions/${universityId}/payments?session_id=${sessionId}`)
+      .set('Authorization', `Bearer ${finToken}`);
+    expect(pathPayments.status).toBe(200);
+    expect(Array.isArray(pathPayments.body.data)).toBe(true);
   });
 });

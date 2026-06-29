@@ -202,6 +202,77 @@ describe('Admin RBAC — institution-scoped lists', () => {
     await request(app).delete(`/admin/roles/${registrarRoleId}`).set('Authorization', `Bearer ${adminToken}`);
   });
 
+  it('POST /admin/users accepts custom roles from the roles table', async () => {
+    if (!dbReady || !rolesOwnershipMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniId = await createUniversity(adminToken, suffix);
+    const instEmail = `inst_custom_role_${suffix}@example.com`;
+    await createInstitutionAdmin({ email: instEmail, universityId: uniId });
+    const instToken = await login(instEmail);
+    if (!instToken) return;
+
+    const customRoleName = unique('inst_staff_role');
+    const roleCreate = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({ name: customRoleName, display_name: 'Institution Staff' });
+    expect(roleCreate.status).toBe(201);
+
+    const targetEmail = `custom_role_user_${suffix}@example.com`;
+    const created = await request(app)
+      .post('/admin/users')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        email: targetEmail,
+        password: 'Password@12',
+        first_name: 'Custom',
+        last_name: 'Role',
+        role: customRoleName,
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.data.user.role).toBe(customRoleName);
+    expect(created.body.data.university.id).toBe(uniId);
+  });
+
+  it('POST /admin/users rejects custom roles outside institution scope', async () => {
+    if (!dbReady || !rolesOwnershipMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniId = await createUniversity(adminToken, suffix);
+    const instEmail = `inst_foreign_role_${suffix}@example.com`;
+    await createInstitutionAdmin({ email: instEmail, universityId: uniId });
+    const instToken = await login(instEmail);
+    if (!instToken) return;
+
+    const foreignRoleName = unique('foreign_role');
+    const foreignCreate = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: foreignRoleName, display_name: 'Foreign Custom Role' });
+    expect(foreignCreate.status).toBe(201);
+
+    const denied = await request(app)
+      .post('/admin/users')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        email: `foreign_role_user_${suffix}@example.com`,
+        password: 'Password@12',
+        first_name: 'Foreign',
+        last_name: 'Role',
+        role: foreignRoleName,
+      });
+    expect(denied.status).toBe(403);
+
+    await request(app)
+      .delete(`/admin/roles/${foreignCreate.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+  });
+
   it('POST /admin/users rejects wrong university_id for institution admin', async () => {
     if (!dbReady || !rolesOwnershipMigrated) return;
     const adminToken = await getAdminToken();

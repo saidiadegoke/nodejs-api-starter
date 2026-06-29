@@ -190,6 +190,15 @@ class FinanceController {
     }
   }
 
+  static async foundationInstitutionFees(req, res) {
+    try {
+      const data = await financeService.foundationInstitutionFees(req.query, req.user.user_id);
+      return sendSuccess(res, data, 'Institution fee summary');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async listFoundationInstitutionPayments(req, res) {
     try {
       const { rows, page, limit, total } = await financeService.listFoundationInstitutionPayments(

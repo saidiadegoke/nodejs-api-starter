@@ -315,6 +315,100 @@ class FinanceService {
     return { universityId: scopedUniversityId, session };
   }
 
+  /**
+   * Foundation finance callers must pass university_id explicitly.
+   */
+  async _resolveFoundationInstitutionScope(query, userId) {
+    await assertFinanceRole(userId);
+    const { session_id, university_id } = query || {};
+    if (!university_id || !isUuid(university_id)) {
+      throw httpError(422, 'university_id is required and must be a valid UUID');
+    }
+    if (session_id && !isUuid(session_id)) {
+      throw httpError(422, 'session_id must be a valid UUID');
+    }
+    const uni = await universityModel.findById(university_id);
+    if (!uni) throw httpError(404, 'Institution not found');
+    const sessionMeta = await registrationKpi.resolveRegistrationSession(session_id || null);
+    if (!sessionMeta) throw httpError(404, 'No registration session found');
+    const session = await sessionModel.findById(sessionMeta.id);
+    if (!session) throw httpError(404, 'Session not found');
+    return { universityId: university_id, session, university: uni };
+  }
+
+  async _institutionOverviewPayload(universityId, session) {
+    const current = await this._resolveInstitutionFeeRow(universityId, session.id);
+    if (!current) throw httpError(404, 'Institution not found');
+
+    const previousSession = await registrationKpi.findPreviousRegistrationSession(session);
+    const prev = previousSession
+      ? await this._resolveInstitutionFeeRow(universityId, previousSession.id)
+      : null;
+
+    return {
+      session_id: session.id,
+      university_id: universityId,
+      number_of_candidates: this._growthCard(
+        current.number_of_candidates,
+        prev?.number_of_candidates
+      ),
+      total_expected_affiliation_fee: this._growthCard(
+        current.projected.affiliation_fee,
+        prev?.projected.affiliation_fee
+      ),
+      total_expected_examination_fee: this._growthCard(
+        current.projected.exam_fee,
+        prev?.projected.exam_fee
+      ),
+      total_amount_paid: this._growthCard(current.collected.total, prev?.collected.total),
+      compared_to: previousSession
+        ? { session_id: previousSession.id, label: previousSession.academic_year }
+        : null,
+    };
+  }
+
+  async _institutionFeesPayload(universityId, session, itemRef) {
+    if (!itemRef) throw httpError(422, 'payment_item is required');
+
+    const item = isUuid(itemRef)
+      ? await paymentItemModel.findById(itemRef)
+      : await paymentItemModel.findByCode(itemRef);
+    if (!item || !item.is_active) throw httpError(404, 'Payment item not found or inactive');
+
+    const current = await this._resolveInstitutionFeeRow(universityId, session.id);
+    if (!current) throw httpError(404, 'Institution not found');
+
+    const previousSession = await registrationKpi.findPreviousRegistrationSession(session);
+    const prev = previousSession
+      ? await this._resolveInstitutionFeeRow(universityId, previousSession.id)
+      : null;
+
+    const isAffiliation = item.fee_source === 'affiliation' || item.code === 'affiliation_fee';
+    const expectedKey = isAffiliation ? 'affiliation_fee' : 'exam_fee';
+    const collectedKey = isAffiliation ? 'affiliation_fee' : 'examination_fee';
+    const outstandingKey = isAffiliation ? 'affiliation_fee' : 'examination_fee';
+
+    const expected = current.projected[expectedKey];
+    const paid = current.collected[collectedKey];
+    const outstanding = current.outstanding_by_fee[outstandingKey];
+    const prevExpected = prev?.projected[expectedKey];
+    const prevPaid = prev?.collected[collectedKey];
+    const prevOutstanding = prev?.outstanding_by_fee?.[outstandingKey];
+
+    return {
+      session_id: session.id,
+      university_id: universityId,
+      payment_item: { id: item.id, code: item.code, name: item.name },
+      total_payment_count: this._growthCard(current.collected.payment_count, prev?.collected.payment_count),
+      total_expected: this._growthCard(expected, prevExpected),
+      paid: this._growthCard(paid, prevPaid),
+      outstanding: this._growthCard(outstanding, prevOutstanding),
+      compared_to: previousSession
+        ? { session_id: previousSession.id, label: previousSession.academic_year }
+        : null,
+    };
+  }
+
   async _resolveInstitutionItemFullFee(item, universityId, session) {
     if (item.fee_source === 'fixed') {
       return Number(item.fixed_amount) || 0;
@@ -452,77 +546,13 @@ class FinanceService {
 
   async institutionOverview(query, userId) {
     const { universityId, session } = await this._resolveInstitutionFinanceScope(query, userId);
-    const current = await this._resolveInstitutionFeeRow(universityId, session.id);
-    if (!current) throw httpError(404, 'Institution not found');
-
-    const previousSession = await registrationKpi.findPreviousRegistrationSession(session);
-    const prev = previousSession
-      ? await this._resolveInstitutionFeeRow(universityId, previousSession.id)
-      : null;
-
-    return {
-      session_id: session.id,
-      university_id: universityId,
-      number_of_candidates: this._growthCard(
-        current.number_of_candidates,
-        prev?.number_of_candidates
-      ),
-      total_expected_affiliation_fee: this._growthCard(
-        current.projected.affiliation_fee,
-        prev?.projected.affiliation_fee
-      ),
-      total_expected_examination_fee: this._growthCard(
-        current.projected.exam_fee,
-        prev?.projected.exam_fee
-      ),
-      total_amount_paid: this._growthCard(current.collected.total, prev?.collected.total),
-      compared_to: previousSession
-        ? { session_id: previousSession.id, label: previousSession.academic_year }
-        : null,
-    };
+    return this._institutionOverviewPayload(universityId, session);
   }
 
   async institutionFees(query, userId) {
     const { universityId, session } = await this._resolveInstitutionFinanceScope(query, userId);
     const itemRef = query.payment_item || query.payment_item_id;
-    if (!itemRef) throw httpError(422, 'payment_item is required');
-
-    const item = isUuid(itemRef)
-      ? await paymentItemModel.findById(itemRef)
-      : await paymentItemModel.findByCode(itemRef);
-    if (!item || !item.is_active) throw httpError(404, 'Payment item not found or inactive');
-
-    const current = await this._resolveInstitutionFeeRow(universityId, session.id);
-    if (!current) throw httpError(404, 'Institution not found');
-
-    const previousSession = await registrationKpi.findPreviousRegistrationSession(session);
-    const prev = previousSession
-      ? await this._resolveInstitutionFeeRow(universityId, previousSession.id)
-      : null;
-
-    const isAffiliation = item.fee_source === 'affiliation' || item.code === 'affiliation_fee';
-    const expectedKey = isAffiliation ? 'affiliation_fee' : 'exam_fee';
-    const collectedKey = isAffiliation ? 'affiliation_fee' : 'examination_fee';
-    const outstandingKey = isAffiliation ? 'affiliation_fee' : 'examination_fee';
-
-    const expected = current.projected[expectedKey];
-    const paid = current.collected[collectedKey];
-    const outstanding = current.outstanding_by_fee[outstandingKey];
-    const prevExpected = prev?.projected[expectedKey];
-    const prevPaid = prev?.collected[collectedKey];
-    const prevOutstanding = prev?.outstanding_by_fee?.[outstandingKey];
-
-    return {
-      session_id: session.id,
-      university_id: universityId,
-      payment_item: { id: item.id, code: item.code, name: item.name },
-      total_expected: this._growthCard(expected, prevExpected),
-      paid: this._growthCard(paid, prevPaid),
-      outstanding: this._growthCard(outstanding, prevOutstanding),
-      compared_to: previousSession
-        ? { session_id: previousSession.id, label: previousSession.academic_year }
-        : null,
-    };
+    return this._institutionFeesPayload(universityId, session, itemRef);
   }
 
   async institutionFeePreview(query, userId) {
@@ -919,6 +949,12 @@ class FinanceService {
 
   async listAdminPayments(query, userId) {
     await assertFinanceRole(userId);
+    if (query.university_id) {
+      if (!isUuid(query.university_id)) {
+        throw httpError(422, 'university_id must be a valid UUID');
+      }
+      return this.listFoundationInstitutionPayments(query.university_id, query, userId);
+    }
     const safePage = Math.max(1, parseInt(query.page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
@@ -1165,6 +1201,14 @@ class FinanceService {
       .sort((a, b) => b.exam_fee - a.exam_fee);
 
     let institutions = allInstitutions;
+    if (query.university_id) {
+      if (!isUuid(query.university_id)) {
+        throw httpError(422, 'university_id must be a valid UUID');
+      }
+      institutions = allInstitutions.filter(
+        (row) => String(row.institution_id) === String(query.university_id)
+      );
+    }
     const limitRaw = parseInt(query.limit, 10);
     if (Number.isFinite(limitRaw) && limitRaw > 0) {
       institutions = allInstitutions.slice(0, Math.min(limitRaw, 100));
@@ -1197,6 +1241,12 @@ class FinanceService {
     const safeLimit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
 
     let rows = await this._institutionFeeRows(sessionId);
+    if (query.university_id) {
+      if (!isUuid(query.university_id)) {
+        throw httpError(422, 'university_id must be a valid UUID');
+      }
+      rows = rows.filter((row) => String(row.institution_id) === String(query.university_id));
+    }
     const q = query.q ? String(query.q).trim().toLowerCase() : '';
     if (q) {
       rows = rows.filter(
@@ -1242,6 +1292,11 @@ class FinanceService {
    */
   async foundationOverview(query, userId) {
     await assertFinanceRole(userId);
+    if (query.university_id) {
+      const { universityId, session } = await this._resolveFoundationInstitutionScope(query, userId);
+      return this._institutionOverviewPayload(universityId, session);
+    }
+
     const session = await registrationKpi.resolveRegistrationSession(query.session_id || null);
     if (!session) throw httpError(404, 'No registration session found');
 
@@ -1278,6 +1333,16 @@ class FinanceService {
         ? { session_id: previousSession.id, label: previousSession.academic_year }
         : null,
     };
+  }
+
+  /**
+   * Foundation finance portal — per-institution fee tab KPI cards.
+   * Requires `university_id` + `payment_item` (e.g. affiliation_fee).
+   */
+  async foundationInstitutionFees(query, userId) {
+    const { universityId, session } = await this._resolveFoundationInstitutionScope(query, userId);
+    const itemRef = query.payment_item || query.payment_item_id;
+    return this._institutionFeesPayload(universityId, session, itemRef);
   }
 
   /**
@@ -1352,8 +1417,12 @@ class FinanceService {
   async paymentTrends(query, userId) {
     await assertFinanceRole(userId);
     const sessionId = query.session_id || null;
+    const universityId = query.university_id || null;
     if (sessionId && !isUuid(sessionId)) {
       throw httpError(422, 'session_id must be a valid UUID');
+    }
+    if (universityId && !isUuid(universityId)) {
+      throw httpError(422, 'university_id must be a valid UUID');
     }
     const y = parseInt(query.year, 10);
     const targetYear = Number.isFinite(y) ? y : new Date().getUTCFullYear();
@@ -1374,6 +1443,16 @@ class FinanceService {
           OR EXISTS (
             SELECT 1 FROM jupeb_registrations r
             WHERE r.id = p.registration_id AND r.session_id = $${params.length}
+          )
+        )`;
+      }
+      if (universityId) {
+        params.push(universityId);
+        where += ` AND (
+          p.jupeb_university_id = $${params.length}
+          OR EXISTS (
+            SELECT 1 FROM jupeb_registrations r
+            WHERE r.id = p.registration_id AND r.university_id = $${params.length}
           )
         )`;
       }
@@ -1400,6 +1479,7 @@ class FinanceService {
     return {
       year: targetYear,
       session_id: sessionId,
+      university_id: universityId,
       series: [
         { key: 'current', year: targetYear, points: await monthlyForYear(targetYear) },
         { key: 'previous', year: previousYear, points: await monthlyForYear(previousYear) },

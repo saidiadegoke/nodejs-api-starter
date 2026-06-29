@@ -16,7 +16,7 @@ const jupebStudent = jupebStudentMiddleware();
 
 const institutionFinanceRead = [
   requireAuth,
-  requirePermission('payments.view', 'payments.pay_fees'),
+  requirePermission('payments.view', 'payments.pay_fees', 'jupeb.finance.manage'),
 ];
 const institutionFinanceWrite = [
   requireAuth,
@@ -50,6 +50,7 @@ router.get(
 
 router.get('/payments', financeAdmin, FinanceController.listAdminPayments);
 router.get('/overview', financeAdmin, FinanceController.foundationOverview);
+router.get('/fees', financeAdmin, FinanceController.foundationInstitutionFees);
 router.get('/registrations/:registrationId/payment-summary', financeAdmin, FinanceController.paymentSummary);
 router.post('/registrations/:registrationId/reconcile', financeAdmin, FinanceController.reconcile);
 router.get('/reports/session/:sessionId', financeAdmin, FinanceController.sessionReport);
