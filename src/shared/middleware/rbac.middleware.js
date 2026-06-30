@@ -172,10 +172,10 @@ const requirePermission = (...permissionNames) => {
     }
 
     try {
-      // Check if user has any of the required permissions
-      const hasRequiredPermission = await Promise.any(
-        permissionNames.map(permName => hasPermission(req.user.user_id, permName))
-      ).catch(() => false);
+      const checks = await Promise.all(
+        permissionNames.map((permName) => hasPermission(req.user.user_id, permName))
+      );
+      const hasRequiredPermission = checks.some(Boolean);
 
       if (!hasRequiredPermission) {
         return sendError(

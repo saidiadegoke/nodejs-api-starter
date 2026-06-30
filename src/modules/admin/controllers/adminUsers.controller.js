@@ -3,22 +3,18 @@ const AuthModel = require('../../auth/models/auth.model');
 const UserUniversityModel = require('../../../shared/models/user-university.model');
 const universityModel = require('../../jupeb/models/university.model');
 const AdminUsersService = require('../services/adminUsers.service');
-const { resolveAdminRbacScope } = require('../utils/admin-rbac-scope');
+const rbacModel = require('../models/rbac.model');
+const { resolveAdminRbacScope, assertRoleAccessible } = require('../utils/admin-rbac-scope');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { CREATED, BAD_REQUEST, CONFLICT, UNPROCESSABLE_ENTITY, NOT_FOUND, INTERNAL_SERVER_ERROR } =
-  require('../../../shared/constants/statusCodes');
-
-const VALID_ROLES = [
-  'super_admin',
-  'admin',
-  'agent',
-  'user',
-  'registrar',
-  'program_director',
-  'institution_admin',
-  'financial_admin',
-  'student',
-];
+const {
+  CREATED,
+  BAD_REQUEST,
+  CONFLICT,
+  UNPROCESSABLE_ENTITY,
+  NOT_FOUND,
+  INTERNAL_SERVER_ERROR,
+  FORBIDDEN,
+} = require('../../../shared/constants/statusCodes');
 
 class AdminUsersController {
   static async getStats(req, res) {
@@ -44,7 +40,7 @@ class AdminUsersController {
    *   email?, phone?,         // at least one required
    *   password,               // min 8 chars
    *   first_name, last_name,
-   *   role,                   // one of VALID_ROLES
+   *   role,                   // roles.name — any active role row in the DB
    *   university_id?,          // jupeb_universities.id — optional; institution admins default to scope
    *   is_primary?: boolean,   // default true
    *   country_id?: int,       // for phone formatting
@@ -78,18 +74,28 @@ class AdminUsersController {
     if (!first_name || !last_name) {
       return sendError(res, 'first_name and last_name are required', UNPROCESSABLE_ENTITY);
     }
-    if (!role || !VALID_ROLES.includes(role)) {
-      return sendError(
-        res,
-        `Valid role is required (${VALID_ROLES.join(', ')})`,
-        UNPROCESSABLE_ENTITY
-      );
+    const roleName = role ? String(role).trim() : '';
+    if (!roleName) {
+      return sendError(res, 'role is required', UNPROCESSABLE_ENTITY);
     }
 
     try {
       const scope = req.user && req.user.user_id
         ? await resolveAdminRbacScope(req.user.user_id)
         : { mode: 'full' };
+
+      const roleRow = await rbacModel.findRoleByName(roleName);
+      if (!roleRow) {
+        return sendError(res, 'Role not found', NOT_FOUND);
+      }
+      if (roleRow.status !== 'active') {
+        return sendError(res, 'Role is inactive and cannot be assigned', UNPROCESSABLE_ENTITY);
+      }
+      try {
+        assertRoleAccessible(roleRow, scope);
+      } catch (accessErr) {
+        return sendError(res, accessErr.message, accessErr.status || FORBIDDEN);
+      }
 
       let university_id = bodyUniversityId || null;
       if (!university_id && scope.mode === 'institution') {
@@ -132,7 +138,7 @@ class AdminUsersController {
         password,
         first_name,
         last_name,
-        role,
+        role: roleRow.name,
       });
 
       if (!university_id) {
@@ -145,7 +151,7 @@ class AdminUsersController {
               phone: user.phone,
               first_name,
               last_name,
-              role,
+              role: roleRow.name,
               status: user.status,
               created_at: user.created_at,
             },
@@ -164,7 +170,7 @@ class AdminUsersController {
           {
             userId: user.id,
             universityId: university_id,
-            role,
+            role: roleRow.name,
             isPrimary: !!is_primary,
             createdBy: req.user && req.user.user_id,
           },
@@ -188,7 +194,7 @@ class AdminUsersController {
               phone: user.phone,
               first_name,
               last_name,
-              role,
+              role: roleRow.name,
               status: user.status,
               created_at: user.created_at,
             },
@@ -220,7 +226,7 @@ class AdminUsersController {
       if (err.code === '23505') {
         return sendError(res, 'User with this email or phone already exists', CONFLICT);
       }
-      return sendError(res, err.message || 'Failed to create user', BAD_REQUEST);
+      return sendError(res, err.message || 'Failed to create user', err.status || BAD_REQUEST);
     }
   }
 }
