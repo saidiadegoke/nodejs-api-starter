@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: 'JUPEB 002 — Registration sessions'
-  version: '1.1.0'
+  version: '1.2.0'
   description: |
     Academic-year registration windows, fees, cutoff dates, and lifecycle
     (`docs/002-jupeb-sessions-technical-design.md`). Base path: **`/sessions`**.
@@ -82,6 +82,64 @@ components:
         deltas:
           type: object
           description: Present when ?previous_session_id is supplied.
+          additionalProperties: { $ref: '#/components/schemas/SessionStatsDelta' }
+    SessionContextSummary:
+      type: object
+      nullable: true
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string, example: '2026/2027' }
+        status: { type: string, enum: [draft, open, closed, archived] }
+        opens_at: { type: string, format: date-time, nullable: true }
+        closes_at: { type: string, format: date-time, nullable: true }
+    SessionContext:
+      type: object
+      properties:
+        active_session:
+          $ref: '#/components/schemas/SessionContextSummary'
+          description: Global open session (null if none).
+        viewing_session:
+          $ref: '#/components/schemas/SessionContextSummary'
+          description: User viewing preference (null when unset).
+        effective_session:
+          $ref: '#/components/schemas/SessionContextSummary'
+          description: Resolved read scope when session_id is omitted.
+    SessionMetrics:
+      type: object
+      properties:
+        exams:
+          type: integer
+          nullable: true
+          description: Reserved for future examination scheduling; currently null.
+        institutions:
+          type: integer
+          description: Distinct universities with registrations in the session.
+        total_candidates:
+          type: integer
+          description: All registrations in the session (includes withdrawn).
+        current_candidates_enrolled:
+          type: integer
+          description: Approved registrations in the session.
+        candidates_with_biometrics:
+          type: integer
+          description: Non-withdrawn registrations with at least one active biometric capture.
+    SessionMetricsResponse:
+      type: object
+      properties:
+        session:
+          $ref: '#/components/schemas/SessionContextSummary'
+          nullable: true
+        metrics:
+          $ref: '#/components/schemas/SessionMetrics'
+        compared_to:
+          type: object
+          nullable: true
+          properties:
+            session_id: { type: string, format: uuid }
+            label: { type: string }
+        deltas:
+          type: object
+          nullable: true
           additionalProperties: { $ref: '#/components/schemas/SessionStatsDelta' }
 
 tags:
@@ -177,6 +235,106 @@ paths:
             text/csv:
               schema: { type: string }
         '403': { description: Forbidden }
+
+  /sessions/context:
+    get:
+      tags: [Sessions]
+      summary: Active, viewing, and effective session context
+      description: |
+        Returns three session concepts for the authenticated user:
+        `active_session` is the global `status=open` session;
+        `viewing_session` is the per-user read preference (or null);
+        `effective_session` is what read APIs use when `session_id` is omitted
+        (`viewing_session ?? active_session`).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Session context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SessionContext' }
+        '401': { description: Unauthorized }
+
+  /sessions/metrics:
+    get:
+      tags: [Sessions]
+      summary: Session History KPI cards (effective session)
+      description: |
+        Returns the five header metrics on the Session History page for the
+        caller's **effective** viewing session. Omit `session_id` to use the
+        per-user Switch preference (or global open session). Pass `session_id`
+        for a one-off override.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: Optional override; otherwise uses effective viewing session.
+        - name: previous_session_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: When set, response includes `compared_to` and per-metric `deltas`.
+      responses:
+        '200':
+          description: Session-scoped KPI cards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SessionMetricsResponse' }
+        '401': { description: Unauthorized }
+        '404': { description: Session not found (explicit session_id) }
+        '422': { description: Invalid UUID }
+
+  /sessions/viewing:
+    put:
+      tags: [Sessions]
+      summary: Set per-user viewing session (Switch)
+      description: |
+        Persists a read-only viewing preference. Does **not** open or close
+        the global session — use `POST /sessions/{sessionId}/open` for that.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Updated context (`SessionContext`)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SessionContext' }
+        '404': { description: Session not found }
+        '422': { description: Invalid session_id }
+    delete:
+      tags: [Sessions]
+      summary: Clear viewing session (use active session for reads)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Context after reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SessionContext' }
 
   /sessions/{sessionId}:
     get:

@@ -7,6 +7,10 @@ const sessionWrite = [requireAuth, requirePermission('sessions.update')];
 const superAdminOnly = [requireAuth, requirePermission('system.admin')];
 
 router.get('/', sessionRead, SessionController.list);
+router.get('/context', sessionRead, SessionController.getContext);
+router.get('/metrics', sessionRead, SessionController.metrics);
+router.put('/viewing', sessionRead, SessionController.setViewing);
+router.delete('/viewing', sessionRead, SessionController.clearViewing);
 router.get('/export', sessionWrite, SessionController.exportCsv);
 router.post('/', sessionWrite, SessionController.create);
 

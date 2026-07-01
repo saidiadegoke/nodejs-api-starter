@@ -1,6 +1,10 @@
 const sessionModel = require('../models/session.model');
 const pool = require('../../../db/pool');
 const registrationService = require('./registration.service');
+const sessionContext = require('./session-context.service');
+const {
+  kpiCounts,
+} = require('./registration-kpi.service');
 const { validateYearShortForAcademicYear, canTransitionStatus } = require('../utils/session-validation');
 
 function isUuid(value) {
@@ -344,6 +348,82 @@ class SessionService {
    */
   async finalizeAllClosed(userId) {
     return registrationService.finalizeAllClosedSessions(userId);
+  }
+
+  async _institutionsInSession(sessionId) {
+    const r = await pool.query(
+      `SELECT COUNT(DISTINCT university_id)::int AS c
+         FROM jupeb_registrations
+        WHERE session_id = $1 AND university_id IS NOT NULL`,
+      [sessionId]
+    );
+    return r.rows[0].c || 0;
+  }
+
+  async _sessionMetrics(sessionId) {
+    const kpi = await kpiCounts(null, sessionId);
+    return {
+      exams: null,
+      institutions: await this._institutionsInSession(sessionId),
+      total_candidates: kpi.total,
+      current_candidates_enrolled: kpi.approved,
+      candidates_with_biometrics: kpi.biometric,
+    };
+  }
+
+  /**
+   * Session History header KPI cards — scoped to the caller's effective
+   * viewing session unless `session_id` is passed explicitly.
+   */
+  async metrics(userId, query = {}) {
+    const session = await sessionContext.resolveEffectiveSession(
+      userId,
+      query.session_id || null
+    );
+    if (!session) {
+      return {
+        session: null,
+        metrics: {
+          exams: null,
+          institutions: 0,
+          total_candidates: 0,
+          current_candidates_enrolled: 0,
+          candidates_with_biometrics: 0,
+        },
+      };
+    }
+
+    const metrics = await this._sessionMetrics(session.id);
+    const payload = {
+      session: {
+        id: session.id,
+        label: session.academic_year,
+        status: session.status,
+        opens_at: session.opens_at || null,
+        closes_at: session.closes_at || null,
+      },
+      metrics,
+    };
+
+    const previousId = query.previous_session_id;
+    if (previousId) {
+      if (!isUuid(previousId)) throw httpError(422, 'previous_session_id must be a valid UUID');
+      await this.getById(previousId);
+      const previousMetrics = await this._sessionMetrics(previousId);
+      const prevRow = await sessionModel.findById(previousId);
+      payload.compared_to = {
+        session_id: previousId,
+        label: prevRow?.academic_year || null,
+      };
+      const deltas = {};
+      for (const key of Object.keys(metrics)) {
+        if (key === 'exams') continue;
+        deltas[key] = computeDelta(metrics[key], previousMetrics[key]);
+      }
+      payload.deltas = deltas;
+    }
+
+    return payload;
   }
 
   async _statsRaw(id) {

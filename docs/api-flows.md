@@ -1101,6 +1101,62 @@ profile_update_cutoff_at ≤ ca_cutoff_at`. `max_ca_score` is bounded
 | `GET` | `/sessions/{id}/stats` | KPIs (see below) |
 | `GET` | `/sessions/{id}/stats?previous_session_id={uuid}` | KPIs + per-metric `delta_pct` and direction (`up`/`down`/`flat`) |
 | `GET` | `/sessions/export` | CSV stream of all sessions, registrar-only |
+| `GET` | `/sessions/context` | `active_session`, `viewing_session`, `effective_session` for the caller |
+| `GET` | `/sessions/metrics` | Session History KPI cards for the **effective** session (optional `?session_id=` override) |
+| `PUT` | `/sessions/viewing` | Body `{ session_id }` — per-user **Switch** (read context only; never opens/closes globally) |
+| `DELETE` | `/sessions/viewing` | Clear viewing preference; reads fall back to `active_session` |
+
+**Active vs effective session:** `active_session` is the single global `status=open`
+row. `effective_session` is what dashboard, finance, and registration **read**
+endpoints use when `?session_id` is omitted: `viewing_session ?? active_session`.
+Explicit `?session_id=` always wins. Writes (registration create, checkout,
+`POST .../open|close`) ignore viewing preference.
+
+`GET /sessions/context` `res 200`
+```json
+{
+  "success": true,
+  "data": {
+    "active_session": { "id": "uuid", "label": "2026/2027", "status": "open", "opens_at": "...", "closes_at": "..." },
+    "viewing_session": { "id": "uuid", "label": "2025/2026", "status": "closed" },
+    "effective_session": { "id": "uuid", "label": "2025/2026", "status": "closed" }
+  }
+}
+```
+
+`GET /dashboard/scope` and `GET /dashboard/quick-stats` also expose
+`active_session` / `effective_session` (and `viewing_session` on scope). The
+legacy `session` field on scope remains an alias for `effective_session`.
+
+`GET /sessions/metrics` powers the Session History header cards. Uses the
+caller's effective session when `session_id` is omitted (after Switch).
+`res 200`:
+```json
+{
+  "success": true,
+  "data": {
+    "session": { "id": "uuid", "label": "2027/2028", "status": "closed", "opens_at": "...", "closes_at": "..." },
+    "metrics": {
+      "exams": null,
+      "institutions": 4,
+      "total_candidates": 256,
+      "current_candidates_enrolled": 200,
+      "candidates_with_biometrics": 48
+    }
+  }
+}
+```
+
+| Session History KPI card | `metrics` field |
+|---|---|
+| Exams | `exams` (`null` until examination scheduling is modeled) |
+| Institutions | `institutions` — distinct universities with registrations in the session |
+| Total Candidates | `total_candidates` — all registrations (includes withdrawn) |
+| Current Candidate Enrolled | `current_candidates_enrolled` — `approved` count |
+| Current Candidates with Biometrics | `candidates_with_biometrics` — non-withdrawn with active capture |
+
+Optional `?previous_session_id=` adds `compared_to` + per-metric `deltas`
+(same shape as `GET /sessions/{id}/stats`).
 
 `GET /sessions/{id}/stats` `res 200`
 ```json
@@ -1998,8 +2054,8 @@ program_director / institution_admin) and accept optional
 | Donut · Institution Distribution by type | `GET /dashboard/institution-distribution` | `total`, `slices[].{type, count, pct}` |
 | Card · Registration Timeline (opens/now/closes) | `GET /dashboard/session-timeline?session_id=…` | `opens_at`, `closes_at`, `now`, `within_window`, cutoffs |
 | Table · Recent Registrations | `GET /dashboard/recent-registrations?session_id=…&limit=5` | full per-row enrichment |
-| Sidebar · Quick Statistics | `GET /dashboard/quick-stats` | `total_students`, `institutions_count`, `active_session` |
-| Header chip · Active session | `GET /dashboard/scope` | `session.{id, label, status}` |
+| Sidebar · Quick Statistics | `GET /dashboard/quick-stats` | `total_students`, `institutions_count`, `active_session`, `effective_session` |
+| Header chip · Active session | `GET /dashboard/scope` | `session` (alias for `effective_session`), `active_session`, `viewing_session`, `effective_session` |
 
 ### Sample requests
 
@@ -2346,6 +2402,9 @@ max 100) for pagination and return a
 | `GET /catalog/subjects` | Subjects | `code`, `name`, `description` | `status` |
 | `GET /catalog/subject-combinations` | Subject Combinations | `code`, `title` | `status`, `university_id` |
 | `GET /sessions` | Session History / Manage Session | `academic_year`, `year_short` | `status` |
+| `GET /sessions/metrics` | Session History · KPI header cards | — | Uses effective session; optional `session_id` |
+| `PUT /sessions/viewing` | Session History · Switch | — | Body `{ session_id }` — per-user read context only |
+| `GET /sessions/context` | Session History · sidebar / scope chip | — | `active_session`, `viewing_session`, `effective_session` |
 
 **Status vs bucket.** Each row carries both the raw `status` (e.g.
 `code_issued`, `pending_documents`, `approved`) **and** a coarse
