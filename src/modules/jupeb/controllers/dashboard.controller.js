@@ -126,7 +126,10 @@ class DashboardController {
   // for the Registration Management header card.
   static async getSessionTimeline(req, res) {
     try {
-      const data = await dashboardService.getSessionTimeline(pickParams(req));
+      const data = await dashboardService.getSessionTimeline(
+        pickParams(req),
+        req.user.user_id
+      );
       return sendSuccess(res, data, 'Session timeline');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

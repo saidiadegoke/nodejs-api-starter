@@ -19,6 +19,7 @@ const {
 const { emitRegistrationApproved } = require('./registration-events.service');
 const jupebMailer = require('./jupeb-mailer.service');
 const registrationKpi = require('./registration-kpi.service');
+const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
 
 function httpError(status, message) {
@@ -944,9 +945,10 @@ class RegistrationService {
     if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
+    const effectiveSession = await sessionContext.resolveEffectiveSession(userId, session_id || null);
     const filters = {
       university_id: scopedUniversityId,
-      session_id: session_id || null,
+      session_id: session_id || effectiveSession?.id || null,
       status: status || null,
       bucket: bucket || null,
       q: q || null,
@@ -979,7 +981,7 @@ class RegistrationService {
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
 
-    const currentSession = await registrationKpi.resolveRegistrationSession(session_id || null);
+    const currentSession = await sessionContext.resolveEffectiveSession(userId, session_id || null);
     if (!currentSession) {
       const emptyGrowth = {
         total_registered: { value: 0, delta_pct: null, trend: null },
@@ -1032,8 +1034,9 @@ class RegistrationService {
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
     const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 12));
+    const effectiveSession = await sessionContext.resolveEffectiveSession(userId, session_id || null);
     return registrationModel.byUniversity({
-      session_id: session_id || null,
+      session_id: session_id || effectiveSession?.id || null,
       university_id: scopedUniversityId,
       limit: safeLimit,
     });
@@ -1051,9 +1054,10 @@ class RegistrationService {
     if (university_id && !isUuid(university_id)) throw httpError(422, 'university_id must be a valid UUID');
     if (session_id && !isUuid(session_id)) throw httpError(422, 'session_id must be a valid UUID');
     const scopedUniversityId = await effectiveInstitutionListUniversityId(userId, university_id || null);
+    const effectiveSession = await sessionContext.resolveEffectiveSession(userId, session_id || null);
     const filters = {
       university_id: scopedUniversityId,
-      session_id: session_id || null,
+      session_id: session_id || effectiveSession?.id || null,
       status: status || null,
       bucket: bucket || null,
       q: q || null,

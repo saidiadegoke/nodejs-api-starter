@@ -1,4 +1,5 @@
 const sessionService = require('../services/session.service');
+const sessionContext = require('../services/session-context.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const {
   CREATED,
@@ -14,6 +15,47 @@ class SessionController {
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="sessions.csv"');
       res.status(200).send(csv);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async getContext(req, res) {
+    try {
+      const data = await sessionContext.getSessionContext(req.user.user_id);
+      return sendSuccess(res, data, 'Session context');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async setViewing(req, res) {
+    try {
+      const session = await sessionContext.setUserViewingSession(
+        req.user.user_id,
+        req.body && req.body.session_id
+      );
+      const data = await sessionContext.getSessionContext(req.user.user_id);
+      return sendSuccess(res, data, `Viewing session set to ${session.academic_year}`);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async clearViewing(req, res) {
+    try {
+      await sessionContext.clearUserViewingSession(req.user.user_id);
+      const data = await sessionContext.getSessionContext(req.user.user_id);
+      return sendSuccess(res, data, 'Viewing session reset to active session');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async metrics(req, res) {
+    try {
+      const data = await sessionService.metrics(req.user.user_id, req.query);
+      return sendSuccess(res, data, 'Session metrics');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

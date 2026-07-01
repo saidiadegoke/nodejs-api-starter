@@ -5,9 +5,14 @@ const {
   PENDING_STATUSES,
   kpiCounts,
   deltaPct,
-  resolveRegistrationSession,
+  growthTrend,
   findPreviousRegistrationSession,
 } = require('./registration-kpi.service');
+const {
+  getActiveSession,
+  resolveEffectiveSession,
+  getSessionContext,
+} = require('./session-context.service');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -49,7 +54,8 @@ async function resolveUniversityId(userId, rawUniversityId) {
   return effectiveInstitutionListUniversityId(userId, rawUniversityId || null);
 }
 
-const resolveSession = resolveRegistrationSession;
+const resolveSessionForUser = (userId, querySessionId) =>
+  resolveEffectiveSession(userId, querySessionId || null);
 const findPreviousSession = findPreviousRegistrationSession;
 
 function statusBucket(status) {
@@ -112,7 +118,8 @@ async function subjectCatalogCounts() {
 class DashboardService {
   async getScope({ universityId, sessionId }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
-    const session = await resolveSession(sessionId);
+    const session = await resolveSessionForUser(userId, sessionId);
+    const context = await getSessionContext(userId);
     let university = null;
     if (scopedUniversityId) {
       const r = await pool.query(
@@ -121,17 +128,21 @@ class DashboardService {
       );
       university = r.rows[0] || null;
     }
+    const effective = session
+      ? { id: session.id, label: session.academic_year, status: session.status }
+      : context.effective_session;
     return {
       university,
-      session: session
-        ? { id: session.id, label: session.academic_year, status: session.status }
-        : null,
+      session: effective,
+      active_session: context.active_session,
+      viewing_session: context.viewing_session,
+      effective_session: effective,
     };
   }
 
   async getStatCards({ universityId, sessionId }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
-    const currentSession = await resolveSession(sessionId);
+    const currentSession = await resolveSessionForUser(userId, sessionId);
     const previousSession = await findPreviousSession(currentSession);
 
     const current = await kpiCounts(scopedUniversityId, currentSession?.id || null);
@@ -172,7 +183,8 @@ class DashboardService {
 
   async getQuickStats({ universityId }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
-    const activeSession = await resolveSession(null);
+    const activeSession = await getActiveSession();
+    const effectiveSession = await resolveSessionForUser(userId, null);
 
     const params = [];
     let q = `SELECT COUNT(DISTINCT user_id)::int AS total
@@ -184,12 +196,13 @@ class DashboardService {
     }
     const r = await pool.query(q, params);
     const inst = await institutionsCount();
+    const toBrief = (s) =>
+      s ? { id: s.id, label: s.academic_year, status: s.status } : null;
     return {
       total_students: r.rows[0].total,
       institutions_count: inst,
-      active_session: activeSession
-        ? { id: activeSession.id, label: activeSession.academic_year, status: activeSession.status }
-        : null,
+      active_session: toBrief(activeSession),
+      effective_session: toBrief(effectiveSession),
     };
   }
 
@@ -258,7 +271,7 @@ class DashboardService {
   async getSubjectCombinationDistribution({ universityId, sessionId }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
     // Scope to one session — defaults to the open / latest session.
-    const session = await resolveSession(sessionId);
+    const session = await resolveSessionForUser(userId, sessionId);
     if (!session) return { session_id: null, total: 0, slices: [] };
 
     const params = [session.id];
@@ -303,9 +316,9 @@ class DashboardService {
    * the client can render the progress indicator without doing its own
    * clock arithmetic.
    */
-  async getSessionTimeline({ sessionId }) {
+  async getSessionTimeline({ sessionId }, userId) {
     assertUuid(sessionId, 'session_id');
-    const session = await resolveSession(sessionId);
+    const session = await resolveSessionForUser(userId, sessionId);
     if (!session) return null;
     const r = await pool.query(
       `SELECT id, academic_year, year_short, status, opens_at, closes_at,
@@ -337,6 +350,7 @@ class DashboardService {
   async getStudentsStatus({ universityId, sessionId }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
     assertUuid(sessionId, 'session_id');
+    const session = await resolveSessionForUser(userId, sessionId);
 
     const params = [];
     const filters = [];
@@ -345,9 +359,9 @@ class DashboardService {
       filters.push(`university_id = $${i++}`);
       params.push(scopedUniversityId);
     }
-    if (sessionId) {
+    if (session) {
       filters.push(`session_id = $${i++}`);
-      params.push(sessionId);
+      params.push(session.id);
     }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     params.push(PENDING_STATUSES);
@@ -366,9 +380,7 @@ class DashboardService {
   async getRegistrationTrends({ universityId, sessionId, year }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
 
-    // Optional per-session scoping. resolveSession validates the UUID and
-    // 404s on an unknown id.
-    const session = sessionId ? await resolveSession(sessionId) : null;
+    const session = await resolveSessionForUser(userId, sessionId);
 
     // ── Session-scoped: a single series spanning ONLY the months inside
     // the session's window (opens_at → closes_at). The window can cross
@@ -449,7 +461,7 @@ class DashboardService {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
     // Scope to one session — defaults to the open / latest session so the
     // chart shows the *current* intake, not a sum across every session.
-    const session = await resolveSession(sessionId);
+    const session = await resolveSessionForUser(userId, sessionId);
     if (!session) return [];
     const lim = Math.min(20, Math.max(1, parseInt(limit, 10) || 6));
 
@@ -497,7 +509,7 @@ class DashboardService {
    */
   async getEnrollmentBySubject({ universityId, sessionId, limit }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
-    const session = await resolveSession(sessionId);
+    const session = await resolveSessionForUser(userId, sessionId);
     if (!session) return [];
 
     const params = [session.id];
@@ -541,6 +553,7 @@ class DashboardService {
   async getRecentRegistrations({ universityId, sessionId, limit }, userId) {
     const scopedUniversityId = await resolveUniversityId(userId, universityId);
     assertUuid(sessionId, 'session_id');
+    const session = await resolveSessionForUser(userId, sessionId);
     const lim = Math.min(50, Math.max(1, parseInt(limit, 10) || 5));
 
     const params = [];
@@ -550,9 +563,9 @@ class DashboardService {
       filters.push(`r.university_id = $${i++}`);
       params.push(scopedUniversityId);
     }
-    if (sessionId) {
+    if (session) {
       filters.push(`r.session_id = $${i++}`);
-      params.push(sessionId);
+      params.push(session.id);
     }
     params.push(lim);
     const result = await pool.query(

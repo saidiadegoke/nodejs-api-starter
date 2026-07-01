@@ -13,6 +13,7 @@ const {
   effectiveInstitutionListUniversityId,
 } = require('../utils/institution-scope');
 const registrationKpi = require('./registration-kpi.service');
+const sessionContext = require('./session-context.service');
 const universityModel = require('../models/university.model');
 const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
 
@@ -292,7 +293,7 @@ class FinanceService {
     });
   }
 
-  async _resolveInstitutionFinanceScope(query, userId) {
+  async _resolveInstitutionFinanceScope(query, userId, { useViewingContext = true } = {}) {
     await assertInstitutionFinanceAccess(userId);
     const { session_id, university_id } = query || {};
     if (university_id && !isUuid(university_id)) {
@@ -308,7 +309,9 @@ class FinanceService {
     if (!scopedUniversityId) {
       throw httpError(422, 'university_id is required');
     }
-    const sessionMeta = await registrationKpi.resolveRegistrationSession(session_id || null);
+    const sessionMeta = useViewingContext
+      ? await sessionContext.resolveEffectiveSession(userId, session_id || null)
+      : await registrationKpi.resolveRegistrationSession(session_id || null);
     if (!sessionMeta) throw httpError(404, 'No registration session found');
     const session = await sessionModel.findById(sessionMeta.id);
     if (!session) throw httpError(404, 'Session not found');
@@ -329,7 +332,7 @@ class FinanceService {
     }
     const uni = await universityModel.findById(university_id);
     if (!uni) throw httpError(404, 'Institution not found');
-    const sessionMeta = await registrationKpi.resolveRegistrationSession(session_id || null);
+    const sessionMeta = await sessionContext.resolveEffectiveSession(userId, session_id || null);
     if (!sessionMeta) throw httpError(404, 'No registration session found');
     const session = await sessionModel.findById(sessionMeta.id);
     if (!session) throw httpError(404, 'Session not found');
@@ -586,7 +589,9 @@ class FinanceService {
       session_id: body && body.session_id,
       university_id: body && body.university_id,
     };
-    const { universityId, session } = await this._resolveInstitutionFinanceScope(scopeQuery, userId);
+    const { universityId, session } = await this._resolveInstitutionFinanceScope(scopeQuery, userId, {
+      useViewingContext: false,
+    });
 
     if (session.status === 'closed' || session.status === 'archived') {
       throw httpError(422, 'Checkout is not available for a closed or archived session');
@@ -961,10 +966,14 @@ class FinanceService {
     if (query.session_id && !isUuid(query.session_id)) {
       throw httpError(422, 'session_id must be a valid UUID');
     }
+    const effectiveSession = await sessionContext.resolveEffectiveSession(
+      userId,
+      query.session_id || null
+    );
     const { rows, total } = await paymentModel.findJupebLinkedWithRegistration({
       limit: safeLimit,
       offset,
-      session_id: query.session_id || null,
+      session_id: effectiveSession?.id || null,
     });
     const enriched = rows.map((p) => ({
       ...p,
@@ -1297,7 +1306,7 @@ class FinanceService {
       return this._institutionOverviewPayload(universityId, session);
     }
 
-    const session = await registrationKpi.resolveRegistrationSession(query.session_id || null);
+    const session = await sessionContext.resolveEffectiveSession(userId, query.session_id || null);
     if (!session) throw httpError(404, 'No registration session found');
 
     const rows = await this._institutionFeeRows(session.id);
@@ -1355,7 +1364,7 @@ class FinanceService {
     const uni = await universityModel.findById(universityId);
     if (!uni) throw httpError(404, 'Institution not found');
 
-    const session = await registrationKpi.resolveRegistrationSession(query.session_id || null);
+    const session = await sessionContext.resolveEffectiveSession(userId, query.session_id || null);
     if (!session) throw httpError(404, 'No registration session found');
 
     const safePage = Math.max(1, parseInt(query.page, 10) || 1);
