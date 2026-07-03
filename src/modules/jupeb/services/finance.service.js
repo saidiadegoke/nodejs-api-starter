@@ -406,6 +406,10 @@ class FinanceService {
       total_expected: this._growthCard(expected, prevExpected),
       paid: this._growthCard(paid, prevPaid),
       outstanding: this._growthCard(outstanding, prevOutstanding),
+      // UI aliases for Session History / institution fee tabs.
+      total_expected_payment: this._growthCard(expected, prevExpected),
+      fee_paid: this._growthCard(paid, prevPaid),
+      outstanding_fees: this._growthCard(outstanding, prevOutstanding),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year }
         : null,
@@ -1352,6 +1356,16 @@ class FinanceService {
     const { universityId, session } = await this._resolveFoundationInstitutionScope(query, userId);
     const itemRef = query.payment_item || query.payment_item_id;
     return this._institutionFeesPayload(universityId, session, itemRef);
+  }
+
+  /**
+   * Foundation admin — institution fee KPI cards (path param variant).
+   */
+  async foundationInstitutionFeesByUniversity(universityId, query, userId) {
+    return this.foundationInstitutionFees(
+      { ...query, university_id: universityId },
+      userId
+    );
   }
 
   /**

@@ -226,6 +226,35 @@ paths:
         '200': { description: Paginated }
         '403': { description: Forbidden }
 
+  /finance/fees:
+    get:
+      tags: [Finance — admin]
+      summary: Per-institution fee KPI cards (query param variant)
+      description: |
+        Three metric cards for an institution fee tab: total expected, paid,
+        and outstanding. Requires `university_id` + `payment_item`
+        (`affiliation_fee` or `examination_fee`). Omits `session_id` to use the
+        caller's effective viewing session.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: university_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: payment_item
+          in: query
+          required: true
+          schema: { type: string, example: examination_fee }
+      responses:
+        '200':
+          description: |
+            `total_expected_payment`, `fee_paid`, `outstanding_fees` growth cards
+            (aliases of `total_expected`, `paid`, `outstanding`).
+
   /finance/overview:
     get:
       tags: [Finance — admin]
@@ -297,6 +326,30 @@ paths:
           schema: { type: integer }
       responses:
         '200': { description: Paginated rows with jupeb_prefix, email, status }
+
+  /finance/analytics/institutions/{universityId}/fees:
+    get:
+      tags: [Finance — admin]
+      summary: Per-institution fee KPI cards (path param variant)
+      description: |
+        Same payload as `GET /finance/fees` — powers the three header cards on
+        the institution payment detail page (Affiliation / Examination tabs).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: universityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: payment_item
+          in: query
+          required: true
+          schema: { type: string, example: examination_fee }
+      responses:
+        '200': { description: Fee KPI cards for the institution }
 
   /finance/analytics/institutions/{universityId}/payments:
     get:

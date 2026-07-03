@@ -5,6 +5,54 @@ const webSocketService = require('../../../shared/services/websocket.service');
 const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
 const universityModel = require('../../jupeb/models/university.model');
 
+function formatRoleLabel(roleName) {
+  if (!roleName) return null;
+  return roleName
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function withPersonalInfoFields(user, roles) {
+  const fullName =
+    user.display_name ||
+    [user.first_name, user.last_name].filter(Boolean).join(' ').trim() ||
+    null;
+  return {
+    ...user,
+    full_name: fullName,
+    professional_title: user.title || null,
+    position: formatRoleLabel(roles[0]) || null,
+  };
+}
+
+const PROFILE_SELECT = `
+  u.id as user_id,
+  u.email,
+  u.phone,
+  u.email_verified,
+  u.phone_verified,
+  u.status as account_status,
+  u.created_at,
+  u.updated_at,
+  p.first_name,
+  p.last_name,
+  p.display_name,
+  p.title,
+  p.profile_photo_url as profile_photo,
+  p.bio,
+  p.date_of_birth,
+  p.gender,
+  p.country_id,
+  c.name as country_name,
+  c.iso_code_2 as country_code,
+  p.state_province,
+  p.educational_level,
+  p.employment_status,
+  p.profile_completed,
+  p.jupeb_university_id
+`;
+
 class UserProfileController {
   /**
    * Get current user profile
@@ -14,30 +62,7 @@ class UserProfileController {
       const userId = req.user.user_id;
 
       const result = await pool.query(
-        `SELECT
-          u.id as user_id,
-          u.email,
-          u.phone,
-          u.email_verified,
-          u.phone_verified,
-          u.status as account_status,
-          u.created_at,
-          u.updated_at,
-          p.first_name,
-          p.last_name,
-          p.display_name,
-          p.profile_photo_url as profile_photo,
-          p.bio,
-          p.date_of_birth,
-          p.gender,
-          p.country_id,
-          c.name as country_name,
-          c.iso_code_2 as country_code,
-          p.state_province,
-          p.educational_level,
-          p.employment_status,
-          p.profile_completed,
-          p.jupeb_university_id
+        `SELECT ${PROFILE_SELECT}
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         LEFT JOIN countries c ON p.country_id = c.id
@@ -69,7 +94,7 @@ class UserProfileController {
         university = await universityModel.resolveForUser(userId);
       } catch { /* jupeb tables absent — non-fatal */ }
 
-      sendSuccess(res, {
+      sendSuccess(res, withPersonalInfoFields({
         ...user,
         role: roles[0] || 'user',
         roles: roles,
@@ -83,7 +108,7 @@ class UserProfileController {
           sms_notifications: true,
           email_notifications: true
         }
-      }, 'Profile retrieved successfully', OK);
+      }, roles), 'Profile retrieved successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
     }
@@ -99,6 +124,10 @@ class UserProfileController {
         first_name,
         last_name,
         display_name,
+        full_name,
+        title,
+        professional_title,
+        phone,
         email,
         profile_photo_url,
         bio,
@@ -109,6 +138,11 @@ class UserProfileController {
         educational_level,
         employment_status
       } = req.body;
+
+      const resolvedDisplayName =
+        display_name !== undefined ? display_name : full_name !== undefined ? full_name : undefined;
+      const resolvedTitle =
+        title !== undefined ? title : professional_title !== undefined ? professional_title : undefined;
 
       // Check if email is being changed and if it's already taken
       if (email) {
@@ -125,6 +159,13 @@ class UserProfileController {
         await pool.query(
           'UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2',
           [email, userId]
+        );
+      }
+
+      if (phone !== undefined) {
+        await pool.query(
+          'UPDATE users SET phone = $1, updated_at = NOW() WHERE id = $2',
+          [phone === '' ? null : phone, userId]
         );
       }
 
@@ -145,9 +186,15 @@ class UserProfileController {
         paramIndex++;
       }
 
-      if (display_name !== undefined) {
+      if (resolvedDisplayName !== undefined) {
         updates.push(`display_name = $${paramIndex}`);
-        params.push(display_name);
+        params.push(resolvedDisplayName === '' ? null : resolvedDisplayName);
+        paramIndex++;
+      }
+
+      if (resolvedTitle !== undefined) {
+        updates.push(`title = $${paramIndex}`);
+        params.push(resolvedTitle === '' ? null : resolvedTitle);
         paramIndex++;
       }
 
@@ -200,6 +247,11 @@ class UserProfileController {
       }
 
       if (updates.length > 0) {
+        await pool.query(
+          `INSERT INTO profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
+          [userId]
+        );
+
         // Check if profile should be marked as completed
         // Required fields for completion: date_of_birth, gender, country_id, educational_level, employment_status
         const currentProfile = await pool.query(
@@ -242,30 +294,7 @@ class UserProfileController {
 
       // Get updated user (same format as getMe)
       const result = await pool.query(
-        `SELECT
-          u.id as user_id,
-          u.email,
-          u.phone,
-          u.email_verified,
-          u.phone_verified,
-          u.status as account_status,
-          u.created_at,
-          u.updated_at,
-          p.first_name,
-          p.last_name,
-          p.display_name,
-          p.profile_photo_url as profile_photo,
-          p.bio,
-          p.date_of_birth,
-          p.gender,
-          p.country_id,
-          c.name as country_name,
-          c.iso_code_2 as country_code,
-          p.state_province,
-          p.educational_level,
-          p.employment_status,
-          p.profile_completed,
-          p.jupeb_university_id
+        `SELECT ${PROFILE_SELECT}
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         LEFT JOIN countries c ON p.country_id = c.id
@@ -290,7 +319,7 @@ class UserProfileController {
 
       const roles = rolesResult.rows.map(r => r.name);
 
-      const updatedUser = {
+      const updatedUser = withPersonalInfoFields({
         ...user,
         role: roles[0] || 'user',
         roles: roles,
@@ -302,7 +331,7 @@ class UserProfileController {
           sms_notifications: true,
           email_notifications: true
         }
-      };
+      }, roles);
 
       // Broadcast profile update to WebSocket clients
       webSocketService.broadcastUserProfileUpdate(userId, updatedUser);
