@@ -95,6 +95,7 @@ class WebSocketService {
   }
 
   broadcastUserProfileUpdate(userId, updatedProfile) {
+    if (!this.io) return;
     this.io.to(`user:${userId}`).emit('user_profile_updated', {
       type: 'user_profile_updated',
       userId,

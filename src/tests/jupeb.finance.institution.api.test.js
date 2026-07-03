@@ -314,7 +314,18 @@ describe('JUPEB institution finance API', () => {
       .set('Authorization', `Bearer ${finToken}`);
     expect(fees.status).toBe(200);
     expect(fees.body.data.total_expected.value).toBeGreaterThan(0);
+    expect(fees.body.data.total_expected_payment.value).toBe(fees.body.data.total_expected.value);
+    expect(fees.body.data).toHaveProperty('fee_paid');
+    expect(fees.body.data).toHaveProperty('outstanding_fees');
     expect(fees.body.data).toHaveProperty('total_payment_count');
+
+    const examFees = await request(app)
+      .get(
+        `/finance/analytics/institutions/${universityId}/fees?session_id=${sessionId}&payment_item=examination_fee`
+      )
+      .set('Authorization', `Bearer ${finToken}`);
+    expect(examFees.status).toBe(200);
+    expect(examFees.body.data.payment_item.code).toBe('examination_fee');
 
     const instFees = await request(app)
       .get(

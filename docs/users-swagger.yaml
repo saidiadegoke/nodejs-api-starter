@@ -47,12 +47,17 @@ paths:
         '200':
           description: |
             Current user profile. Includes `jupeb_university_id` (nullable) when the profiles table has that column;
-            use JUPEB admin `PATCH` to set or clear it.
+            use JUPEB admin `PATCH` to set or clear it. Also returns `full_name`, `professional_title`,
+            and read-only `position` for Account Settings.
         '401':
           description: Unauthorized
     put:
       summary: Update current user profile
       tags: [Users]
+      description: |
+        Account Settings — Personal info. `full_name` maps to `display_name`;
+        `professional_title` maps to `title`. `position` is derived from the
+        user's primary role and is read-only.
       requestBody:
         required: true
         content:
@@ -60,9 +65,13 @@ paths:
             schema:
               type: object
               properties:
+                full_name: { type: string, description: Alias for display_name }
+                display_name: { type: string }
                 first_name: { type: string }
                 last_name: { type: string }
-                display_name: { type: string }
+                professional_title: { type: string, description: Alias for title (Mr, Dr, …) }
+                title: { type: string }
+                phone: { type: string }
                 bio: { type: string }
                 profile_photo_url: { type: string }
                 date_of_birth: { type: string, format: date }
@@ -71,7 +80,9 @@ paths:
                 timezone: { type: string }
       responses:
         '200':
-          description: Profile updated
+          description: |
+            Profile updated. Includes `full_name`, `professional_title`, `position`,
+            and `phone` for Account Settings UI.
 
   /users/me/stats:
     get:

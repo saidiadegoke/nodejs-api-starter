@@ -61,6 +61,11 @@ router.get('/analytics/exam-fee-by-institution', financeAdmin, FinanceController
 router.get('/analytics/payment-trends', financeAdmin, FinanceController.paymentTrends);
 router.get('/analytics/institution-fee-records', financeAdmin, FinanceController.institutionFeeRecords);
 router.get(
+  '/analytics/institutions/:universityId/fees',
+  financeAdmin,
+  FinanceController.foundationInstitutionFeesByUniversity
+);
+router.get(
   '/analytics/institutions/:universityId/payments',
   financeAdmin,
   FinanceController.listFoundationInstitutionPayments
