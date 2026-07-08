@@ -55,7 +55,7 @@ class UniversityModel {
    */
   async resolveForUser(userId) {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.short_name, u.jupeb_prefix
+      `SELECT u.id, u.name, u.short_name, u.jupeb_prefix, u.status
          FROM jupeb_universities u
         WHERE u.deleted_at IS NULL
           AND u.id = COALESCE(
