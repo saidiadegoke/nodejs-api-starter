@@ -22,9 +22,10 @@ const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
 
-function httpError(status, message) {
+function httpError(status, message, details = null) {
   const err = new Error(message);
   err.status = status;
+  if (details) err.details = details;
   return err;
 }
 
@@ -101,7 +102,13 @@ async function userHasAnyRole(userId, set) {
 
 async function assertInstitutionRegistration(userId) {
   const ok = await userHasAnyRole(userId, ROLE_INST_REG);
-  if (!ok) throw httpError(403, 'Forbidden');
+  if (!ok) {
+    throw httpError(
+      403,
+      'Access denied. Required permission(s): candidate.view, jupeb.registration.manage',
+      { required_permissions: ['candidate.view', 'jupeb.registration.manage'] }
+    );
+  }
 }
 
 async function assertFinalizeRole(userId) {

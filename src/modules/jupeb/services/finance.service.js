@@ -25,9 +25,10 @@ const PAYMENT_METHOD_GROUP_UI = {
 
 const SUPPORTED_PROCESSORS = ['paystack', 'flutterwave', 'remita', 'direct_transfer'];
 
-function httpError(status, message) {
+function httpError(status, message, details = null) {
   const err = new Error(message);
   err.status = status;
+  if (details) err.details = details;
   return err;
 }
 
@@ -43,7 +44,11 @@ const ROLE_FINANCE = new Set(['financial_admin', 'registrar', 'admin', 'super_ad
 async function assertFinanceRole(userId) {
   const roles = await getUserRoles(userId);
   if (!roles.some((r) => ROLE_FINANCE.has(r))) {
-    throw httpError(403, 'Forbidden');
+    throw httpError(
+      403,
+      'Access denied. Required permission(s): jupeb.finance.manage',
+      { required_permissions: ['jupeb.finance.manage'] }
+    );
   }
 }
 
