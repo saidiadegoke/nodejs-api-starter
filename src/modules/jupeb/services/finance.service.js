@@ -15,7 +15,7 @@ const {
 const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const universityModel = require('../models/university.model');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
 
 const PAYMENT_METHOD_GROUP_UI = {
   bank_transfer: { label: 'Bank Transfer', subtitle: 'Transfer to JUPEB account' },
@@ -39,11 +39,9 @@ function isUuid(value) {
   );
 }
 
-const ROLE_FINANCE = new Set(['financial_admin', 'registrar', 'admin', 'super_admin']);
-
 async function assertFinanceRole(userId) {
-  const roles = await getUserRoles(userId);
-  if (!roles.some((r) => ROLE_FINANCE.has(r))) {
+  const ok = await hasPermission(userId, 'jupeb.finance.manage');
+  if (!ok) {
     throw httpError(
       403,
       'Access denied. Required permission(s): jupeb.finance.manage',
