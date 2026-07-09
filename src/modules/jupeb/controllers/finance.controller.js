@@ -126,7 +126,7 @@ class FinanceController {
       const data = await financeService.institutionOverview(req.query, req.user.user_id);
       return sendSuccess(res, data, 'Institution payment overview');
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -135,7 +135,7 @@ class FinanceController {
       const data = await financeService.institutionFees(req.query, req.user.user_id);
       return sendSuccess(res, data, 'Institution fee summary');
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -165,7 +165,7 @@ class FinanceController {
       );
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 

@@ -1,9 +1,10 @@
 const pool = require('../../../db/pool');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { getUserRoles, hasPermission } = require('../../../shared/middleware/rbac.middleware');
 
-function httpError(status, message) {
+function httpError(status, message, details = null) {
   const err = new Error(message);
   err.status = status;
+  if (details) err.details = details;
   return err;
 }
 
@@ -60,9 +61,19 @@ const ROLE_INST_FINANCE = new Set([
 ]);
 
 async function assertInstitutionFinanceAccess(userId) {
-  const roles = await getUserRoles(userId);
-  if (!roles.some((r) => ROLE_INST_FINANCE.has(r))) {
-    throw httpError(403, 'Forbidden');
+  const checks = await Promise.all([
+    hasPermission(userId, 'payments.view'),
+    hasPermission(userId, 'payments.pay_fees'),
+    hasPermission(userId, 'jupeb.finance.manage'),
+  ]);
+  if (!checks.some(Boolean)) {
+    throw httpError(
+      403,
+      'Access denied. Required permission(s): payments.view, payments.pay_fees, jupeb.finance.manage',
+      {
+        required_permissions: ['payments.view', 'payments.pay_fees', 'jupeb.finance.manage'],
+      }
+    );
   }
 }
 

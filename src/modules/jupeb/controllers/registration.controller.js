@@ -69,7 +69,7 @@ class RegistrationController {
       const data = await registrationService.institutionStats(req.query, req.user.user_id);
       return sendSuccess(res, data);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -102,7 +102,7 @@ class RegistrationController {
       const { rows, page, limit, total } = await registrationService.institutionList(req.query, req.user.user_id);
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 

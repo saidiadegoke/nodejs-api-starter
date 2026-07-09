@@ -11,7 +11,7 @@ const resultEntriesModel = require('../models/result-entries.model');
 const FileService = require('../../files/services/file.service');
 const { canTransition } = require('./registration-state.service');
 const { formatCandidateNumber, makeInstitutionCode } = require('../utils/registration-numbering');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
 const {
   assertInstitutionUniversityAccess,
   effectiveInstitutionListUniversityId,
@@ -22,9 +22,10 @@ const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
 
-function httpError(status, message) {
+function httpError(status, message, details = null) {
   const err = new Error(message);
   err.status = status;
+  if (details) err.details = details;
   return err;
 }
 
@@ -91,22 +92,30 @@ function normalizeInstitutionListFilters(query) {
   return { ...q, status, bucket };
 }
 
-const ROLE_INST_REG = new Set(['program_director', 'institution_admin', 'registrar', 'admin', 'super_admin']);
-const ROLE_FINALIZE = new Set(['admin', 'super_admin', 'registrar']);
-
-async function userHasAnyRole(userId, set) {
-  const roles = await getUserRoles(userId);
-  return roles.some((r) => set.has(r));
-}
-
 async function assertInstitutionRegistration(userId) {
-  const ok = await userHasAnyRole(userId, ROLE_INST_REG);
-  if (!ok) throw httpError(403, 'Forbidden');
+  const checks = await Promise.all([
+    hasPermission(userId, 'candidate.view'),
+    hasPermission(userId, 'jupeb.registration.manage'),
+  ]);
+  const ok = checks.some(Boolean);
+  if (!ok) {
+    throw httpError(
+      403,
+      'Access denied. Required permission(s): candidate.view, jupeb.registration.manage',
+      { required_permissions: ['candidate.view', 'jupeb.registration.manage'] }
+    );
+  }
 }
 
 async function assertFinalizeRole(userId) {
-  const ok = await userHasAnyRole(userId, ROLE_FINALIZE);
-  if (!ok) throw httpError(403, 'Forbidden');
+  const ok = await hasPermission(userId, 'sessions.update');
+  if (!ok) {
+    throw httpError(
+      403,
+      'Access denied. Required permission(s): sessions.update',
+      { required_permissions: ['sessions.update'] }
+    );
+  }
 }
 
 async function assertComboForUniversity(subjectCombinationId, universityId) {
