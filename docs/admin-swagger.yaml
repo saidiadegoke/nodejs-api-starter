@@ -364,6 +364,42 @@ paths:
           description: Unauthorized
         '403':
           description: Missing users.view permission
+    post:
+      summary: Create a user and bind to a JUPEB university
+      description: |
+        Requires `users.create`. System roles (`institution_admin`, `program_director`,
+        `student`, etc.) are pre-seeded — assign them by name here. Do **not** call
+        `POST /admin/roles` to recreate system roles.
+
+        Institution-scoped callers may only assign institution-appropriate system roles
+        plus custom roles they created. `university_id` defaults to the caller's
+        institution when omitted.
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, first_name, last_name, role]
+              properties:
+                email: { type: string, format: email }
+                phone: { type: string }
+                password: { type: string, minLength: 8 }
+                first_name: { type: string }
+                last_name: { type: string }
+                role:
+                  type: string
+                  description: Existing `roles.name` (e.g. `institution_admin`)
+                university_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                is_primary: { type: boolean, default: true }
+      responses:
+        '201': { description: User created (optionally bound to university) }
+        '403': { description: Role or university outside institution scope }
+        '409': { description: Email/phone already exists }
 
   /admin/users/{userId}/roles:
     parameters:

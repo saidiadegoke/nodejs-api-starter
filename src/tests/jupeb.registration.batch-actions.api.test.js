@@ -3,9 +3,9 @@ const app = require('../app');
 const pool = require('../db/pool');
 const {
   closeAllOpenJupebSessions,
-  nextJupebTestPrefix,
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
+  buildCatalogUniversityPayload,
 } = require('./jupeb-session-test-helpers');
 
 describe('Institution batch actions + withdraw (013 §E.7 / §E.8)', () => {
@@ -34,11 +34,11 @@ describe('Institution batch actions + withdraw (013 §E.7 / §E.8)', () => {
       uniRes = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} Batch University`,
-          jupeb_prefix: nextJupebTestPrefix(),
-        });
+        .send(
+          buildCatalogUniversityPayload(tag, {
+            name: `${tag} Batch University`,
+          })
+        );
       if (uniRes.status === 201) break;
     }
     let scRes;
@@ -67,6 +67,11 @@ describe('Institution batch actions + withdraw (013 §E.7 / §E.8)', () => {
           closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
         });
       if (sessRes.status === 201) break;
+    }
+    if (uniRes.status !== 201 || scRes.status !== 201 || sessRes.status !== 201) {
+      throw new Error(
+        `makeFixtures failed: uni=${uniRes.status} sc=${scRes.status} sess=${sessRes.status}`
+      );
     }
     await closeAllOpenJupebSessions(adminToken);
     await request(app).post(`/sessions/${sessRes.body.data.id}/open`).set('Authorization', `Bearer ${adminToken}`);
@@ -181,6 +186,54 @@ describe('Institution batch actions + withdraw (013 §E.7 / §E.8)', () => {
     const r2Verdict = res.body.data.rejected.find((r) => r.id === r2Id);
     expect(r2Verdict.error_code).toBeDefined();
     expect(r2Verdict.message).toBeDefined();
+    expect(res.body.data.total).toBe(2);
+    expect(res.body.data.accepted_count).toBe(1);
+    expect(res.body.data.rejected_count).toBe(1);
+  });
+
+  it('batch approve with all invalid rows returns 422 and outcome counts', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const fixtures = await makeFixtures(adminToken, 'BALL');
+
+    const r1 = await createAtStatus(adminToken, fixtures, 'F1', 'claimed');
+    const r2 = await createAtStatus(adminToken, fixtures, 'F2', 'pending_documents');
+
+    const res = await request(app)
+      .post('/registration/institution/registrations/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ids: [r1, r2], action: 'approve' });
+    expect(res.status).toBe(422);
+    expect(res.body.details.accepted_count).toBe(0);
+    expect(res.body.details.rejected_count).toBe(2);
+    expect(res.body.message).toMatch(/0 of 2/);
+  });
+
+  it('institution list exposes can_approve and can_reject flags', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const fixtures = await makeFixtures(adminToken, 'ACT');
+
+    const reviewId = await createAtStatus(adminToken, fixtures, 'RV', 'pending_institution_review');
+    const claimedId = await createAtStatus(adminToken, fixtures, 'CL', 'claimed');
+
+    const res = await request(app)
+      .get(`/registration/institution/registrations?session_id=${fixtures.sessionId}&limit=50`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    const reviewRow = res.body.data.find((r) => r.id === reviewId);
+    const claimedRow = res.body.data.find((r) => r.id === claimedId);
+    expect(reviewRow.can_reject).toBe(true);
+    expect(reviewRow.can_approve).toBe(true);
+    expect(reviewRow.can_withdraw).toBe(true);
+    expect(claimedRow.can_reject).toBe(false);
+    expect(claimedRow.can_approve).toBe(false);
+    expect(claimedRow.can_withdraw).toBe(true);
+    expect(claimedRow.action_blockers).toEqual(
+      expect.arrayContaining(['Awaiting student submission'])
+    );
   });
 
   it('batch reject with reason rejects all rows that allow the transition', async () => {

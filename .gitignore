@@ -16,7 +16,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
-
+MOBILE_API_ENDPOINTS.md
 # Runtime data
 pids/
 *.pid

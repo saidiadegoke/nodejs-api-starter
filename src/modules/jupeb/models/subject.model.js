@@ -76,6 +76,28 @@ class SubjectModel {
     return result.rows[0].c;
   }
 
+  /**
+   * Non-withdrawn registration counts for one session ("candidates enrolled")
+   * for many subjects in one query. A registration counts toward every
+   * subject in its combination. Returns a Map<subjectId, count>.
+   */
+  async enrolledCountsForSubjects(subjectIds, sessionId) {
+    const map = new Map();
+    if (!subjectIds || !subjectIds.length || !sessionId) return map;
+    const result = await pool.query(
+      `SELECT i.subject_id, COUNT(DISTINCT r.id)::int AS c
+       FROM jupeb_subject_combination_items i
+       JOIN jupeb_registrations r ON r.subject_combination_id = i.combination_id
+       WHERE i.subject_id = ANY($1::uuid[])
+         AND r.status <> 'withdrawn'
+         AND r.session_id = $2
+       GROUP BY i.subject_id`,
+      [subjectIds, sessionId]
+    );
+    for (const row of result.rows) map.set(row.subject_id, row.c);
+    return map;
+  }
+
   async updateById(id, fields) {
     const allowed = ['name', 'code', 'description'];
     const sets = [];

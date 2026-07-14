@@ -5,6 +5,7 @@ const subjectCombinationModel = require('../models/subject-combination.model');
 const subjectModel = require('../models/subject.model');
 const { validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
+const { resolveEffectiveSession } = require('./session-context.service');
 
 function isUuid(value) {
   return (
@@ -406,13 +407,22 @@ class CatalogService {
     return subjectModel.findPublicActive();
   }
 
-  async listSubjectsAdmin({ page, limit, status, q }) {
+  async listSubjectsAdmin({ page, limit, status, q, sessionId, userId }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
     const rows = await subjectModel.findAllAdmin({ limit: safeLimit, offset, status, q });
     const total = await subjectModel.countAdmin({ status, q });
-    return { rows, page: safePage, limit: safeLimit, total };
+    const session = await resolveEffectiveSession(userId, sessionId || null);
+    const enrolledMap = await subjectModel.enrolledCountsForSubjects(
+      rows.map((r) => r.id),
+      session && session.id
+    );
+    const enriched = rows.map((row) => ({
+      ...row,
+      enrolled_count: enrolledMap.get(row.id) || 0,
+    }));
+    return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
   async getSubjectById(id) {
