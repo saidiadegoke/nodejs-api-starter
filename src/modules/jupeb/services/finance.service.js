@@ -2,6 +2,7 @@ const pool = require('../../../db/pool');
 const registrationModel = require('../models/registration.model');
 const sessionModel = require('../models/session.model');
 const paymentModel = require('../../payments/models/payment.model');
+const { formatPendingPaymentSummary } = paymentModel;
 const paymentMethodModel = require('../../payments/models/paymentMethod.model');
 const paymentItemModel = require('../../payments/models/paymentItem.model');
 const paymentStructureModel = require('../../payments/models/paymentStructure.model');
@@ -191,9 +192,13 @@ class FinanceService {
       amount = outstanding;
     }
 
-    const pending = await paymentModel.countPendingForRegistration(registration.id);
+    const pending = await paymentModel.countPendingForRegistration(registration.id, item.id);
     if (pending > 0) {
-      throw httpError(409, 'An unpaid payment already exists for this registration');
+      const pendingRow = await paymentModel.findLatestPendingForRegistration(registration.id, item.id);
+      throw httpError(409, 'An unpaid payment already exists for this registration', {
+        error_code: 'pending_payment_exists',
+        pending_payment: formatPendingPaymentSummary(pendingRow, item),
+      });
     }
 
     // The gateways need the payer's email (paystack / flutterwave / remita)
@@ -578,6 +583,11 @@ class FinanceService {
     const fullFee = await this._resolveInstitutionItemFullFee(item, universityId, session);
     const alreadyPaid = await this._completedForInstitutionItem(universityId, session.id, item.id);
     const outstanding = Number((fullFee - alreadyPaid).toFixed(2));
+    const pendingRow = await paymentModel.findLatestPendingForInstitution(
+      universityId,
+      session.id,
+      item.id
+    );
 
     return {
       session_id: session.id,
@@ -588,6 +598,7 @@ class FinanceService {
       already_paid: alreadyPaid,
       outstanding: outstanding > 0 ? outstanding : 0,
       fully_paid: outstanding <= 0,
+      pending_payment: formatPendingPaymentSummary(pendingRow, item),
     };
   }
 
@@ -664,7 +675,15 @@ class FinanceService {
       item.id
     );
     if (pending > 0) {
-      throw httpError(409, 'An unpaid payment already exists for this fee type');
+      const pendingRow = await paymentModel.findLatestPendingForInstitution(
+        universityId,
+        session.id,
+        item.id
+      );
+      throw httpError(409, 'An unpaid payment already exists for this fee type', {
+        error_code: 'pending_payment_exists',
+        pending_payment: formatPendingPaymentSummary(pendingRow, item),
+      });
     }
 
     const rawDescription = body && body.description ? String(body.description).trim() : '';
@@ -730,6 +749,42 @@ class FinanceService {
         processorResult.redirect_url ||
         null,
       bank_account: processorResult.bank_account || null,
+    };
+  }
+
+  /**
+   * Cancel a stale institution-scoped pending checkout so a new one can be started.
+   */
+  async cancelInstitutionPayment(paymentId, userId) {
+    await assertInstitutionFinanceAccess(userId);
+    if (!isUuid(paymentId)) throw httpError(422, 'payment id must be a valid UUID');
+
+    const payment = await paymentModel.findById(paymentId);
+    if (!payment) throw httpError(404, 'Payment not found');
+    if (!payment.jupeb_university_id) {
+      throw httpError(422, 'Only institution-scoped payments can be cancelled via this endpoint');
+    }
+    await assertInstitutionUniversityAccess(userId, payment.jupeb_university_id);
+
+    const cancellable = paymentModel.PENDING_PAYMENT_STATUSES || [
+      'pending',
+      'pending_transfer',
+      'processing',
+      'pending_verification',
+    ];
+    if (!cancellable.includes(payment.status)) {
+      throw httpError(422, `Cannot cancel a payment in status "${payment.status}"`);
+    }
+
+    const updated = await paymentModel.updateStatus(payment.id, 'failed', {
+      notes: 'Cancelled by institution admin',
+    });
+    return {
+      id: updated.id,
+      payment_id: updated.payment_id,
+      status: updated.status,
+      amount: updated.amount,
+      cancelled_at: updated.updated_at,
     };
   }
 
@@ -869,12 +924,15 @@ class FinanceService {
       // eslint-disable-next-line no-await-in-loop
       const alreadyPaid = await this._completedForItem(registration.id, item.id);
       const outstanding = Number((fullFee - alreadyPaid).toFixed(2));
+      // eslint-disable-next-line no-await-in-loop
+      const pendingRow = await paymentModel.findLatestPendingForRegistration(registration.id, item.id);
       previews.push({
         payment_item: { id: item.id, code: item.code, name: item.name },
         full_fee: fullFee,
         already_paid: alreadyPaid,
         outstanding: outstanding > 0 ? outstanding : 0,
         fully_paid: outstanding <= 0,
+        pending_payment: formatPendingPaymentSummary(pendingRow, item),
       });
     }
 

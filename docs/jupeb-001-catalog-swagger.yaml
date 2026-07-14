@@ -64,6 +64,12 @@ components:
         name: { type: string, maxLength: 120 }
         description: { type: string, nullable: true }
         status: { type: string, enum: [active, inactive] }
+        enrolled_count:
+          type: integer
+          minimum: 0
+          description: >
+            Non-withdrawn registrations on combinations that include this
+            subject, scoped to the effective session (admin list only).
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     SubjectCombinationItem:
@@ -378,6 +384,13 @@ paths:
           in: query
           description: 'Case-insensitive substring match across code / name / description.'
           schema: { type: string, example: 'Mathematics' }
+        - name: session_id
+          in: query
+          description: >
+            Optional session override. When omitted, enrolled_count uses the
+            caller's effective session (viewing preference, else the open
+            session).
+          schema: { type: string, format: uuid }
       responses:
         '200': { description: Paginated list of `Subject` }
     post:

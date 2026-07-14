@@ -1,5 +1,30 @@
 const pool = require('../../../db/pool');
 
+const PENDING_PAYMENT_STATUSES = [
+  'pending',
+  'pending_transfer',
+  'processing',
+  'pending_verification',
+];
+
+function formatPendingPaymentSummary(row, item = null) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    payment_id: row.payment_id,
+    status: row.status,
+    amount: row.amount,
+    created_at: row.created_at,
+    payment_item: item
+      ? { id: item.id, code: item.code, name: item.name }
+      : {
+          id: row.payment_item_id,
+          code: row.payment_item_code || null,
+          name: row.payment_item_name || null,
+        },
+  };
+}
+
 class Payment {
   async create(data) {
     const {
@@ -92,10 +117,42 @@ class Payment {
       `SELECT COUNT(*)::int AS c FROM payments
        WHERE jupeb_university_id = $1 AND jupeb_session_id = $2
          AND payment_item_id = $3
-         AND status IN ('pending', 'pending_transfer', 'processing', 'pending_verification')`,
-      [universityId, sessionId, paymentItemId]
+         AND status = ANY($4::text[])`,
+      [universityId, sessionId, paymentItemId, PENDING_PAYMENT_STATUSES]
     );
     return result.rows[0].c;
+  }
+
+  async findLatestPendingForInstitution(universityId, sessionId, paymentItemId) {
+    const result = await pool.query(
+      `SELECT p.id, p.payment_id, p.status, p.amount, p.created_at, p.payment_item_id,
+              pi.code AS payment_item_code, pi.name AS payment_item_name
+         FROM payments p
+         LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
+        WHERE p.jupeb_university_id = $1 AND p.jupeb_session_id = $2
+          AND p.payment_item_id = $3
+          AND p.status = ANY($4::text[])
+        ORDER BY p.created_at DESC
+        LIMIT 1`,
+      [universityId, sessionId, paymentItemId, PENDING_PAYMENT_STATUSES]
+    );
+    return result.rows[0] || null;
+  }
+
+  async findLatestPendingForRegistration(registrationId, paymentItemId) {
+    const result = await pool.query(
+      `SELECT p.id, p.payment_id, p.status, p.amount, p.created_at, p.payment_item_id,
+              pi.code AS payment_item_code, pi.name AS payment_item_name
+         FROM payments p
+         LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
+        WHERE p.registration_id = $1
+          AND p.payment_item_id = $2
+          AND p.status = ANY($3::text[])
+        ORDER BY p.created_at DESC
+        LIMIT 1`,
+      [registrationId, paymentItemId, PENDING_PAYMENT_STATUSES]
+    );
+    return result.rows[0] || null;
   }
 
   /**
@@ -299,12 +356,16 @@ class Payment {
     return result.rows;
   }
 
-  async countPendingForRegistration(registrationId) {
-    const result = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payments
-       WHERE registration_id = $1 AND status IN ('pending', 'pending_transfer', 'processing')`,
-      [registrationId]
-    );
+  async countPendingForRegistration(registrationId, paymentItemId = null) {
+    const values = [registrationId, PENDING_PAYMENT_STATUSES];
+    let sql = `SELECT COUNT(*)::int AS c FROM payments
+       WHERE registration_id = $1
+         AND status = ANY($2::text[])`;
+    if (paymentItemId) {
+      sql += ' AND payment_item_id = $3';
+      values.push(paymentItemId);
+    }
+    const result = await pool.query(sql, values);
     return result.rows[0].c;
   }
 
@@ -511,3 +572,5 @@ class Payment {
 }
 
 module.exports = new Payment();
+module.exports.PENDING_PAYMENT_STATUSES = PENDING_PAYMENT_STATUSES;
+module.exports.formatPendingPaymentSummary = formatPendingPaymentSummary;

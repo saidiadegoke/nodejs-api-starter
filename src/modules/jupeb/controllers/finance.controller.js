@@ -8,7 +8,7 @@ class FinanceController {
       const row = await financeService.createCheckout(req.user.user_id, req.body);
       return sendSuccess(res, row, 'Payment intent created', CREATED);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -153,7 +153,19 @@ class FinanceController {
       const row = await financeService.createInstitutionCheckout(req.user.user_id, req.body);
       return sendSuccess(res, row, 'Payment intent created', CREATED);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
+  static async cancelInstitutionPayment(req, res) {
+    try {
+      const row = await financeService.cancelInstitutionPayment(
+        req.params.paymentId,
+        req.user.user_id
+      );
+      return sendSuccess(res, row, 'Payment cancelled');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 

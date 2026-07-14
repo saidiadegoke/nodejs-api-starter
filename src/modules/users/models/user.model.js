@@ -1,7 +1,6 @@
 const pool = require('../../../db/pool');
 
-const USER_LIST_SELECT = `
-  SELECT
+const USER_LIST_COLUMNS = `
     u.id,
     u.email,
     u.phone,
@@ -24,76 +23,86 @@ const USER_LIST_SELECT = `
           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
       ),
       ARRAY[]::text[]
-    ) AS roles
+    ) AS roles`;
+
+const USER_LIST_FROM = `
   FROM users u
-  LEFT JOIN profiles p ON u.id = p.user_id
+  LEFT JOIN profiles p ON u.id = p.user_id`;
+
+const USER_LIST_SELECT = `
+  SELECT
+    ${USER_LIST_COLUMNS}
+  ${USER_LIST_FROM}
 `;
 
 class User {
+  static _buildListFilters({ q = null, universityId = null } = {}) {
+    const values = [];
+    const conditions = ['u.deleted_at IS NULL'];
+    let idx = 1;
+    if (q) {
+      const pattern = `%${q}%`;
+      conditions.push(`(
+        u.email ILIKE $${idx}
+        OR p.first_name ILIKE $${idx}
+        OR p.last_name ILIKE $${idx}
+        OR p.display_name ILIKE $${idx}
+      )`);
+      values.push(pattern);
+      idx += 1;
+    }
+    if (universityId) {
+      conditions.push(`p.jupeb_university_id = $${idx}`);
+      values.push(universityId);
+      idx += 1;
+    }
+    return { whereSql: conditions.join(' AND '), values, nextIdx: idx };
+  }
+
+  /**
+   * Paginated user list with total count in a single query.
+   */
+  static async findAllPaginated({ limit, offset, q = null, universityId = null }) {
+    const { whereSql, values, nextIdx } = User._buildListFilters({ q, universityId });
+    const limitIdx = nextIdx;
+    const offsetIdx = nextIdx + 1;
+    values.push(limit, offset);
+    const result = await pool.query(
+      `SELECT
+        ${USER_LIST_COLUMNS},
+        COUNT(*) OVER()::int AS _total
+       ${USER_LIST_FROM}
+       WHERE ${whereSql}
+       ORDER BY u.created_at DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      values
+    );
+    const total = result.rows.length ? result.rows[0]._total : 0;
+    const rows = result.rows.map(({ _total, ...row }) => row);
+    return { rows, total };
+  }
+
   /**
    * Find all users (non-deleted) with profile and role names
    */
   static async findAll(limit = 10, offset = 0, q = null, universityId = null) {
-    const values = [limit, offset];
-    let idx = 3;
-    let extraClause = '';
-    if (q) {
-      const pattern = `%${q}%`;
-      extraClause += `
-        AND (
-          u.email ILIKE $${idx}
-          OR p.first_name ILIKE $${idx}
-          OR p.last_name ILIKE $${idx}
-          OR p.display_name ILIKE $${idx}
-        )`;
-      values.push(pattern);
-      idx++;
-    }
-    if (universityId) {
-      extraClause += ` AND p.jupeb_university_id = $${idx}`;
-      values.push(universityId);
-      idx++;
-    }
-    const result = await pool.query(
-      `${USER_LIST_SELECT}
-       WHERE u.deleted_at IS NULL${extraClause}
-       ORDER BY u.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      values
-    );
-    return result.rows;
+    const { rows } = await User.findAllPaginated({ limit, offset, q, universityId });
+    return rows;
   }
 
   /**
    * Count total non-deleted users
    */
   static async count(q = null, universityId = null) {
-    const values = [];
-    let idx = 1;
-    const conditions = ['u.deleted_at IS NULL'];
-    if (q) {
-      const pattern = `%${q}%`;
-      conditions.push(`(
-           u.email ILIKE $${idx}
-           OR p.first_name ILIKE $${idx}
-           OR p.last_name ILIKE $${idx}
-           OR p.display_name ILIKE $${idx}
-         )`);
-      values.push(pattern);
-      idx++;
-    }
-    if (universityId) {
-      conditions.push(`p.jupeb_university_id = $${idx}`);
-      values.push(universityId);
-      idx++;
-    }
+    const { whereSql, values } = User._buildListFilters({ q, universityId });
     const result = await pool.query(
-      `SELECT COUNT(*) FROM users u
-       LEFT JOIN profiles p ON u.id = p.user_id
-       WHERE ${conditions.join(' AND ')}`,
+      `SELECT COUNT(*)::int AS c
+         FROM users u
+         LEFT JOIN profiles p ON u.id = p.user_id
+        WHERE ${whereSql}`,
       values
     );
-    return parseInt(result.rows[0].count, 10);
+    return result.rows[0].c;
   }
 
   /**
