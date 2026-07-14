@@ -21,11 +21,16 @@ class UserService {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const offset = (safePage - 1) * safeLimit;
-    const searchTerm = q ? String(q).trim() : null;
-    const users = await User.findAll(safeLimit, offset, searchTerm, universityId);
-    const total = await User.count(searchTerm, universityId);
+    const searchTerm = q ? String(q).trim() || null : null;
 
-    return { users, total, page: safePage, limit: safeLimit };
+    const { rows, total } = await User.findAllPaginated({
+      limit: safeLimit,
+      offset,
+      q: searchTerm,
+      universityId,
+    });
+
+    return { users: rows, total, page: safePage, limit: safeLimit };
   }
 
   /**

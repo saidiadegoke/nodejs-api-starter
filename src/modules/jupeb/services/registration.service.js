@@ -274,6 +274,8 @@ function enrichListRow(row) {
     ? { id: row.uni_id, name: row.uni_name, short_name: row.uni_short_name }
     : null;
 
+  const actions = institutionActionability(row);
+
   return {
     id: row.id,
     session_id: row.session_id,
@@ -295,6 +297,7 @@ function enrichListRow(row) {
     candidate,
     university,
     biometric_status,
+    ...actions,
   };
 }
 
@@ -496,6 +499,36 @@ function mapErrorCode(err) {
 }
 
 const TERMINAL_STATUSES = new Set(['approved', 'rejected', 'withdrawn']);
+
+/**
+ * Institution list / batch UI hints: which row-level actions are allowed
+ * and why not (mirrors approve/reject/withdraw FSM guards).
+ */
+function institutionActionability(row) {
+  const status = row.status;
+  const blockers = [];
+  const terminal = TERMINAL_STATUSES.has(status);
+  const canReject = status === 'pending_institution_review';
+  const canWithdraw = !terminal;
+
+  if (!canReject && !terminal) {
+    blockers.push('Awaiting student submission');
+  }
+
+  let canApprove = status === 'pending_institution_review';
+  if (canApprove && row.nin_verification_id) {
+    const ninStatus = row.nin_verification_status || null;
+    if (!ninStatus) {
+      canApprove = false;
+      blockers.push('Linked NIN verification not found');
+    } else if (ninStatus !== 'verified') {
+      canApprove = false;
+      blockers.push(`NIN verification ${ninStatus}`);
+    }
+  }
+
+  return { can_approve: canApprove, can_reject: canReject, can_withdraw: canWithdraw, action_blockers: blockers };
+}
 
 async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) {
   if (!canTransition(reg.status, toStatus)) {
@@ -1287,7 +1320,14 @@ class RegistrationService {
       }
     }
 
-    return { accepted, rejected, action };
+    return {
+      accepted,
+      rejected,
+      action,
+      total: ids.length,
+      accepted_count: accepted.length,
+      rejected_count: rejected.length,
+    };
   }
 
   async getCodeStatus(rawCode) {

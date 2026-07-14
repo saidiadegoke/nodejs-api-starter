@@ -51,11 +51,12 @@ class UniversityModel {
    * binding on profiles.jupeb_university_id, falling back to the
    * university of their latest JUPEB registration (covers students who
    * have no profile binding). Returns { id, name, short_name,
-   * jupeb_prefix } or null.
+   * jupeb_prefix, status, expected_candidate_count } or null.
    */
   async resolveForUser(userId) {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.short_name, u.jupeb_prefix, u.status
+      `SELECT u.id, u.name, u.short_name, u.jupeb_prefix, u.status,
+              u.expected_candidate_count
          FROM jupeb_universities u
         WHERE u.deleted_at IS NULL
           AND u.id = COALESCE(

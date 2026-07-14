@@ -92,6 +92,10 @@ describe('JUPEB subjects CRUD', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body.pagination).toBeDefined();
+    for (const row of res.body.data) {
+      expect(row).toHaveProperty('enrolled_count');
+      expect(typeof row.enrolled_count).toBe('number');
+    }
   });
 
   it('rejects non-admin from create', async () => {

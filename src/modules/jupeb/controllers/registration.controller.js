@@ -135,7 +135,13 @@ class RegistrationController {
   static async institutionBatchAction(req, res) {
     try {
       const data = await registrationService.institutionBatchAction(req.body, req.user.user_id);
-      return sendSuccess(res, data, `Batch ${data.action} processed`);
+      const { action, total, accepted_count, rejected_count } = data;
+      const verb = action === 'delete' ? 'deleted' : `${action}d`;
+      const message = `${accepted_count} of ${total} registration${total === 1 ? '' : 's'} ${verb}`;
+      if (accepted_count === 0 && rejected_count > 0) {
+        return sendError(res, message, 422, data);
+      }
+      return sendSuccess(res, data, message);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }

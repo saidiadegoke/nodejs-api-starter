@@ -241,6 +241,113 @@ describe('JUPEB institution finance API', () => {
     }
   });
 
+  it('duplicate examination fee checkout returns pending_payment details; cancel unblocks retry', async () => {
+    if (!financeMigrated || !institutionPaymentsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uni = await request(app)
+      .post('/catalog/universities')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(
+        buildCatalogUniversityPayload(String(suffix).slice(-3), {
+          name: `Exam Pending Uni ${suffix}`,
+        })
+      );
+    expect(uni.status).toBe(201);
+
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+    const sessRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        exam_fee_per_candidate: 45000,
+      });
+    expect(sessRes.status).toBe(201);
+    const sessionId = sessRes.body.data.id;
+    await closeAllOpenJupebSessions(adminToken);
+    await request(app).post(`/sessions/${sessionId}/open`).set('Authorization', `Bearer ${adminToken}`);
+
+    const scRes = await request(app)
+      .post('/catalog/subject-combinations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        code: nextJupebTestUniversityCode('EPN'),
+        title: 'Exam Pending Combo',
+        subjects: ['A', 'B', 'C'],
+        is_global: true,
+      });
+    expect(scRes.status).toBe(201);
+    await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        session_id: sessionId,
+        university_id: uni.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+
+    const instEmail = `exam_pending_${suffix}@example.com`;
+    await createInstitutionAdmin(uni.body.data.id, instEmail);
+    const instToken = await login(instEmail);
+    expect(instToken).toBeTruthy();
+
+    const checkout1 = await request(app)
+      .post('/finance/institution/checkout')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        session_id: sessionId,
+        payment_method: 'direct_transfer',
+        payment_item: 'examination_fee',
+        payment_structure: 'partial',
+        amount: 45000,
+      });
+    expect(checkout1.status).toBe(201);
+
+    const preview = await request(app)
+      .get(`/finance/institution/fee-preview?session_id=${sessionId}&payment_item=examination_fee`)
+      .set('Authorization', `Bearer ${instToken}`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.pending_payment).toBeDefined();
+    expect(preview.body.data.pending_payment.id).toBe(checkout1.body.data.payment.id);
+
+    const checkout2 = await request(app)
+      .post('/finance/institution/checkout')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        session_id: sessionId,
+        payment_method: 'direct_transfer',
+        payment_item: 'examination_fee',
+        payment_structure: 'partial',
+        amount: 45000,
+      });
+    expect(checkout2.status).toBe(409);
+    expect(checkout2.body.details.error_code).toBe('pending_payment_exists');
+    expect(checkout2.body.details.pending_payment.id).toBe(checkout1.body.data.payment.id);
+
+    const cancel = await request(app)
+      .post(`/finance/institution/payments/${checkout1.body.data.payment.id}/cancel`)
+      .set('Authorization', `Bearer ${instToken}`);
+    expect(cancel.status).toBe(200);
+
+    const checkout3 = await request(app)
+      .post('/finance/institution/checkout')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        session_id: sessionId,
+        payment_method: 'direct_transfer',
+        payment_item: 'examination_fee',
+        payment_structure: 'partial',
+        amount: 45000,
+      });
+    expect(checkout3.status).toBe(201);
+  });
+
   it('financial_admin can view institution metrics and payments via university_id query', async () => {
     if (!financeMigrated || !institutionPaymentsMigrated) return;
     const adminToken = await getAdminToken();

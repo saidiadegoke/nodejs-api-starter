@@ -232,6 +232,7 @@ class RegistrationModel {
         COALESCE(b.has_fingerprint, false) AS has_fingerprint,
         (nv.intake_payload->>'name') AS nin_intake_name,
         (nv.intake_payload->>'email') AS nin_intake_email,
+        nv.status AS nin_verification_status,
         NULLIF(TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))), '') AS nin_display_name
       FROM jupeb_registrations r
       LEFT JOIN users u ON u.id = r.user_id

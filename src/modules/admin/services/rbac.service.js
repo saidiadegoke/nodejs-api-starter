@@ -84,7 +84,15 @@ class RbacService {
       throw httpError(422, 'name must be lowercase snake_case, 2-50 chars');
     }
     const existing = await rbacModel.findRoleByName(name);
-    if (existing) throw httpError(409, 'Role with this name already exists');
+    if (existing) {
+      if (existing.is_system) {
+        throw httpError(
+          409,
+          `System role "${existing.name}" already exists. Assign it via POST /admin/users instead of creating a new role.`
+        );
+      }
+      throw httpError(409, 'Role with this name already exists');
+    }
     const validStatuses = ['active', 'inactive'];
     const status = body.status && validStatuses.includes(body.status) ? body.status : 'active';
 

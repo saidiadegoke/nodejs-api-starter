@@ -25,7 +25,7 @@ router.get('/institution/registrations/export', candidateView, RegistrationContr
 router.get('/institution/registrations/:registrationId', candidateView, RegistrationController.institutionGetCandidate);
 router.get('/institution/overview/stats', candidateView, RegistrationController.institutionStats);
 router.get('/institution/overview/by-university', candidateView, RegistrationController.institutionByUniversity);
-router.post('/institution/registrations/batch', candidateCreate, RegistrationController.institutionBatchAction);
+router.post('/institution/registrations/batch', candidateUpdate, RegistrationController.institutionBatchAction);
 router.post('/institution/registrations/:registrationId/approve', candidateUpdate, RegistrationController.institutionApprove);
 router.post('/institution/registrations/:registrationId/reject', candidateUpdate, RegistrationController.institutionReject);
 router.post('/institution/registrations/:registrationId/withdraw', candidateUpdate, RegistrationController.institutionWithdraw);

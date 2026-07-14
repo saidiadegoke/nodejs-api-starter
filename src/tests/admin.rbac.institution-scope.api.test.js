@@ -72,7 +72,7 @@ describe('Admin RBAC — institution-scoped lists', () => {
     return userId;
   }
 
-  async function createScopedUser({ email, universityId }) {
+  async function createScopedUser({ email, universityId, roleName = null }) {
     const ins = await pool.query(
       `INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status)
        VALUES ($1, $2, true, true, $3, 'active') RETURNING id`,
@@ -84,6 +84,15 @@ describe('Admin RBAC — institution-scoped lists', () => {
        VALUES ($1, 'Scoped', 'User', 'Scoped User', $2)`,
       [userId, universityId]
     );
+    if (roleName) {
+      const roleRow = await pool.query(`SELECT id FROM roles WHERE name = $1 LIMIT 1`, [roleName]);
+      if (roleRow.rows[0]) {
+        await pool.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`, [
+          userId,
+          roleRow.rows[0].id,
+        ]);
+      }
+    }
     return userId;
   }
 
@@ -152,6 +161,77 @@ describe('Admin RBAC — institution-scoped lists', () => {
     expect(outOfScope.status).toBe(403);
   });
 
+  it('any user with jupeb_university_id sees only same-university users', async () => {
+    if (!dbReady || !rolesOwnershipMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniA = await createUniversity(adminToken, `${suffix}a`);
+    const uniB = await createUniversity(adminToken, `${suffix}b`);
+
+    const agentEmail = `agent_scope_${suffix}@example.com`;
+    await createScopedUser({ email: agentEmail, universityId: uniA, roleName: 'agent' });
+    const userAId = await createScopedUser({
+      email: `agent_user_a_${suffix}@example.com`,
+      universityId: uniA,
+    });
+    const userBId = await createScopedUser({
+      email: `agent_user_b_${suffix}@example.com`,
+      universityId: uniB,
+    });
+
+    const agentToken = await login(agentEmail);
+    if (!agentToken) return;
+
+    const list = await request(app)
+      .get('/admin/users?limit=100')
+      .set('Authorization', `Bearer ${agentToken}`);
+    expect(list.status).toBe(200);
+    const ids = list.body.data.map((u) => u.id);
+    expect(ids).toContain(userAId);
+    expect(ids).not.toContain(userBId);
+  });
+
+  it('full-access role with jupeb_university_id still has full user visibility', async () => {
+    if (!dbReady || !rolesOwnershipMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniA = await createUniversity(adminToken, `${suffix}a`);
+    const uniB = await createUniversity(adminToken, `${suffix}b`);
+
+    const registrarEmail = `registrar_scope_${suffix}@example.com`;
+    const registrarId = await createScopedUser({
+      email: registrarEmail,
+      universityId: uniA,
+      roleName: 'registrar',
+    });
+    const usersViewPerm = await pool.query(
+      `SELECT id FROM permissions WHERE name = 'users.view' LIMIT 1`
+    );
+    await pool.query(
+      `INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2)
+       ON CONFLICT (user_id, permission_id) DO NOTHING`,
+      [registrarId, usersViewPerm.rows[0].id]
+    );
+    const userBId = await createScopedUser({
+      email: `registrar_user_b_${suffix}@example.com`,
+      universityId: uniB,
+    });
+
+    const registrarToken = await login(registrarEmail);
+    if (!registrarToken) return;
+
+    const list = await request(app)
+      .get('/admin/users?limit=100')
+      .set('Authorization', `Bearer ${registrarToken}`);
+    expect(list.status).toBe(200);
+    const ids = list.body.data.map((u) => u.id);
+    expect(ids).toContain(userBId);
+  });
+
   it('institution admin sees system roles and own custom roles only', async () => {
     if (!dbReady || !rolesOwnershipMigrated) return;
     const adminToken = await getAdminToken();
@@ -187,6 +267,9 @@ describe('Admin RBAC — institution-scoped lists', () => {
     const names = list.body.data.map((r) => r.name);
     expect(names).toEqual(expect.arrayContaining(['institution_admin', ownRoleName]));
     expect(names).not.toContain(registrarRoleName);
+    expect(names).not.toContain('registrar');
+    expect(names).not.toContain('admin');
+    expect(names).not.toContain('super_admin');
 
     const foreignGet = await request(app)
       .get(`/admin/roles/${registrarRoleId}`)
@@ -271,6 +354,45 @@ describe('Admin RBAC — institution-scoped lists', () => {
     await request(app)
       .delete(`/admin/roles/${foreignCreate.body.data.id}`)
       .set('Authorization', `Bearer ${adminToken}`);
+  });
+
+  it('institution admin cannot assign registrar role via POST /admin/users', async () => {
+    if (!dbReady || !rolesOwnershipMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniId = await createUniversity(adminToken, suffix);
+    const instEmail = `inst_no_reg_${suffix}@example.com`;
+    await createInstitutionAdmin({ email: instEmail, universityId: uniId });
+    const instToken = await login(instEmail);
+    if (!instToken) return;
+
+    const res = await request(app)
+      .post('/admin/users')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        email: `registrar_user_${suffix}@example.com`,
+        password: 'Password@12',
+        first_name: 'No',
+        last_name: 'Registrar',
+        role: 'registrar',
+      });
+    expect(res.status).toBe(403);
+    expect(res.body.message).toMatch(/registrar/i);
+  });
+
+  it('POST /admin/roles with existing system role name returns helpful message', async () => {
+    if (!dbReady) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const res = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'institution_admin', display_name: 'Duplicate Institution Admin' });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/POST \/admin\/users/);
   });
 
   it('POST /admin/users rejects wrong university_id for institution admin', async () => {

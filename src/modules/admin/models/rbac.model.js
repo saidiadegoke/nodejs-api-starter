@@ -1,4 +1,5 @@
 const pool = require('../../../db/pool');
+const { INSTITUTION_ASSIGNABLE_SYSTEM_ROLES } = require('../utils/admin-rbac-scope');
 
 class RbacModel {
   // ---------- Roles ----------
@@ -24,9 +25,12 @@ class RbacModel {
       idx++;
     }
     if (scope && scope.mode === 'institution') {
-      conditions.push(`(is_system = true OR created_by = $${idx})`);
-      values.push(scope.actorId);
-      idx++;
+      const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
+      conditions.push(
+        `(created_by = $${idx} OR (is_system = true AND name = ANY($${idx + 1}::text[])))`
+      );
+      values.push(scope.actorId, assignable);
+      idx += 2;
     }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     return { whereClause, values, nextIdx: idx };
@@ -291,9 +295,12 @@ class RbacModel {
       idx++;
     }
     if (scope && scope.mode === 'institution') {
-      conditions.push(`(is_system = true OR created_by = $${idx})`);
-      values.push(scope.actorId);
-      idx++;
+      const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
+      conditions.push(
+        `(created_by = $${idx} OR (is_system = true AND name = ANY($${idx + 1}::text[])))`
+      );
+      values.push(scope.actorId, assignable);
+      idx += 2;
     }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);

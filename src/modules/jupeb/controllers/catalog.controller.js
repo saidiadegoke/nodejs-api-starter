@@ -188,6 +188,8 @@ class CatalogController {
         limit: req.query.limit,
         status: req.query.status,
         q: req.query.q,
+        sessionId: req.query.session_id || null,
+        userId: req.user && req.user.user_id,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {

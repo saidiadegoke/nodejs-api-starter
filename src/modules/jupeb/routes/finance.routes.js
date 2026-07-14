@@ -41,6 +41,11 @@ router.get('/institution/overview', institutionFinanceRead, FinanceController.in
 router.get('/institution/fees', institutionFinanceRead, FinanceController.institutionFees);
 router.get('/institution/fee-preview', institutionFinanceRead, FinanceController.institutionFeePreview);
 router.post('/institution/checkout', institutionFinanceWrite, FinanceController.institutionCheckout);
+router.post(
+  '/institution/payments/:paymentId/cancel',
+  institutionFinanceWrite,
+  FinanceController.cancelInstitutionPayment
+);
 router.get('/institution/payments', institutionFinanceRead, FinanceController.listInstitutionPayments);
 router.get(
   '/institution/payments/:paymentId/receipt',
