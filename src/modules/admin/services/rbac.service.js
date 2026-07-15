@@ -83,7 +83,8 @@ class RbacService {
     if (!/^[a-z][a-z0-9_]{1,49}$/.test(name)) {
       throw httpError(422, 'name must be lowercase snake_case, 2-50 chars');
     }
-    const existing = await rbacModel.findRoleByName(name);
+    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
+    const existing = await rbacModel.findRoleNameConflictForScope(name, scope);
     if (existing) {
       if (existing.is_system) {
         throw httpError(
@@ -107,7 +108,6 @@ class RbacService {
       if (!perm) throw httpError(404, `Permission not found: ${pid}`);
     }
 
-    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
     const createdBy = actorUserId || null;
     const ownerUniversityId =
       scope.mode === 'institution' ? scope.universityId : null;
@@ -134,6 +134,7 @@ class RbacService {
       return this._enrichRoleWithPermissions(role);
     } catch (e) {
       try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      if (e.code === '23505') throw httpError(409, 'Role with this name already exists');
       throw e;
     } finally {
       client.release();
@@ -142,6 +143,7 @@ class RbacService {
 
   async patchRole(id, body, actorUserId = null) {
     const role = await this.getRoleById(id, actorUserId);
+    const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
     if (role.is_system) {
       const allowedSystemKeys = ['description', 'display_name', 'status', 'permission_ids', 'permissions'];
       const onlyAllowed = Object.keys(body || {}).every((k) => allowedSystemKeys.includes(k));
@@ -155,7 +157,7 @@ class RbacService {
       if (!/^[a-z][a-z0-9_]{1,49}$/.test(name)) {
         throw httpError(422, 'name must be lowercase snake_case, 2-50 chars');
       }
-      const dup = await rbacModel.findRoleByName(name);
+      const dup = await rbacModel.findRoleNameConflictForScope(name, scope);
       if (dup && dup.id !== id) throw httpError(409, 'Another role already uses this name');
       fields.name = name;
     }
@@ -168,7 +170,13 @@ class RbacService {
       }
       fields.status = body.status;
     }
-    const updated = await rbacModel.updateRole(id, fields);
+    let updated;
+    try {
+      updated = await rbacModel.updateRole(id, fields);
+    } catch (e) {
+      if (e.code === '23505') throw httpError(409, 'Another role already uses this name');
+      throw e;
+    }
 
     const permIds = Array.isArray(body.permission_ids) ? body.permission_ids
       : Array.isArray(body.permissions) ? body.permissions

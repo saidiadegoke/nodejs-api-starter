@@ -614,6 +614,9 @@ class RegistrationService {
     if (session.status !== 'open') {
       throw httpError(422, 'Registrations can only be created for an open session');
     }
+    if (session.registration_locked) {
+      throw httpError(423, 'Registration is locked for this session');
+    }
     const university = await universityModel.findById(university_id);
     if (!university || university.status !== 'active') {
       throw httpError(404, 'University not found or inactive');
@@ -1035,6 +1038,12 @@ class RegistrationService {
       };
       return {
         ...emptyGrowth,
+        registration_locked: false,
+        registration_lock: {
+          locked: false,
+          session_id: null,
+          label: null,
+        },
         compared_to: null,
       };
     }
@@ -1062,6 +1071,12 @@ class RegistrationService {
         cur.total_subject_combinations,
         prev?.total_subject_combinations
       ),
+      registration_locked: Boolean(currentSession.registration_locked),
+      registration_lock: {
+        locked: Boolean(currentSession.registration_locked),
+        session_id: currentSession.id,
+        label: currentSession.academic_year,
+      },
       compared_to: previousSession ? { session_id: previousSession.id, label: previousSession.academic_year } : null,
     };
   }

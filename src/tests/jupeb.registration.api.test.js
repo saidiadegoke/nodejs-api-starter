@@ -12,6 +12,7 @@ const {
 describe('JUPEB registration API', () => {
   let registrationMigrated = false;
   let jupebEnhancements = false;
+  let registrationLockMigrated = false;
 
   beforeAll(async () => {
     try {
@@ -28,6 +29,12 @@ describe('JUPEB registration API', () => {
         jupebEnhancements = true;
       } catch {
         jupebEnhancements = false;
+      }
+      try {
+        await pool.query('SELECT registration_locked FROM jupeb_registration_sessions LIMIT 1');
+        registrationLockMigrated = true;
+      } catch {
+        registrationLockMigrated = false;
       }
     }
     // Non-positive TTL => no expiry (see registration.service); avoids flaky 410s if .env sets a short TTL.
@@ -175,6 +182,64 @@ describe('JUPEB registration API', () => {
     expect(finAgain.status).toBe(200);
     expect(finAgain.body.data.assigned).toBe(0);
     expect(finAgain.body.data.skipped).toBeGreaterThanOrEqual(0);
+  });
+
+  it('blocks institution enrollment when registration is locked for the session', async () => {
+    if (!registrationMigrated || !registrationLockMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+
+    const suffix = Date.now();
+    const uniRes = await request(app)
+      .post('/catalog/universities')
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        buildCatalogUniversityPayload('LCK', {
+          code: nextJupebTestUniversityCode('LCK'),
+          name: `Locked Reg Uni ${suffix}`,
+        })
+      );
+    expect(uniRes.status).toBe(201);
+
+    const scRes = await request(app)
+      .post('/catalog/subject-combinations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: nextJupebTestUniversityCode('LSC'),
+        title: 'Locked Combination',
+        subjects: ['Mathematics', 'Physics', 'Chemistry'],
+        is_global: true,
+      });
+    expect(scRes.status).toBe(201);
+
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+    const sessRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+      });
+    expect(sessRes.status).toBe(201);
+
+    const lockRes = await request(app)
+      .patch(`/sessions/${sessRes.body.data.id}/registration-lock`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ locked: true });
+    expect(lockRes.status).toBe(200);
+
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        session_id: sessRes.body.data.id,
+        university_id: uniRes.body.data.id,
+        subject_combination_id: scRes.body.data.id,
+      });
+    expect(createReg.status).toBe(423);
+    expect(createReg.body.message).toMatch(/locked/i);
   });
 
   it('reject requires reason and blocks dashboard', async () => {

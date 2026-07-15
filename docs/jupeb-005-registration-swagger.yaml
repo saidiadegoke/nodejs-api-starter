@@ -170,6 +170,7 @@ paths:
         pair with `delta_pct` 100), `up` / `down` / `flat` for real period-over-period changes, or
         `null` when there is no previous session to compare.
         **`compared_to`** identifies the prior session used for those deltas.
+        **`registration_lock`** reports whether registration is locked on the resolved current session.
 
         If no registration session exists in the database, counts are zero and `compared_to` is null.
       security:
@@ -199,6 +200,13 @@ paths:
                       pending: { type: integer }
                       rejected: { type: integer }
                       with_biometrics: { type: integer }
+                      registration_locked: { type: boolean }
+                      registration_lock:
+                        type: object
+                        properties:
+                          locked: { type: boolean }
+                          session_id: { type: string, format: uuid, nullable: true }
+                          label: { type: string, nullable: true }
                       compared_to:
                         nullable: true
                         type: object

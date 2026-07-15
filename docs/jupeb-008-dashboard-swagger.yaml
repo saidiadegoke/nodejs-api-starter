@@ -72,7 +72,7 @@ components:
       properties:
         id:     { type: string, format: uuid }
         label:  { type: string, example: '2026/2027', description: 'jupeb_registration_sessions.academic_year' }
-        status: { type: string, enum: [draft, open, closed, archived] }
+        status: { type: string, enum: [open, closed] }
     StatCard:
       type: object
       properties:
@@ -206,6 +206,8 @@ paths:
           non-replaced biometric capture.
         - `without_biometrics` is the inverse: non-withdrawn registrations with NO active
           biometric capture.
+        - `registration_locked` / `registration_lock.locked` indicates whether institutions
+          can currently enroll/issue new candidate codes for the resolved session.
       security:
         - BearerAuth: []
       parameters:
@@ -229,6 +231,13 @@ paths:
                           pending:          { $ref: '#/components/schemas/StatCard' }
                           with_biometrics:  { $ref: '#/components/schemas/StatCard' }
                           without_biometrics: { $ref: '#/components/schemas/StatCard' }
+                          registration_locked: { type: boolean }
+                          registration_lock:
+                            type: object
+                            properties:
+                              locked: { type: boolean }
+                              session_id: { type: string, format: uuid, nullable: true }
+                              label: { type: string, nullable: true }
                           compared_to:
                             type: object
                             nullable: true
@@ -347,7 +356,7 @@ paths:
                           session_id: { type: string, format: uuid }
                           academic_year: { type: string, example: '2025/2026' }
                           year_short: { type: string, example: '26' }
-                          status: { type: string, enum: [open, closed, draft] }
+                          status: { type: string, enum: [open, closed] }
                           opens_at: { type: string, format: date-time, nullable: true }
                           closes_at: { type: string, format: date-time, nullable: true }
                           candidate_info_cutoff_at: { type: string, format: date-time, nullable: true }

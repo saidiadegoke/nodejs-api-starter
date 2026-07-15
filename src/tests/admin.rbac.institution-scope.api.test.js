@@ -9,6 +9,7 @@ const {
 describe('Admin RBAC — institution-scoped lists', () => {
   let dbReady = false;
   let rolesOwnershipMigrated = false;
+  let scopedRoleNamesMigrated = false;
 
   const password = 'ScopeTest@12';
   const passwordHash = bcrypt.hashSync(password, 10);
@@ -26,6 +27,14 @@ describe('Admin RBAC — institution-scoped lists', () => {
     } catch {
       rolesOwnershipMigrated = false;
     }
+    try {
+      const scoped = await pool.query(
+        `SELECT to_regclass('ux_roles_institution_scope_name_lower') AS idx`
+      );
+      scopedRoleNamesMigrated = Boolean(scoped.rows[0] && scoped.rows[0].idx);
+    } catch {
+      scopedRoleNamesMigrated = false;
+    }
   });
 
   async function getAdminToken() {
@@ -37,6 +46,11 @@ describe('Admin RBAC — institution-scoped lists', () => {
 
   function unique(tag) {
     return `${tag}_${Date.now().toString(36)}_${Math.floor(Math.random() * 9999)}`.toLowerCase();
+  }
+
+  function uniquePhone(prefix) {
+    const tail = String(process.hrtime.bigint()).slice(-9);
+    return `+234${prefix}${tail}`;
   }
 
   async function createUniversity(adminToken, suffix) {
@@ -56,7 +70,7 @@ describe('Admin RBAC — institution-scoped lists', () => {
     const ins = await pool.query(
       `INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status)
        VALUES ($1, $2, true, true, $3, 'active') RETURNING id`,
-      [email, `+2348${String(Date.now()).slice(-9)}`, passwordHash]
+      [email, uniquePhone('8'), passwordHash]
     );
     const userId = ins.rows[0].id;
     await pool.query(
@@ -64,7 +78,13 @@ describe('Admin RBAC — institution-scoped lists', () => {
        VALUES ($1, 'Inst', 'Admin', 'Inst Admin', $2)`,
       [userId, universityId]
     );
-    const roleRow = await pool.query(`SELECT id FROM roles WHERE name = 'institution_admin' LIMIT 1`);
+    const roleRow = await pool.query(
+      `SELECT id FROM roles
+        WHERE name = 'institution_admin'
+          AND owner_jupeb_university_id IS NULL
+        ORDER BY is_system DESC
+        LIMIT 1`
+    );
     await pool.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`, [
       userId,
       roleRow.rows[0].id,
@@ -76,7 +96,7 @@ describe('Admin RBAC — institution-scoped lists', () => {
     const ins = await pool.query(
       `INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status)
        VALUES ($1, $2, true, true, $3, 'active') RETURNING id`,
-      [email, `+2349${String(Date.now()).slice(-9)}`, passwordHash]
+      [email, uniquePhone('9'), passwordHash]
     );
     const userId = ins.rows[0].id;
     await pool.query(
@@ -85,7 +105,14 @@ describe('Admin RBAC — institution-scoped lists', () => {
       [userId, universityId]
     );
     if (roleName) {
-      const roleRow = await pool.query(`SELECT id FROM roles WHERE name = $1 LIMIT 1`, [roleName]);
+      const roleRow = await pool.query(
+        `SELECT id FROM roles
+          WHERE name = $1
+            AND owner_jupeb_university_id IS NULL
+          ORDER BY is_system DESC
+          LIMIT 1`,
+        [roleName]
+      );
       if (roleRow.rows[0]) {
         await pool.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`, [
           userId,
@@ -133,7 +160,7 @@ describe('Admin RBAC — institution-scoped lists', () => {
     const uniB = await createUniversity(adminToken, `${suffix}b`);
 
     const instEmail = `inst_admin_${suffix}@example.com`;
-    await createInstitutionAdmin({ email: instEmail, universityId: uniA });
+    const instAdminId = await createInstitutionAdmin({ email: instEmail, universityId: uniA });
 
     const userAId = await createScopedUser({
       email: `user_a_${suffix}@example.com`,
@@ -153,7 +180,9 @@ describe('Admin RBAC — institution-scoped lists', () => {
     expect(list.status).toBe(200);
     const ids = list.body.data.map((u) => u.id);
     expect(ids).toContain(userAId);
+    expect(ids).not.toContain(instAdminId);
     expect(ids).not.toContain(userBId);
+    expect(list.body.data.some((u) => (u.roles || []).includes('institution_admin'))).toBe(false);
 
     const outOfScope = await request(app)
       .get(`/admin/users/${userBId}`)
@@ -318,6 +347,91 @@ describe('Admin RBAC — institution-scoped lists', () => {
     expect(created.status).toBe(201);
     expect(created.body.data.user.role).toBe(customRoleName);
     expect(created.body.data.university.id).toBe(uniId);
+  });
+
+  it('institution role names are unique per institution, not globally', async () => {
+    if (!dbReady || !rolesOwnershipMigrated || !scopedRoleNamesMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniA = await createUniversity(adminToken, `${suffix}a`);
+    const uniB = await createUniversity(adminToken, `${suffix}b`);
+    const instAEmail = `inst_dup_a_${suffix}@example.com`;
+    const instBEmail = `inst_dup_b_${suffix}@example.com`;
+    await createInstitutionAdmin({ email: instAEmail, universityId: uniA });
+    await createInstitutionAdmin({ email: instBEmail, universityId: uniB });
+    const instAToken = await login(instAEmail);
+    const instBToken = await login(instBEmail);
+    if (!instAToken || !instBToken) return;
+
+    const roleName = unique('shared_inst_role');
+    const first = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${instAToken}`)
+      .send({ name: roleName, display_name: 'Shared Institution Role' });
+    expect(first.status).toBe(201);
+    expect(first.body.data.owner_jupeb_university_id).toBe(uniA);
+
+    const sameInstitution = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${instAToken}`)
+      .send({ name: roleName, display_name: 'Duplicate Same Institution' });
+    expect(sameInstitution.status).toBe(409);
+
+    const otherInstitution = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${instBToken}`)
+      .send({ name: roleName, display_name: 'Duplicate Other Institution' });
+    expect(otherInstitution.status).toBe(201);
+    expect(otherInstitution.body.data.owner_jupeb_university_id).toBe(uniB);
+  });
+
+  it('institution role can reuse a system role name and assignment picks the scoped role', async () => {
+    if (!dbReady || !rolesOwnershipMigrated || !scopedRoleNamesMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const uniId = await createUniversity(adminToken, suffix);
+    const instEmail = `inst_system_name_${suffix}@example.com`;
+    await createInstitutionAdmin({ email: instEmail, universityId: uniId });
+    const instToken = await login(instEmail);
+    if (!instToken) return;
+
+    const roleCreate = await request(app)
+      .post('/admin/roles')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({ name: 'registrar', display_name: 'Institution Registrar' });
+    expect(roleCreate.status).toBe(201);
+    expect(roleCreate.body.data.is_system).toBe(false);
+    expect(roleCreate.body.data.owner_jupeb_university_id).toBe(uniId);
+
+    const targetEmail = `scoped_registrar_${suffix}@example.com`;
+    const created = await request(app)
+      .post('/admin/users')
+      .set('Authorization', `Bearer ${instToken}`)
+      .send({
+        email: targetEmail,
+        password: 'Password@12',
+        first_name: 'Scoped',
+        last_name: 'Registrar',
+        role: 'registrar',
+      });
+    expect(created.status).toBe(201);
+
+    const assigned = await pool.query(
+      `SELECT role_id FROM user_roles WHERE user_id = $1`,
+      [created.body.data.user.user_id]
+    );
+    expect(assigned.rows.map((r) => r.role_id)).toContain(roleCreate.body.data.id);
+
+    const targetToken = await login(targetEmail);
+    if (!targetToken) return;
+    const list = await request(app)
+      .get('/admin/users?limit=1')
+      .set('Authorization', `Bearer ${targetToken}`);
+    expect(list.status).toBe(403);
   });
 
   it('POST /admin/users rejects custom roles outside institution scope', async () => {

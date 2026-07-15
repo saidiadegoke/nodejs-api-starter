@@ -124,19 +124,19 @@ async function resolveRegistrationSession(rawSessionId) {
   if (rawSessionId) {
     assertUuid(rawSessionId, 'session_id');
     const r = await pool.query(
-      `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions WHERE id = $1`,
+      `SELECT * FROM jupeb_registration_sessions WHERE id = $1`,
       [rawSessionId]
     );
     if (!r.rows[0]) throw httpError(404, 'Session not found');
     return r.rows[0];
   }
   const open = await pool.query(
-    `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions
+    `SELECT * FROM jupeb_registration_sessions
      WHERE status = 'open' ORDER BY opens_at DESC LIMIT 1`
   );
   if (open.rows[0]) return open.rows[0];
   const fallback = await pool.query(
-    `SELECT id, academic_year, status, opens_at, closes_at FROM jupeb_registration_sessions
+    `SELECT * FROM jupeb_registration_sessions
      ORDER BY opens_at DESC LIMIT 1`
   );
   return fallback.rows[0] || null;

@@ -42,7 +42,7 @@ paths:
       summary: Create payment intent linked to current (claimed) registration
       description: |
         Uses `payments` with `registration_id` set. Blocks duplicate pending intents per registration.
-        Session must not be closed/archived.
+        Session must be open.
       security:
         - BearerAuth: []
       requestBody:

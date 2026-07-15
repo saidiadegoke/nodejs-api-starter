@@ -20,6 +20,7 @@ function toSessionSummary(row) {
     id: row.id,
     label: row.academic_year,
     status: row.status,
+    registration_locked: Boolean(row.registration_locked),
     opens_at: row.opens_at || null,
     closes_at: row.closes_at || null,
   };

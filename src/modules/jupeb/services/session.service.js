@@ -31,6 +31,81 @@ function parseTs(value, label) {
   return d;
 }
 
+function parseNullableTs(value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  return parseTs(value, label).toISOString();
+}
+
+function parsePositiveMoney(value, label, { allowNull = true } = {}) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') {
+    if (allowNull) return null;
+    throw httpError(422, `${label} must be a positive number`);
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw httpError(422, `${label} must be a positive number or null`);
+  }
+  return n;
+}
+
+function parseNonNegativeMoney(value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw httpError(422, `${label} must be a non-negative number`);
+  }
+  return n;
+}
+
+function parseMaxCaScore(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > 100) {
+    throw httpError(422, 'max_ca_score must be an integer between 0 and 100');
+  }
+  return n;
+}
+
+function parseCurrency(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const currency = String(value).trim().toUpperCase().slice(0, 3);
+  if (currency.length !== 3) {
+    throw httpError(422, 'registration_fee_currency must be a 3-letter code');
+  }
+  return currency;
+}
+
+function nullableTime(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const PATCHABLE_SESSION_FIELDS = new Set([
+  'academic_year',
+  'year_short',
+  'opens_at',
+  'closes_at',
+  'student_submission_deadline',
+  'institution_approval_deadline',
+  'notes',
+  'description',
+  'registration_fee_amount',
+  'registration_fee_currency',
+  'candidate_info_cutoff_at',
+  'profile_update_cutoff_at',
+  'ca_cutoff_at',
+  'max_ca_score',
+  'affiliation_fee_existing',
+  'affiliation_fee_new',
+  'exam_fee_per_candidate',
+]);
+
 class SessionService {
   async list({ page, limit, status, q }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
@@ -136,6 +211,7 @@ class SessionService {
     }
 
     try {
+      await sessionModel.closeOpenSessions(userId);
       return await sessionModel.create({
         academic_year,
         year_short,
@@ -163,129 +239,119 @@ class SessionService {
 
   async patch(id, body, userId) {
     const row = await this.getById(id);
-    if (row.status === 'archived') {
-      throw httpError(422, 'Cannot update an archived session');
+    const payload = body || {};
+    const disallowed = Object.keys(payload).filter(
+      (k) => payload[k] !== undefined && !PATCHABLE_SESSION_FIELDS.has(k)
+    );
+    if (disallowed.length) {
+      throw httpError(422, `Unsupported session field(s): ${disallowed.join(', ')}`);
     }
     const fields = {};
-    if (row.status === 'closed') {
-      const disallowed = Object.keys(body).filter(
-        (k) => body[k] !== undefined && !['notes'].includes(k)
+
+    if (payload.academic_year !== undefined) {
+      fields.academic_year = String(payload.academic_year || '').trim();
+      if (!fields.academic_year) throw httpError(422, 'academic_year cannot be empty');
+    }
+    if (payload.year_short !== undefined) {
+      fields.year_short = String(payload.year_short || '').trim();
+      if (!fields.year_short) throw httpError(422, 'year_short cannot be empty');
+    }
+    if (fields.academic_year !== undefined || fields.year_short !== undefined) {
+      const y = validateYearShortForAcademicYear(
+        fields.academic_year !== undefined ? fields.academic_year : row.academic_year,
+        fields.year_short !== undefined ? fields.year_short : row.year_short
       );
-      if (disallowed.length) {
-        throw httpError(422, 'Only notes may be updated on a closed session');
-      }
-      if (body.notes === undefined) {
-        throw httpError(422, 'notes is required when patching a closed session');
-      }
-      fields.notes = body.notes;
-      fields.updated_by = userId;
-      return sessionModel.updateById(id, fields);
+      if (!y.ok) throw httpError(422, y.error);
     }
-    if (row.status === 'open') {
-      const allowedOpen = [
-        'notes',
-        'student_submission_deadline',
-        'institution_approval_deadline',
-        'registration_fee_amount',
-        'registration_fee_currency',
-      ];
-      const disallowed = Object.keys(body).filter(
-        (k) => body[k] !== undefined && !allowedOpen.includes(k)
-      );
-      if (disallowed.length) {
-        throw httpError(422, `Only ${allowedOpen.join(', ')} may be updated on an open session`);
-      }
-      for (const k of allowedOpen) {
-        if (body[k] !== undefined) fields[k] = body[k];
-      }
-      if (Object.keys(fields).length === 0) {
-        throw httpError(422, 'No updatable fields supplied for an open session');
-      }
-      if (fields.student_submission_deadline) {
-        fields.student_submission_deadline = parseTs(
-          fields.student_submission_deadline,
-          'student_submission_deadline'
-        ).toISOString();
-      }
-      if (fields.institution_approval_deadline) {
-        fields.institution_approval_deadline = parseTs(
-          fields.institution_approval_deadline,
-          'institution_approval_deadline'
-        ).toISOString();
-      }
-      if (fields.registration_fee_amount !== undefined) {
-        if (fields.registration_fee_amount === null) {
-          fields.registration_fee_amount = null;
-        } else {
-          const fa = Number(fields.registration_fee_amount);
-          if (!Number.isFinite(fa) || fa <= 0) {
-            throw httpError(422, 'registration_fee_amount must be a positive number or null');
-          }
-          fields.registration_fee_amount = fa;
-        }
-      }
-      if (fields.registration_fee_currency !== undefined && fields.registration_fee_currency !== null) {
-        const fc = String(fields.registration_fee_currency).trim().toUpperCase().slice(0, 3);
-        if (fc.length !== 3) throw httpError(422, 'registration_fee_currency must be a 3-letter code');
-        fields.registration_fee_currency = fc;
-      }
-      fields.updated_by = userId;
-      return sessionModel.updateById(id, fields);
+
+    if (payload.opens_at !== undefined) fields.opens_at = parseTs(payload.opens_at, 'opens_at').toISOString();
+    if (payload.closes_at !== undefined) fields.closes_at = parseTs(payload.closes_at, 'closes_at').toISOString();
+    const opens = nullableTime(fields.opens_at !== undefined ? fields.opens_at : row.opens_at);
+    const closes = nullableTime(fields.closes_at !== undefined ? fields.closes_at : row.closes_at);
+    if (!opens || !closes) {
+      throw httpError(422, 'opens_at and closes_at are required');
     }
-    // draft
-    if (body.academic_year !== undefined) fields.academic_year = body.academic_year;
-    if (body.year_short !== undefined) fields.year_short = body.year_short;
-    if (body.opens_at !== undefined) fields.opens_at = parseTs(body.opens_at, 'opens_at').toISOString();
-    if (body.closes_at !== undefined) fields.closes_at = parseTs(body.closes_at, 'closes_at').toISOString();
-    if (body.student_submission_deadline !== undefined) {
-      fields.student_submission_deadline = body.student_submission_deadline
-        ? parseTs(body.student_submission_deadline, 'student_submission_deadline').toISOString()
-        : null;
+    if (opens.getTime() >= closes.getTime()) {
+      throw httpError(422, 'opens_at must be before closes_at');
     }
-    if (body.institution_approval_deadline !== undefined) {
-      fields.institution_approval_deadline = body.institution_approval_deadline
-        ? parseTs(body.institution_approval_deadline, 'institution_approval_deadline').toISOString()
-        : null;
+
+    for (const key of [
+      'student_submission_deadline',
+      'institution_approval_deadline',
+      'candidate_info_cutoff_at',
+      'profile_update_cutoff_at',
+      'ca_cutoff_at',
+    ]) {
+      if (payload[key] !== undefined) fields[key] = parseNullableTs(payload[key], key);
     }
-    if (body.notes !== undefined) fields.notes = body.notes;
-    if (body.registration_fee_amount !== undefined) {
-      if (body.registration_fee_amount === null) {
-        fields.registration_fee_amount = null;
-      } else {
-        const fa = Number(body.registration_fee_amount);
-        if (!Number.isFinite(fa) || fa <= 0) {
-          throw httpError(422, 'registration_fee_amount must be a positive number or null');
-        }
-        fields.registration_fee_amount = fa;
+
+    const ordered = [
+      ['closes_at', closes],
+      [
+        'candidate_info_cutoff_at',
+        nullableTime(fields.candidate_info_cutoff_at !== undefined
+          ? fields.candidate_info_cutoff_at
+          : row.candidate_info_cutoff_at),
+      ],
+      [
+        'profile_update_cutoff_at',
+        nullableTime(fields.profile_update_cutoff_at !== undefined
+          ? fields.profile_update_cutoff_at
+          : row.profile_update_cutoff_at),
+      ],
+      [
+        'ca_cutoff_at',
+        nullableTime(fields.ca_cutoff_at !== undefined ? fields.ca_cutoff_at : row.ca_cutoff_at),
+      ],
+    ].filter(([, v]) => v != null);
+    for (let i = 1; i < ordered.length; i += 1) {
+      const [prevName, prevTs] = ordered[i - 1];
+      const [thisName, thisTs] = ordered[i];
+      if (thisTs.getTime() < prevTs.getTime()) {
+        throw httpError(422, `${thisName} must be on or after ${prevName}`);
       }
     }
-    if (body.registration_fee_currency !== undefined) {
-      if (body.registration_fee_currency === null || body.registration_fee_currency === '') {
-        fields.registration_fee_currency = null;
-      } else {
-        const fc = String(body.registration_fee_currency).trim().toUpperCase().slice(0, 3);
-        if (fc.length !== 3) throw httpError(422, 'registration_fee_currency must be a 3-letter code');
-        fields.registration_fee_currency = fc;
-      }
+
+    if (payload.notes !== undefined) {
+      fields.notes = payload.notes || null;
+    } else if (payload.description !== undefined) {
+      fields.notes = payload.description || null;
     }
+
+    const registrationFeeAmount = parsePositiveMoney(
+      payload.registration_fee_amount,
+      'registration_fee_amount'
+    );
+    if (registrationFeeAmount !== undefined) fields.registration_fee_amount = registrationFeeAmount;
+
+    const registrationFeeCurrency = parseCurrency(payload.registration_fee_currency);
+    if (registrationFeeCurrency !== undefined) fields.registration_fee_currency = registrationFeeCurrency;
+    if (
+      fields.registration_fee_amount != null
+      && fields.registration_fee_currency === undefined
+      && !row.registration_fee_currency
+    ) {
+      fields.registration_fee_currency = 'NGN';
+    }
+
+    const maxCaScore = parseMaxCaScore(payload.max_ca_score);
+    if (maxCaScore !== undefined) fields.max_ca_score = maxCaScore;
+
+    for (const key of ['affiliation_fee_existing', 'affiliation_fee_new', 'exam_fee_per_candidate']) {
+      const amount = parseNonNegativeMoney(payload[key], key);
+      if (amount !== undefined) fields[key] = amount;
+    }
+
     if (Object.keys(fields).length === 0) {
-      throw httpError(422, 'No fields to update');
-    }
-    if (fields.academic_year || fields.year_short) {
-      const ay = fields.academic_year || row.academic_year;
-      const ys = fields.year_short || row.year_short;
-      const v = validateYearShortForAcademicYear(ay, ys);
-      if (!v.ok) throw httpError(422, v.error);
-    }
-    if (fields.opens_at || fields.closes_at) {
-      const o = new Date(fields.opens_at || row.opens_at);
-      const cl = new Date(fields.closes_at || row.closes_at);
-      if (o.getTime() >= cl.getTime()) {
-        throw httpError(422, 'opens_at must be before closes_at');
-      }
+      throw httpError(422, 'No updatable session fields supplied');
     }
     fields.updated_by = userId;
-    return sessionModel.updateById(id, fields);
+    try {
+      return await sessionModel.updateById(id, fields);
+    } catch (e) {
+      if (e.code === '23505') throw httpError(409, 'A session with this academic_year already exists');
+      throw e;
+    }
   }
 
   async open(id, userId) {
@@ -329,6 +395,21 @@ class SessionService {
     }
     const updated = await sessionModel.setStatus(id, 'open', userId);
     await sessionModel.insertEvent(id, 'reopened', {}, userId);
+    return updated;
+  }
+
+  async setRegistrationLock(id, body, userId) {
+    await this.getById(id);
+    if (!body || typeof body.locked !== 'boolean') {
+      throw httpError(422, 'locked must be a boolean');
+    }
+    const updated = await sessionModel.setRegistrationLocked(id, body.locked, userId);
+    await sessionModel.insertEvent(
+      id,
+      body.locked ? 'registration_locked' : 'registration_unlocked',
+      { registration_locked: body.locked },
+      userId
+    );
     return updated;
   }
 

@@ -8,6 +8,7 @@ const { closeAllOpenJupebSessions, nextJupebAcademicSession } = require('./jupeb
  */
 describe('JUPEB sessions API', () => {
   let sessionsMigrated = false;
+  let registrationLockMigrated = false;
 
   beforeAll(async () => {
     try {
@@ -19,6 +20,14 @@ describe('JUPEB sessions API', () => {
       console.warn(
         '[jupeb.sessions.api] Skipping DB-backed tests: apply migration `003_jupeb_sessions.sql`.'
       );
+    }
+    if (sessionsMigrated) {
+      try {
+        await pool.query('SELECT registration_locked FROM jupeb_registration_sessions LIMIT 1');
+        registrationLockMigrated = true;
+      } catch {
+        registrationLockMigrated = false;
+      }
     }
   });
 
@@ -64,6 +73,7 @@ describe('JUPEB sessions API', () => {
         notes: 'integration test',
       });
     expect(createRes.status).toBe(201);
+    expect(createRes.body.data.status).toBe('open');
     const sessionId = createRes.body.data.id;
 
     await closeAllOpenJupebSessions(token);
@@ -90,6 +100,105 @@ describe('JUPEB sessions API', () => {
     expect(finRes.status).toBe(200);
     expect(finRes.body.data).toHaveProperty('assigned');
     expect(typeof finRes.body.data.assigned).toBe('number');
+  });
+
+  it('PATCH /sessions/:id/registration-lock toggles registration lock', async () => {
+    if (!sessionsMigrated || !registrationLockMigrated) return;
+    const token = await getAdminAccessToken();
+    if (!token) return;
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+
+    const createRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+      });
+    expect(createRes.status).toBe(201);
+    const sessionId = createRes.body.data.id;
+    expect(createRes.body.data.registration_locked).toBe(false);
+
+    const locked = await request(app)
+      .patch(`/sessions/${sessionId}/registration-lock`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ locked: true });
+    expect(locked.status).toBe(200);
+    expect(locked.body.data.registration_locked).toBe(true);
+
+    const unlocked = await request(app)
+      .patch(`/sessions/${sessionId}/registration-lock`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ locked: false });
+    expect(unlocked.status).toBe(200);
+    expect(unlocked.body.data.registration_locked).toBe(false);
+  });
+
+  it('PATCH /sessions/:id updates editable fields regardless of session status', async () => {
+    if (!sessionsMigrated) return;
+    const token = await getAdminAccessToken();
+    if (!token) return;
+    const original = nextJupebAcademicSession();
+    const updated = nextJupebAcademicSession();
+
+    const create = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: original.academicYear,
+        year_short: original.yearShort,
+        opens_at: new Date(`${original.y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${original.y1}-06-01T00:00:00.000Z`).toISOString(),
+        notes: 'before patch',
+      });
+    expect(create.status).toBe(201);
+    const sessionId = create.body.data.id;
+
+    const close = await request(app)
+      .post(`/sessions/${sessionId}/close`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(close.status).toBe(200);
+
+    const candidateCutoff = new Date(`${updated.y1}-07-01T00:00:00.000Z`).toISOString();
+    const profileCutoff = new Date(`${updated.y1}-08-01T00:00:00.000Z`).toISOString();
+    const caCutoff = new Date(`${updated.y1}-09-01T00:00:00.000Z`).toISOString();
+    const patch = await request(app)
+      .patch(`/sessions/${sessionId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: updated.academicYear,
+        year_short: updated.yearShort,
+        opens_at: new Date(`${updated.y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${updated.y1}-06-01T00:00:00.000Z`).toISOString(),
+        student_submission_deadline: new Date(`${updated.y1}-04-01T00:00:00.000Z`).toISOString(),
+        institution_approval_deadline: new Date(`${updated.y1}-05-01T00:00:00.000Z`).toISOString(),
+        candidate_info_cutoff_at: candidateCutoff,
+        profile_update_cutoff_at: profileCutoff,
+        ca_cutoff_at: caCutoff,
+        max_ca_score: 40,
+        affiliation_fee_existing: 300000,
+        affiliation_fee_new: 1200000,
+        exam_fee_per_candidate: 45000,
+        registration_fee_amount: 12500,
+        registration_fee_currency: 'ngn',
+        description: 'after patch',
+      });
+    expect(patch.status).toBe(200);
+    expect(patch.body.data.status).toBe('closed');
+    expect(patch.body.data.academic_year).toBe(updated.academicYear);
+    expect(patch.body.data.year_short).toBe(updated.yearShort);
+    expect(patch.body.data.notes).toBe('after patch');
+    expect(patch.body.data.max_ca_score).toBe(40);
+    expect(Number(patch.body.data.registration_fee_amount)).toBe(12500);
+    expect(patch.body.data.registration_fee_currency).toBe('NGN');
+    expect(Number(patch.body.data.affiliation_fee_existing)).toBe(300000);
+    expect(Number(patch.body.data.affiliation_fee_new)).toBe(1200000);
+    expect(Number(patch.body.data.exam_fee_per_candidate)).toBe(45000);
+    expect(patch.body.data.candidate_info_cutoff_at).toBeTruthy();
+    expect(patch.body.data.profile_update_cutoff_at).toBeTruthy();
+    expect(patch.body.data.ca_cutoff_at).toBeTruthy();
   });
 
   it('persists cutoff dates, fees, max_ca_score, description', async () => {

@@ -144,6 +144,23 @@ class SessionController {
     }
   }
 
+  static async setRegistrationLock(req, res) {
+    try {
+      const row = await sessionService.setRegistrationLock(
+        req.params.sessionId,
+        req.body,
+        req.user.user_id
+      );
+      return sendSuccess(
+        res,
+        row,
+        row.registration_locked ? 'Registration locked' : 'Registration unlocked'
+      );
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
   static async finalize(req, res) {
     try {
       const data = await sessionService.finalizeCandidateNumbers(
