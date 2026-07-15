@@ -14,8 +14,13 @@ class UserController {
    */
   static async getAllUsers(req, res) {
     try {
-      const { page = 1, limit = 10, q } = req.query;
-      const result = await UserService.getAllUsers(page, limit, q, req.user && req.user.user_id);
+      const { page = 1, limit = 10, q, search } = req.query;
+      const result = await UserService.getAllUsers(
+        page,
+        limit,
+        q !== undefined ? q : search,
+        req.user && req.user.user_id
+      );
       sendPaginated(res, result.users, result.page, result.limit, result.total);
     } catch (error) {
       sendError(res, error.message, error.status || BAD_REQUEST);

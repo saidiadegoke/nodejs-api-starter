@@ -23,6 +23,7 @@ router.get('/:sessionId/stats', sessionRead, SessionController.stats);
 router.post('/:sessionId/open', sessionWrite, SessionController.open);
 router.post('/:sessionId/close', sessionWrite, SessionController.close);
 router.post('/:sessionId/reopen', superAdminOnly, SessionController.reopen);
+router.patch('/:sessionId/registration-lock', sessionWrite, SessionController.setRegistrationLock);
 router.post('/:sessionId/finalize-candidate-numbers', sessionWrite, SessionController.finalize);
 
 router.get('/:sessionId', sessionRead, SessionController.getById);

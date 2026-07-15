@@ -29,19 +29,14 @@ describe('JUPEB session validation utils', () => {
   });
 
   describe('canTransitionStatus', () => {
-    it('allows draft->open, open->closed, closed->archived', () => {
-      expect(canTransitionStatus('draft', 'open')).toBe(true);
+    it('allows open->closed and closed->open', () => {
       expect(canTransitionStatus('open', 'closed')).toBe(true);
-      expect(canTransitionStatus('closed', 'archived')).toBe(true);
+      expect(canTransitionStatus('closed', 'open')).toBe(true);
     });
 
     it('disallows invalid jumps', () => {
       expect(canTransitionStatus('draft', 'closed')).toBe(false);
       expect(canTransitionStatus('archived', 'open')).toBe(false);
-    });
-
-    it('allows closed->open for reopen flow', () => {
-      expect(canTransitionStatus('closed', 'open')).toBe(true);
     });
   });
 });

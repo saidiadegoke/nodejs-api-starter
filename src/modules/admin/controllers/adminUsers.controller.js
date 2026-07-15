@@ -2,6 +2,7 @@ const pool = require('../../../db/pool');
 const AuthModel = require('../../auth/models/auth.model');
 const UserUniversityModel = require('../../../shared/models/user-university.model');
 const universityModel = require('../../jupeb/models/university.model');
+const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
 const AdminUsersService = require('../services/adminUsers.service');
 const rbacModel = require('../models/rbac.model');
 const { resolveAdminRbacScope, assertRoleAccessible } = require('../utils/admin-rbac-scope');
@@ -15,6 +16,19 @@ const {
   INTERNAL_SERVER_ERROR,
   FORBIDDEN,
 } = require('../../../shared/constants/statusCodes');
+
+function queueUserCredentialsEmail({ email, password, firstName, role, universityName }) {
+  if (!email || !password) return;
+  setImmediate(() => {
+    jupebMailer.sendUserCredentials({
+      email,
+      password,
+      firstName,
+      role,
+      universityName,
+    });
+  });
+}
 
 class AdminUsersController {
   static async getStats(req, res) {
@@ -84,7 +98,7 @@ class AdminUsersController {
         ? await resolveAdminRbacScope(req.user.user_id)
         : { mode: 'full' };
 
-      const roleRow = await rbacModel.findRoleByName(roleName);
+      const roleRow = await rbacModel.findRoleByNameForScope(roleName, scope);
       if (!roleRow) {
         return sendError(res, 'Role not found', NOT_FOUND);
       }
@@ -139,9 +153,16 @@ class AdminUsersController {
         first_name,
         last_name,
         role: roleRow.name,
+        role_id: roleRow.id,
       });
 
       if (!university_id) {
+        queueUserCredentialsEmail({
+          email: user.email,
+          password,
+          firstName: first_name,
+          role: roleRow.name,
+        });
         return sendSuccess(
           res,
           {
@@ -184,6 +205,14 @@ class AdminUsersController {
           );
         }
         await client.query('COMMIT');
+
+        queueUserCredentialsEmail({
+          email: user.email,
+          password,
+          firstName: first_name,
+          role: roleRow.name,
+          universityName: uni.name,
+        });
 
         return sendSuccess(
           res,

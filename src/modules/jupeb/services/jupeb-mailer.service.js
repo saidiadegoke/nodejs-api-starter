@@ -284,6 +284,33 @@ async function sendInstitutionAdminCredentials({ email, password, firstName, uni
   );
 }
 
+/**
+ * Sent when an admin-created portal user account is created with a temporary password.
+ */
+async function sendUserCredentials({ email, password, firstName, role, universityName }) {
+  if (!email || !password) return;
+  const loginUrl = `${frontendUrl()}/auth/login`;
+  const roleLabel = role ? String(role).replace(/_/g, ' ') : 'portal user';
+  return fireAndForget(
+    sendEmail({
+      to: email,
+      subject: `${appName()} — your account is ready`,
+      templateFile: 'jupeb-user-credentials.html',
+      placeholders: {
+        appName: appName(),
+        firstName: firstName || 'User',
+        role: roleLabel,
+        universityName: universityName || '',
+        email,
+        password,
+        loginUrl,
+        year: year(),
+      },
+    }),
+    'user-credentials'
+  );
+}
+
 module.exports = {
   sendCodeIssued,
   sendWelcomeStudent,
@@ -292,4 +319,5 @@ module.exports = {
   sendRegistrationWithdrawn,
   sendMatricAssigned,
   sendInstitutionAdminCredentials,
+  sendUserCredentials,
 };

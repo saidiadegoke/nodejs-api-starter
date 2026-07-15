@@ -11,7 +11,7 @@ class AuthModel {
     try {
       await client.query('BEGIN');
 
-      const { email, phone, password, first_name, last_name, role } = userData;
+      const { email, phone, password, first_name, last_name, role, role_id } = userData;
       
       // Hash password
       const password_hash = await bcrypt.hash(password, 10);
@@ -38,12 +38,26 @@ class AuthModel {
         await client.query('ROLLBACK');
         throw new Error('Role is required');
       }
-      await client.query(
-        `INSERT INTO user_roles (user_id, role_id)
-         SELECT $1, id FROM roles WHERE name = $2
-         ON CONFLICT (user_id, role_id) DO NOTHING`,
-        [user.id, role]
-      );
+      if (role_id) {
+        await client.query(
+          `INSERT INTO user_roles (user_id, role_id)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id, role_id) DO NOTHING`,
+          [user.id, role_id]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO user_roles (user_id, role_id)
+           SELECT $1, id
+             FROM roles
+            WHERE name = $2
+              AND owner_jupeb_university_id IS NULL
+            ORDER BY is_system DESC, created_at ASC
+            LIMIT 1
+           ON CONFLICT (user_id, role_id) DO NOTHING`,
+          [user.id, role]
+        );
+      }
 
       await client.query('COMMIT');
       return user;
@@ -106,6 +120,7 @@ class AuthModel {
                     SELECT 1 FROM user_roles ur
                       JOIN roles ro ON ro.id = ur.role_id
                      WHERE ur.user_id = u.id
+                       AND ro.owner_jupeb_university_id IS NULL
                        AND ro.name NOT IN ('student', 'user')
                   ) AS has_admin_role,
                   EXISTS (
@@ -265,6 +280,7 @@ class AuthModel {
        FROM user_roles ur
        JOIN roles r ON ur.role_id = r.id
        WHERE ur.user_id = $1 
+       AND r.owner_jupeb_university_id IS NULL
        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
       [userId]
     );

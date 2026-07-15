@@ -15,6 +15,7 @@ const hasRole = async (userId, roleName) => {
       JOIN roles r ON ur.role_id = r.id
       WHERE ur.user_id = $1 
       AND r.name = $2
+      AND r.owner_jupeb_university_id IS NULL
       AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
     ) AS has_role`,
     [userId, roleName]
@@ -72,6 +73,7 @@ const getUserRoles = async (userId) => {
     `SELECT r.name FROM user_roles ur
      JOIN roles r ON ur.role_id = r.id
      WHERE ur.user_id = $1
+     AND r.owner_jupeb_university_id IS NULL
      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
     [userId]
   );
