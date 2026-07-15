@@ -1,4 +1,6 @@
 const pool = require('../../../db/pool');
+const bcrypt = require('bcryptjs');
+const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
 
 const USER_LIST_COLUMNS = `
     u.id,
@@ -36,7 +38,7 @@ const USER_LIST_SELECT = `
 `;
 
 class User {
-  static _buildListFilters({ q = null, universityId = null } = {}) {
+  static _buildListFilters({ q = null, universityId = null, excludeGlobalRoleNames = [] } = {}) {
     const values = [];
     const conditions = ['u.deleted_at IS NULL'];
     let idx = 1;
@@ -56,14 +58,37 @@ class User {
       values.push(universityId);
       idx += 1;
     }
+    if (excludeGlobalRoleNames && excludeGlobalRoleNames.length) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1
+          FROM user_roles ur_ex
+          JOIN roles r_ex ON ur_ex.role_id = r_ex.id
+         WHERE ur_ex.user_id = u.id
+           AND r_ex.owner_jupeb_university_id IS NULL
+           AND r_ex.name = ANY($${idx}::text[])
+           AND (ur_ex.expires_at IS NULL OR ur_ex.expires_at > NOW())
+      )`);
+      values.push(excludeGlobalRoleNames);
+      idx += 1;
+    }
     return { whereSql: conditions.join(' AND '), values, nextIdx: idx };
   }
 
   /**
    * Paginated user list with total count in a single query.
    */
-  static async findAllPaginated({ limit, offset, q = null, universityId = null }) {
-    const { whereSql, values, nextIdx } = User._buildListFilters({ q, universityId });
+  static async findAllPaginated({
+    limit,
+    offset,
+    q = null,
+    universityId = null,
+    excludeGlobalRoleNames = [],
+  }) {
+    const { whereSql, values, nextIdx } = User._buildListFilters({
+      q,
+      universityId,
+      excludeGlobalRoleNames,
+    });
     const limitIdx = nextIdx;
     const offsetIdx = nextIdx + 1;
     values.push(limit, offset);
@@ -85,16 +110,32 @@ class User {
   /**
    * Find all users (non-deleted) with profile and role names
    */
-  static async findAll(limit = 10, offset = 0, q = null, universityId = null) {
-    const { rows } = await User.findAllPaginated({ limit, offset, q, universityId });
+  static async findAll(
+    limit = 10,
+    offset = 0,
+    q = null,
+    universityId = null,
+    excludeGlobalRoleNames = []
+  ) {
+    const { rows } = await User.findAllPaginated({
+      limit,
+      offset,
+      q,
+      universityId,
+      excludeGlobalRoleNames,
+    });
     return rows;
   }
 
   /**
    * Count total non-deleted users
    */
-  static async count(q = null, universityId = null) {
-    const { whereSql, values } = User._buildListFilters({ q, universityId });
+  static async count(q = null, universityId = null, excludeGlobalRoleNames = []) {
+    const { whereSql, values } = User._buildListFilters({
+      q,
+      universityId,
+      excludeGlobalRoleNames,
+    });
     const result = await pool.query(
       `SELECT COUNT(*)::int AS c
          FROM users u
@@ -132,15 +173,35 @@ class User {
    * Create new user
    */
   static async create(userData) {
-    const { email, username, password_hash, full_name, phone, role } = userData;
+    const {
+      email,
+      username,
+      password_hash,
+      full_name,
+      phone,
+      role,
+      password,
+    } = userData;
     if (!role) {
       throw new Error('Role is required');
     }
+    const resolvedPasswordHash = password_hash || (password ? await bcrypt.hash(password, 10) : null);
     const result = await pool.query(
       'INSERT INTO users (email, username, password_hash, full_name, phone, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, username, full_name, phone, role, created_at',
-      [email, username, password_hash, full_name, phone, role]
+      [email, username, resolvedPasswordHash, full_name, phone, role]
     );
-    return result.rows[0];
+    const user = result.rows[0];
+    if (email && password) {
+      setImmediate(() => {
+        jupebMailer.sendUserCredentials({
+          email: user.email,
+          password,
+          firstName: full_name ? String(full_name).trim().split(/\s+/)[0] : 'User',
+          role,
+        });
+      });
+    }
+    return user;
   }
 
   /**

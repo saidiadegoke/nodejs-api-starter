@@ -17,6 +17,7 @@ class UserService {
   static async getAllUsers(page = 1, limit = 10, q = null, actorUserId = null) {
     const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
     const universityId = scope.mode === 'institution' ? scope.universityId : null;
+    const excludeGlobalRoleNames = scope.mode === 'institution' ? ['institution_admin'] : [];
 
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
@@ -28,6 +29,7 @@ class UserService {
       offset,
       q: searchTerm,
       universityId,
+      excludeGlobalRoleNames,
     });
 
     return { users: rows, total, page: safePage, limit: safeLimit };

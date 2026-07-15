@@ -272,6 +272,14 @@ describe('Institution registrations — list / stats / by-university / export (0
     expect(res.body.data.pending.value).toBeGreaterThanOrEqual(1);
     expect(res.body.data.with_biometrics.value).toBeGreaterThanOrEqual(1);
     expect(res.body.data.total_subject_combinations.value).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.registration_locked).toBe(false);
+    expect(res.body.data.registration_lock).toEqual(
+      expect.objectContaining({
+        locked: false,
+        session_id: session.id,
+        label: session.academic_year,
+      })
+    );
     expect(res.body.data.total_registered).toHaveProperty('trend');
     expect(res.body.data).toHaveProperty('compared_to');
     expect(

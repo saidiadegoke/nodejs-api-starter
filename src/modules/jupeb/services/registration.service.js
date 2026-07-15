@@ -1038,6 +1038,12 @@ class RegistrationService {
       };
       return {
         ...emptyGrowth,
+        registration_locked: false,
+        registration_lock: {
+          locked: false,
+          session_id: null,
+          label: null,
+        },
         compared_to: null,
       };
     }
@@ -1065,6 +1071,12 @@ class RegistrationService {
         cur.total_subject_combinations,
         prev?.total_subject_combinations
       ),
+      registration_locked: Boolean(currentSession.registration_locked),
+      registration_lock: {
+        locked: Boolean(currentSession.registration_locked),
+        session_id: currentSession.id,
+        label: currentSession.academic_year,
+      },
       compared_to: previousSession ? { session_id: previousSession.id, label: previousSession.academic_year } : null,
     };
   }

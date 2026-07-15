@@ -353,7 +353,11 @@ paths:
         '404': { description: Not found }
     patch:
       tags: [Sessions]
-      summary: Patch session (rules depend on status)
+      summary: Patch editable session fields
+      description: >
+        Updates editable session metadata regardless of whether the session is
+        open or closed. Lifecycle status changes still use the dedicated
+        open/close/reopen endpoints.
       security:
         - BearerAuth: []
       parameters:

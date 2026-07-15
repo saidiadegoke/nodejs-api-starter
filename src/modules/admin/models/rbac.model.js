@@ -27,10 +27,14 @@ class RbacModel {
     if (scope && scope.mode === 'institution') {
       const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
       conditions.push(
-        `(created_by = $${idx} OR (is_system = true AND name = ANY($${idx + 1}::text[])))`
+        `(
+          owner_jupeb_university_id = $${idx}
+          OR created_by = $${idx + 1}
+          OR (is_system = true AND name = ANY($${idx + 2}::text[]))
+        )`
       );
-      values.push(scope.actorId, assignable);
-      idx += 2;
+      values.push(scope.universityId, scope.actorId, assignable);
+      idx += 3;
     }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     return { whereClause, values, nextIdx: idx };
@@ -64,6 +68,67 @@ class RbacModel {
 
   async findRoleByName(name) {
     const r = await pool.query(`SELECT * FROM roles WHERE LOWER(name) = LOWER($1)`, [String(name).trim()]);
+    return r.rows[0] || null;
+  }
+
+  async findRoleByNameForScope(name, scope = { mode: 'full' }) {
+    const normalized = String(name).trim();
+    if (scope && scope.mode === 'institution') {
+      const r = await pool.query(
+        `SELECT *
+           FROM roles
+          WHERE LOWER(name) = LOWER($1)
+          ORDER BY
+            CASE
+              WHEN owner_jupeb_university_id = $2 THEN 0
+              WHEN created_by = $3 AND is_system = false THEN 1
+              WHEN is_system = true THEN 2
+              ELSE 3
+            END,
+            created_at ASC
+          LIMIT 1`,
+        [normalized, scope.universityId, scope.actorId]
+      );
+      return r.rows[0] || null;
+    }
+
+    const r = await pool.query(
+      `SELECT *
+         FROM roles
+        WHERE LOWER(name) = LOWER($1)
+          AND owner_jupeb_university_id IS NULL
+        ORDER BY is_system DESC, created_at ASC
+        LIMIT 1`,
+      [normalized]
+    );
+    return r.rows[0] || null;
+  }
+
+  async findRoleNameConflictForScope(name, scope = { mode: 'full' }) {
+    const normalized = String(name).trim();
+    if (scope && scope.mode === 'institution') {
+      const r = await pool.query(
+        `SELECT *
+           FROM roles
+          WHERE LOWER(name) = LOWER($1)
+            AND (
+              owner_jupeb_university_id = $2
+              OR (owner_jupeb_university_id IS NULL AND created_by = $3)
+            )
+          LIMIT 1`,
+        [normalized, scope.universityId, scope.actorId]
+      );
+      return r.rows[0] || null;
+    }
+
+    const r = await pool.query(
+      `SELECT *
+         FROM roles
+        WHERE LOWER(name) = LOWER($1)
+          AND owner_jupeb_university_id IS NULL
+        LIMIT 1`,
+      [normalized]
+    );
     return r.rows[0] || null;
   }
 
@@ -238,9 +303,16 @@ class RbacModel {
       idx++;
     }
     if (scope && scope.mode === 'institution') {
-      conditions.push(`(r.is_system = true OR r.created_by = $${idx})`);
-      values.push(scope.actorId);
-      idx++;
+      const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
+      conditions.push(
+        `(
+          r.owner_jupeb_university_id = $${idx}
+          OR r.created_by = $${idx + 1}
+          OR (r.is_system = true AND r.name = ANY($${idx + 2}::text[]))
+        )`
+      );
+      values.push(scope.universityId, scope.actorId, assignable);
+      idx += 3;
     }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -297,10 +369,14 @@ class RbacModel {
     if (scope && scope.mode === 'institution') {
       const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
       conditions.push(
-        `(created_by = $${idx} OR (is_system = true AND name = ANY($${idx + 1}::text[])))`
+        `(
+          owner_jupeb_university_id = $${idx}
+          OR created_by = $${idx + 1}
+          OR (is_system = true AND name = ANY($${idx + 2}::text[]))
+        )`
       );
-      values.push(scope.actorId, assignable);
-      idx += 2;
+      values.push(scope.universityId, scope.actorId, assignable);
+      idx += 3;
     }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);

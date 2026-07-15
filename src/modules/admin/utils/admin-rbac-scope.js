@@ -23,7 +23,7 @@ function httpError(status, message) {
  *
  * - admin / super_admin / registrar → full visibility
  * - any other user with profiles.jupeb_university_id → university-scoped
- *   users; roles limited to system roles + custom roles created by caller
+ *   users; roles limited to assignable system roles + custom roles owned by their institution
  * - institution_admin / program_director without jupeb_university_id → 403
  *
  * @returns {Promise<{ mode: 'full' } | { mode: 'institution', universityId: string, actorId: string }>}
@@ -54,7 +54,7 @@ async function resolveAdminRbacScope(userId) {
 
 /**
  * @param {object} role - role row from DB
- * @param {{ mode: string, actorId?: string }} scope
+ * @param {{ mode: string, actorId?: string, universityId?: string }} scope
  */
 function assertRoleAccessible(role, scope) {
   if (!role) throw httpError(404, 'Role not found');
@@ -68,8 +68,14 @@ function assertRoleAccessible(role, scope) {
     }
     return;
   }
+  if (
+    role.owner_jupeb_university_id
+    && String(role.owner_jupeb_university_id) === String(scope.universityId)
+  ) {
+    return;
+  }
   if (String(role.created_by) !== String(scope.actorId)) {
-    throw httpError(403, 'Access denied. You can only manage roles you created.');
+    throw httpError(403, 'Access denied. You can only manage roles owned by your institution.');
   }
 }
 
