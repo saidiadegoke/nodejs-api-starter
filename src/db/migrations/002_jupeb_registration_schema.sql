@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS jupeb_registration_sessions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   academic_year VARCHAR(9) NOT NULL,
   year_short CHAR(2) NOT NULL,
-  status VARCHAR(20) NOT NULL DEFAULT 'draft',
+  status VARCHAR(20) NOT NULL DEFAULT 'open',
   opens_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
   closes_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
   student_submission_deadline TIMESTAMP WITHOUT TIME ZONE NULL,
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS jupeb_registration_sessions (
   updated_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT jupeb_sessions_status_check CHECK (status IN ('draft', 'open', 'closed', 'archived')),
+  CONSTRAINT jupeb_sessions_status_check CHECK (status IN ('open', 'closed')),
   CONSTRAINT jupeb_sessions_opens_before_closes CHECK (opens_at < closes_at),
   CONSTRAINT jupeb_sessions_academic_year_unique UNIQUE (academic_year)
 );

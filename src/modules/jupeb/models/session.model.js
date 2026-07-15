@@ -23,12 +23,12 @@ class SessionModel {
     } = data;
     const result = await pool.query(
       `INSERT INTO jupeb_registration_sessions (
-        academic_year, year_short, opens_at, closes_at,
+        academic_year, year_short, status, opens_at, closes_at,
         student_submission_deadline, institution_approval_deadline, notes, created_by, updated_by,
         registration_fee_amount, registration_fee_currency,
         candidate_info_cutoff_at, profile_update_cutoff_at, ca_cutoff_at, max_ca_score,
         affiliation_fee_existing, affiliation_fee_new, exam_fee_per_candidate
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, COALESCE($10, 'NGN'),
+      ) VALUES ($1, $2, 'open', $3, $4, $5, $6, $7, $8, $8, $9, COALESCE($10, 'NGN'),
                 $11, $12, $13, $14, $15, $16, $17)
       RETURNING *`,
       [
@@ -87,8 +87,7 @@ class SessionModel {
     values.push(limit, offset);
     // Latest session first. academic_year is NOT NULL + UNIQUE and fixed
     // 'YYYY/YYYY' width, so it sorts chronologically with no NULL/tie
-    // edge cases — unlike opens_at, which is NULL for draft sessions
-    // (and Postgres sorts NULLs first under DESC, floating drafts up).
+    // edge cases.
     const sql = `SELECT * FROM jupeb_registration_sessions WHERE ${whereSql}
                  ORDER BY academic_year DESC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
     const result = await pool.query(sql, values);
@@ -111,6 +110,22 @@ class SessionModel {
       [excludeId]
     );
     return result.rows[0].c;
+  }
+
+  async countOpenSessions() {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM jupeb_registration_sessions WHERE status = 'open'`
+    );
+    return result.rows[0].c;
+  }
+
+  async closeOpenSessions(updatedBy) {
+    await pool.query(
+      `UPDATE jupeb_registration_sessions
+       SET status = 'closed', updated_at = CURRENT_TIMESTAMP, updated_by = $1
+       WHERE status = 'open'`,
+      [updatedBy || null]
+    );
   }
 
   async updateById(id, fields) {

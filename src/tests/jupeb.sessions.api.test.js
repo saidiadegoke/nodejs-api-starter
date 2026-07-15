@@ -64,6 +64,7 @@ describe('JUPEB sessions API', () => {
         notes: 'integration test',
       });
     expect(createRes.status).toBe(201);
+    expect(createRes.body.data.status).toBe('open');
     const sessionId = createRes.body.data.id;
 
     await closeAllOpenJupebSessions(token);

@@ -136,6 +136,7 @@ class SessionService {
     }
 
     try {
+      await sessionModel.closeOpenSessions(userId);
       return await sessionModel.create({
         academic_year,
         year_short,
@@ -163,9 +164,6 @@ class SessionService {
 
   async patch(id, body, userId) {
     const row = await this.getById(id);
-    if (row.status === 'archived') {
-      throw httpError(422, 'Cannot update an archived session');
-    }
     const fields = {};
     if (row.status === 'closed') {
       const disallowed = Object.keys(body).filter(
@@ -232,60 +230,7 @@ class SessionService {
       fields.updated_by = userId;
       return sessionModel.updateById(id, fields);
     }
-    // draft
-    if (body.academic_year !== undefined) fields.academic_year = body.academic_year;
-    if (body.year_short !== undefined) fields.year_short = body.year_short;
-    if (body.opens_at !== undefined) fields.opens_at = parseTs(body.opens_at, 'opens_at').toISOString();
-    if (body.closes_at !== undefined) fields.closes_at = parseTs(body.closes_at, 'closes_at').toISOString();
-    if (body.student_submission_deadline !== undefined) {
-      fields.student_submission_deadline = body.student_submission_deadline
-        ? parseTs(body.student_submission_deadline, 'student_submission_deadline').toISOString()
-        : null;
-    }
-    if (body.institution_approval_deadline !== undefined) {
-      fields.institution_approval_deadline = body.institution_approval_deadline
-        ? parseTs(body.institution_approval_deadline, 'institution_approval_deadline').toISOString()
-        : null;
-    }
-    if (body.notes !== undefined) fields.notes = body.notes;
-    if (body.registration_fee_amount !== undefined) {
-      if (body.registration_fee_amount === null) {
-        fields.registration_fee_amount = null;
-      } else {
-        const fa = Number(body.registration_fee_amount);
-        if (!Number.isFinite(fa) || fa <= 0) {
-          throw httpError(422, 'registration_fee_amount must be a positive number or null');
-        }
-        fields.registration_fee_amount = fa;
-      }
-    }
-    if (body.registration_fee_currency !== undefined) {
-      if (body.registration_fee_currency === null || body.registration_fee_currency === '') {
-        fields.registration_fee_currency = null;
-      } else {
-        const fc = String(body.registration_fee_currency).trim().toUpperCase().slice(0, 3);
-        if (fc.length !== 3) throw httpError(422, 'registration_fee_currency must be a 3-letter code');
-        fields.registration_fee_currency = fc;
-      }
-    }
-    if (Object.keys(fields).length === 0) {
-      throw httpError(422, 'No fields to update');
-    }
-    if (fields.academic_year || fields.year_short) {
-      const ay = fields.academic_year || row.academic_year;
-      const ys = fields.year_short || row.year_short;
-      const v = validateYearShortForAcademicYear(ay, ys);
-      if (!v.ok) throw httpError(422, v.error);
-    }
-    if (fields.opens_at || fields.closes_at) {
-      const o = new Date(fields.opens_at || row.opens_at);
-      const cl = new Date(fields.closes_at || row.closes_at);
-      if (o.getTime() >= cl.getTime()) {
-        throw httpError(422, 'opens_at must be before closes_at');
-      }
-    }
-    fields.updated_by = userId;
-    return sessionModel.updateById(id, fields);
+    throw httpError(422, `Cannot update a session in status ${row.status}`);
   }
 
   async open(id, userId) {

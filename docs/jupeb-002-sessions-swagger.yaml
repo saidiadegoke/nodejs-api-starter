@@ -35,7 +35,7 @@ components:
         id: { type: string, format: uuid }
         academic_year: { type: string, example: '2026/2027' }
         year_short: { type: string, example: '27' }
-        status: { type: string, enum: [draft, open, closed, archived] }
+        status: { type: string, enum: [open, closed] }
         opens_at: { type: string, format: date-time }
         closes_at: { type: string, format: date-time }
         student_submission_deadline: { type: string, format: date-time, nullable: true }
@@ -89,7 +89,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         label: { type: string, example: '2026/2027' }
-        status: { type: string, enum: [draft, open, closed, archived] }
+        status: { type: string, enum: [open, closed] }
         opens_at: { type: string, format: date-time, nullable: true }
         closes_at: { type: string, format: date-time, nullable: true }
     SessionContext:
@@ -172,8 +172,10 @@ paths:
         '401': { description: Unauthorized }
     post:
       tags: [Sessions]
-      summary: Create session (draft)
+      summary: Create session (open)
       description: |
+        New sessions are created with `status='open'`. Creating a new session
+        closes any previously open session so there is only one active session.
         Cutoff dates are validated to be in chronological order:
         `closes_at ≤ candidate_info_cutoff_at ≤ profile_update_cutoff_at ≤ ca_cutoff_at`.
         `description` is accepted as an alias for `notes`.
@@ -388,7 +390,7 @@ paths:
   /sessions/{sessionId}/open:
     post:
       tags: [Sessions]
-      summary: Transition draft → open (only one open session globally)
+      summary: Open a closed session (only one open session globally)
       security:
         - BearerAuth: []
       parameters:

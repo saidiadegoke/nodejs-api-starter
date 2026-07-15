@@ -160,8 +160,8 @@ class FinanceService {
     const registration = await this.resolveRegistrationForCheckout(userId, body.registration_id || null);
     const session = await sessionModel.findById(registration.session_id);
     if (!session) throw httpError(404, 'Session not found');
-    if (session.status === 'closed' || session.status === 'archived') {
-      throw httpError(422, 'Checkout is not available for a closed or archived session');
+    if (session.status === 'closed') {
+      throw httpError(422, 'Checkout is not available for a closed session');
     }
 
     // Full fee for this item, minus what's already been paid → outstanding.
@@ -611,8 +611,8 @@ class FinanceService {
       useViewingContext: false,
     });
 
-    if (session.status === 'closed' || session.status === 'archived') {
-      throw httpError(422, 'Checkout is not available for a closed or archived session');
+    if (session.status === 'closed') {
+      throw httpError(422, 'Checkout is not available for a closed session');
     }
 
     const requestedAmount = body && body.amount !== undefined ? Number(body.amount) : NaN;

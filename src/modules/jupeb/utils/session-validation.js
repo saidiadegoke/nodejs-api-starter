@@ -36,10 +36,8 @@ function validateYearShortForAcademicYear(academicYear, yearShort) {
 }
 
 const ALLOWED = {
-  draft: ['open'],
   open: ['closed'],
-  closed: ['archived', 'open'],
-  archived: [],
+  closed: ['open'],
 };
 
 function canTransitionStatus(from, to) {
