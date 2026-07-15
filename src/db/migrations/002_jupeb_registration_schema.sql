@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS jupeb_registration_sessions (
   closes_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
   student_submission_deadline TIMESTAMP WITHOUT TIME ZONE NULL,
   institution_approval_deadline TIMESTAMP WITHOUT TIME ZONE NULL,
+  registration_locked BOOLEAN NOT NULL DEFAULT false,
   final_numbers_generated_at TIMESTAMP WITHOUT TIME ZONE NULL,
   notes TEXT NULL,
   created_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,

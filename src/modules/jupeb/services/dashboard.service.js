@@ -129,7 +129,12 @@ class DashboardService {
       university = r.rows[0] || null;
     }
     const effective = session
-      ? { id: session.id, label: session.academic_year, status: session.status }
+      ? {
+          id: session.id,
+          label: session.academic_year,
+          status: session.status,
+          registration_locked: Boolean(session.registration_locked),
+        }
       : context.effective_session;
     return {
       university,
@@ -167,6 +172,12 @@ class DashboardService {
       institutions_onboarded: { value: institutions.onboarded, delta_pct: null },
       active_institutions: { value: institutions.active, delta_pct: null },
       inactive_institutions: { value: institutions.inactive, delta_pct: null },
+      registration_locked: Boolean(currentSession && currentSession.registration_locked),
+      registration_lock: {
+        locked: Boolean(currentSession && currentSession.registration_locked),
+        session_id: currentSession?.id || null,
+        label: currentSession?.academic_year || null,
+      },
       total_registered: card(current.total, previous?.total),
       approved: card(current.approved, previous?.approved),
       pending: card(current.pending, previous?.pending),

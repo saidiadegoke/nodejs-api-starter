@@ -8,6 +8,7 @@ const { closeAllOpenJupebSessions, nextJupebAcademicSession } = require('./jupeb
  */
 describe('JUPEB sessions API', () => {
   let sessionsMigrated = false;
+  let registrationLockMigrated = false;
 
   beforeAll(async () => {
     try {
@@ -19,6 +20,14 @@ describe('JUPEB sessions API', () => {
       console.warn(
         '[jupeb.sessions.api] Skipping DB-backed tests: apply migration `003_jupeb_sessions.sql`.'
       );
+    }
+    if (sessionsMigrated) {
+      try {
+        await pool.query('SELECT registration_locked FROM jupeb_registration_sessions LIMIT 1');
+        registrationLockMigrated = true;
+      } catch {
+        registrationLockMigrated = false;
+      }
     }
   });
 
@@ -91,6 +100,40 @@ describe('JUPEB sessions API', () => {
     expect(finRes.status).toBe(200);
     expect(finRes.body.data).toHaveProperty('assigned');
     expect(typeof finRes.body.data.assigned).toBe('number');
+  });
+
+  it('PATCH /sessions/:id/registration-lock toggles registration lock', async () => {
+    if (!sessionsMigrated || !registrationLockMigrated) return;
+    const token = await getAdminAccessToken();
+    if (!token) return;
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+
+    const createRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+      });
+    expect(createRes.status).toBe(201);
+    const sessionId = createRes.body.data.id;
+    expect(createRes.body.data.registration_locked).toBe(false);
+
+    const locked = await request(app)
+      .patch(`/sessions/${sessionId}/registration-lock`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ locked: true });
+    expect(locked.status).toBe(200);
+    expect(locked.body.data.registration_locked).toBe(true);
+
+    const unlocked = await request(app)
+      .patch(`/sessions/${sessionId}/registration-lock`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ locked: false });
+    expect(unlocked.status).toBe(200);
+    expect(unlocked.body.data.registration_locked).toBe(false);
   });
 
   it('persists cutoff dates, fees, max_ca_score, description', async () => {

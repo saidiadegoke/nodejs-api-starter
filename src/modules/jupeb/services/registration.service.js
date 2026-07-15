@@ -614,6 +614,9 @@ class RegistrationService {
     if (session.status !== 'open') {
       throw httpError(422, 'Registrations can only be created for an open session');
     }
+    if (session.registration_locked) {
+      throw httpError(423, 'Registration is locked for this session');
+    }
     const university = await universityModel.findById(university_id);
     if (!university || university.status !== 'active') {
       throw httpError(404, 'University not found or inactive');

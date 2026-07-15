@@ -277,6 +277,21 @@ class SessionService {
     return updated;
   }
 
+  async setRegistrationLock(id, body, userId) {
+    await this.getById(id);
+    if (!body || typeof body.locked !== 'boolean') {
+      throw httpError(422, 'locked must be a boolean');
+    }
+    const updated = await sessionModel.setRegistrationLocked(id, body.locked, userId);
+    await sessionModel.insertEvent(
+      id,
+      body.locked ? 'registration_locked' : 'registration_unlocked',
+      { registration_locked: body.locked },
+      userId
+    );
+    return updated;
+  }
+
   async finalizeCandidateNumbers(id, userId) {
     const row = await this.getById(id);
     if (row.status !== 'closed') {

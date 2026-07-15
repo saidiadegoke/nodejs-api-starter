@@ -178,6 +178,19 @@ class SessionModel {
     return result.rows[0];
   }
 
+  async setRegistrationLocked(id, locked, updatedBy) {
+    const result = await pool.query(
+      `UPDATE jupeb_registration_sessions
+       SET registration_locked = $2,
+           updated_at = CURRENT_TIMESTAMP,
+           updated_by = $3
+       WHERE id = $1
+       RETURNING *`,
+      [id, Boolean(locked), updatedBy || null]
+    );
+    return result.rows[0];
+  }
+
   async setFinalNumbersGeneratedAt(id, updatedBy) {
     const result = await pool.query(
       `UPDATE jupeb_registration_sessions

@@ -36,6 +36,9 @@ components:
         academic_year: { type: string, example: '2026/2027' }
         year_short: { type: string, example: '27' }
         status: { type: string, enum: [open, closed] }
+        registration_locked:
+          type: boolean
+          description: When true, institutions cannot enroll/issue new candidate codes.
         opens_at: { type: string, format: date-time }
         closes_at: { type: string, format: date-time }
         student_submission_deadline: { type: string, format: date-time, nullable: true }
@@ -408,6 +411,31 @@ paths:
       parameters:
         - $ref: '#/components/parameters/SessionId'
       responses: { '200': { description: OK } }
+
+  /sessions/{sessionId}/registration-lock:
+    patch:
+      tags: [Sessions]
+      summary: Lock or unlock institution registration for a session
+      description: |
+        Toggles whether institutions can enroll/issue new candidate codes for
+        this session. This is independent of the session `open` / `closed`
+        lifecycle; an open session can still have registration locked.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locked]
+              properties:
+                locked: { type: boolean }
+      responses:
+        '200': { description: Updated session }
+        '422': { description: locked must be boolean }
 
   /sessions/{sessionId}/reopen:
     post:

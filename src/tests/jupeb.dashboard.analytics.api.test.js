@@ -36,6 +36,13 @@ describe('Dashboard analytics — added widgets', () => {
     expect(r.body.data).toHaveProperty('approved');
     expect(r.body.data).toHaveProperty('pending');
     expect(r.body.data).toHaveProperty('with_biometrics');
+    expect(r.body.data).toHaveProperty('registration_locked');
+    expect(typeof r.body.data.registration_locked).toBe('boolean');
+    expect(r.body.data.registration_lock).toEqual(
+      expect.objectContaining({
+        locked: expect.any(Boolean),
+      })
+    );
   });
 
   it('GET /dashboard/quick-stats now includes institutions_count', async () => {
