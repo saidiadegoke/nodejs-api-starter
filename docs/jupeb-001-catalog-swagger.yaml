@@ -54,6 +54,12 @@ components:
         expected_candidate_count: { type: integer, nullable: true, minimum: 0 }
         description: { type: string, nullable: true }
         metadata: { type: object }
+        enrolled_count:
+          type: integer
+          minimum: 0
+          description: >
+            Non-withdrawn candidate registrations for this university,
+            scoped to the effective session (admin list only).
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     Subject:
@@ -181,6 +187,7 @@ paths:
         Paginated admin list. `q` is a case-insensitive ILIKE substring
         match across `code`, `name`, and `short_name` — powers the search
         box on the registrar dashboard's Institutions tab.
+        Each row includes `enrolled_count` for the effective session.
       security:
         - BearerAuth: []
       parameters:
@@ -197,6 +204,13 @@ paths:
           in: query
           description: 'Case-insensitive substring match across code / name / short_name.'
           schema: { type: string, example: 'UNILAG' }
+        - name: session_id
+          in: query
+          description: >
+            Optional session override. When omitted, enrolled_count uses the
+            caller's effective session (viewing preference, else the open
+            session).
+          schema: { type: string, format: uuid }
       responses:
         '200': { description: Paginated list; rows are `University`. }
         '401': { description: Unauthorized }

@@ -75,7 +75,10 @@ describe('Catalog ?q= search', () => {
         .get(`/catalog/universities?q=${encodeURIComponent(tag)}`)
         .set('Authorization', `Bearer ${token}`);
       expect(r.status).toBe(200);
-      expect(r.body.data.find((u) => u.code === code)).toBeDefined();
+      const found = r.body.data.find((u) => u.code === code);
+      expect(found).toBeDefined();
+      expect(found).toHaveProperty('enrolled_count');
+      expect(typeof found.enrolled_count).toBe('number');
       expect(r.body.pagination.total).toBeGreaterThanOrEqual(1);
     });
 
