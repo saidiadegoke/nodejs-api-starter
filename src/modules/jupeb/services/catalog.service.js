@@ -44,13 +44,22 @@ class CatalogService {
     return this._embedSubjectItemsBatch(rows);
   }
 
-  async listUniversitiesAdmin({ page, limit, status, q }) {
+  async listUniversitiesAdmin({ page, limit, status, q, sessionId, userId }) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const offset = (safePage - 1) * safeLimit;
     const rows = await universityModel.findAllAdmin({ limit: safeLimit, offset, status, q });
     const total = await universityModel.countAdmin({ status, q });
-    return { rows, page: safePage, limit: safeLimit, total };
+    const session = await resolveEffectiveSession(userId, sessionId || null);
+    const enrolledMap = await universityModel.enrolledCountsForUniversities(
+      rows.map((r) => r.id),
+      session && session.id
+    );
+    const enriched = rows.map((row) => ({
+      ...row,
+      enrolled_count: enrolledMap.get(row.id) || 0,
+    }));
+    return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
   async getUniversityById(id) {
@@ -508,7 +517,7 @@ class CatalogService {
         .map((s) => s.trim())
         .filter(Boolean);
       return this.createSubjectCombination({
-        code: row.code || undefined,
+        code: row.designation || undefined,
         title: row.title || undefined,
         subjects,
         is_global: row.is_global === undefined ? true : row.is_global !== 'false',

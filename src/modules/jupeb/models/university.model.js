@@ -178,6 +178,26 @@ class UniversityModel {
     );
     return result.rows[0];
   }
+
+  /**
+   * Non-withdrawn registration counts per university for a session.
+   * @returns {Promise<Map<string, number>>}
+   */
+  async enrolledCountsForUniversities(universityIds, sessionId) {
+    const map = new Map();
+    if (!universityIds || !universityIds.length || !sessionId) return map;
+    const result = await pool.query(
+      `SELECT university_id, COUNT(*)::int AS c
+       FROM jupeb_registrations
+       WHERE university_id = ANY($1::uuid[])
+         AND session_id = $2
+         AND status <> 'withdrawn'
+       GROUP BY university_id`,
+      [universityIds, sessionId]
+    );
+    for (const row of result.rows) map.set(row.university_id, row.c);
+    return map;
+  }
 }
 
 module.exports = new UniversityModel();
