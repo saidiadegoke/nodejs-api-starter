@@ -58,6 +58,27 @@ router.delete('/me/activities/:activity_id', requireAuth, UserActivityController
 router.get('/countries', UserProfileController.getCountries);
 
 /**
+ * @route   GET /users/me/preferences
+ * @desc    Get mobile settings preferences
+ * @access  Private
+ */
+router.get('/me/preferences', requireAuth, UserProfileController.getPreferences);
+
+/**
+ * @route   PATCH /users/me/preferences
+ * @desc    Update mobile settings preferences
+ * @access  Private
+ */
+router.patch('/me/preferences', requireAuth, UserProfileController.updatePreferences);
+
+/**
+ * @route   DELETE /users/me
+ * @desc    Soft-delete current user account
+ * @access  Private
+ */
+router.delete('/me', requireAuth, UserProfileController.deleteMe);
+
+/**
  * @route   PUT /api/users/me/settings/notifications
  * @desc    Update notification settings
  * @access  Private

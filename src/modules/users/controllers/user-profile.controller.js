@@ -1,9 +1,17 @@
 const pool = require('../../../db/pool');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, NOT_FOUND, BAD_REQUEST, CONFLICT } = require('../../../shared/constants/statusCodes');
+const {
+  OK,
+  NOT_FOUND,
+  BAD_REQUEST,
+  CONFLICT,
+  INTERNAL_SERVER_ERROR,
+} = require('../../../shared/constants/statusCodes');
 const webSocketService = require('../../../shared/services/websocket.service');
 const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
 const universityModel = require('../../jupeb/models/university.model');
+const UserPreferencesService = require('../services/user-preferences.service');
+const UserPreferencesModel = require('../models/user-preferences.model');
 
 function formatRoleLabel(roleName) {
   if (!roleName) return null;
@@ -94,6 +102,11 @@ class UserProfileController {
         university = await universityModel.resolveForUser(userId);
       } catch { /* jupeb tables absent — non-fatal */ }
 
+      let preferences = UserPreferencesModel.defaults();
+      try {
+        preferences = await UserPreferencesService.getPreferences(userId);
+      } catch { /* preferences table may be absent before migration */ }
+
       sendSuccess(res, withPersonalInfoFields({
         ...user,
         role: roles[0] || 'user',
@@ -102,11 +115,13 @@ class UserProfileController {
         university,
         verified: user.email_verified && user.phone_verified,
         kyc_status: 'not_submitted', // TODO: Implement KYC
+        preferences,
         settings: {
-          notifications_enabled: true,
-          push_notifications: true,
+          notifications_enabled: preferences.push_notifications_enabled,
+          push_notifications: preferences.push_notifications_enabled,
           sms_notifications: true,
-          email_notifications: true
+          email_notifications: true,
+          biometric_login_enabled: preferences.biometric_login_enabled,
         }
       }, roles), 'Profile retrieved successfully', OK);
     } catch (error) {
@@ -435,10 +450,54 @@ class UserProfileController {
    */
   static async updateNotificationSettings(req, res) {
     try {
-      // Mock implementation - would update user_settings table
-      sendSuccess(res, req.body, 'Notification settings updated', OK);
+      const body = req.body || {};
+      const patch = {};
+      if (body.push_notifications !== undefined) {
+        patch.push_notifications_enabled = Boolean(body.push_notifications);
+      }
+      if (body.notifications_enabled !== undefined) {
+        patch.push_notifications_enabled = Boolean(body.notifications_enabled);
+      }
+      if (body.push_notifications_enabled !== undefined) {
+        patch.push_notifications_enabled = Boolean(body.push_notifications_enabled);
+      }
+      if (body.biometric_login_enabled !== undefined) {
+        patch.biometric_login_enabled = Boolean(body.biometric_login_enabled);
+      }
+      const preferences = await UserPreferencesService.updatePreferences(
+        req.user.user_id,
+        Object.keys(patch).length ? patch : { push_notifications_enabled: true }
+      );
+      sendSuccess(res, preferences, 'Notification settings updated', OK);
     } catch (error) {
-      sendError(res, error.message, BAD_REQUEST);
+      sendError(res, error.message, error.status || BAD_REQUEST, error.details || null);
+    }
+  }
+
+  static async getPreferences(req, res) {
+    try {
+      const data = await UserPreferencesService.getPreferences(req.user.user_id);
+      return sendSuccess(res, data, 'Preferences retrieved', OK);
+    } catch (error) {
+      return sendError(res, error.message, error.status || INTERNAL_SERVER_ERROR, error.details || null);
+    }
+  }
+
+  static async updatePreferences(req, res) {
+    try {
+      const data = await UserPreferencesService.updatePreferences(req.user.user_id, req.body);
+      return sendSuccess(res, data, 'Preferences updated', OK);
+    } catch (error) {
+      return sendError(res, error.message, error.status || BAD_REQUEST, error.details || null);
+    }
+  }
+
+  static async deleteMe(req, res) {
+    try {
+      const data = await UserPreferencesService.deleteMyAccount(req.user.user_id, req.body);
+      return sendSuccess(res, data, 'Account deleted', OK);
+    } catch (error) {
+      return sendError(res, error.message, error.status || BAD_REQUEST, error.details || null);
     }
   }
 
