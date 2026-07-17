@@ -13,7 +13,10 @@ INSERT INTO roles (name, display_name, description, is_system) VALUES
 ('institution_admin', 'Institution Admin', 'Institution-level administration', true),
 ('financial_admin', 'Financial Admin', 'JUPEB finance reporting and reconciliation', true),
 ('student', 'Student', 'JUPEB student participant (registration, finance, submissions)', true)
-ON CONFLICT (name) DO NOTHING;
+-- roles_name_key was dropped in migration 026 in favour of partial unique
+-- indexes on LOWER(name) scoped by ownership. These seed roles are global/system
+-- roles (owner_jupeb_university_id IS NULL), so the arbiter is the global index.
+ON CONFLICT (LOWER(name)) WHERE owner_jupeb_university_id IS NULL DO NOTHING;
 
 -- ==================== PERMISSIONS ====================
 
