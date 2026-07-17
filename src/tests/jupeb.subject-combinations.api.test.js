@@ -2,7 +2,7 @@ const request = require('supertest');
 const app = require('../app');
 const pool = require('../db/pool');
 
-describe('Subject combination UX (auto-derive + bulk)', () => {
+describe('Subject combination UX (serial code + bulk)', () => {
   let migrated = false;
 
   beforeAll(async () => {
@@ -39,8 +39,8 @@ describe('Subject combination UX (auto-derive + bulk)', () => {
     return codes;
   }
 
-  describe('M.1 auto-derive code & title', () => {
-    it('creates a combo when only subjects are provided (auto code + title)', async () => {
+  describe('M.1 generated code & title', () => {
+    it('creates a combo with a JUPEB SC serial code', async () => {
       if (!migrated) return;
       const token = await getAdminToken();
       if (!token) return;
@@ -51,9 +51,8 @@ describe('Subject combination UX (auto-derive + bulk)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ subjects: codes, is_global: true });
       expect(res.status).toBe(201);
-      expect(res.body.data.code).toBeDefined();
+      expect(res.body.data.code).toMatch(/^JUPEB SC-\d{3,}$/);
       expect(res.body.data.title).toBeDefined();
-      expect(res.body.data.code.length).toBeGreaterThan(0);
       // Title concatenates the subject names in deterministic (sorted) order.
       const sortedNames = [...codes].sort().map((c) => `Subject ${c}`);
       expect(res.body.data.title).toContain(sortedNames[0]);
@@ -79,6 +78,12 @@ describe('Subject combination UX (auto-derive + bulk)', () => {
         expect.objectContaining({ failed: 0 })
       );
       expect(res.body.data.succeeded).toBe(2);
+      const generatedCodes = res.body.data.outcomes.map((outcome) => outcome.data.code);
+      expect(generatedCodes).toHaveLength(2);
+      expect(new Set(generatedCodes).size).toBe(2);
+      for (const code of generatedCodes) {
+        expect(code).toMatch(/^JUPEB SC-\d{3,}$/);
+      }
 
       await pool.query(`UPDATE jupeb_subjects SET deleted_at = CURRENT_TIMESTAMP WHERE code = ANY($1::text[])`, [codes]);
     });
@@ -156,7 +161,7 @@ describe('Subject combination UX (auto-derive + bulk)', () => {
       });
     });
 
-    it('still accepts explicit code/title when provided', async () => {
+    it('always generates the code while accepting an explicit title', async () => {
       if (!migrated) return;
       const token = await getAdminToken();
       if (!token) return;
@@ -167,7 +172,8 @@ describe('Subject combination UX (auto-derive + bulk)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ code: explicitCode, title: 'My Combo', subjects: codes, is_global: true });
       expect(res.status).toBe(201);
-      expect(res.body.data.code).toBe(explicitCode);
+      expect(res.body.data.code).toMatch(/^JUPEB SC-\d{3,}$/);
+      expect(res.body.data.code).not.toBe(explicitCode);
       expect(res.body.data.title).toBe('My Combo');
 
       await pool.query(`UPDATE jupeb_subjects SET deleted_at = CURRENT_TIMESTAMP WHERE code = ANY($1::text[])`, [codes]);

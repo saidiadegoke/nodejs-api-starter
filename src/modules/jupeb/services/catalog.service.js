@@ -69,12 +69,15 @@ class CatalogService {
     return row;
   }
 
-  _validateInstitutionContact(body) {
+  _validateInstitutionContact(body, { requireEmail = true } = {}) {
     const email = body.email !== undefined && body.email !== null ? String(body.email).trim() : '';
-    if (!email) {
+    if (requireEmail && !email) {
       throw httpError(422, 'email is required');
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (body.email !== undefined && !email) {
+      throw httpError(422, 'email is required');
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw httpError(422, 'email is malformed');
     }
     if (
@@ -148,7 +151,7 @@ class CatalogService {
 
   async patchUniversity(id, body) {
     await this.getUniversityById(id);
-    this._validateInstitutionContact(body);
+    this._validateInstitutionContact(body, { requireEmail: false });
     const fields = {};
     if (body.name !== undefined) fields.name = body.name;
     if (body.short_name !== undefined) fields.short_name = body.short_name;
@@ -281,7 +284,6 @@ class CatalogService {
 
   async _deriveCombinationDefaults(subjectCodes) {
     const sorted = [...subjectCodes].sort((a, b) => String(a).localeCompare(String(b)));
-    const code = sorted.join('-').slice(0, 40);
     let title;
     try {
       const rows = await Promise.all(sorted.map((c) => subjectModel.findByCode(c)));
@@ -290,20 +292,7 @@ class CatalogService {
     } catch {
       title = sorted.join(', ').slice(0, 255);
     }
-    return { code, title };
-  }
-
-  async _resolveUniqueCombinationCode(baseCode) {
-    // Reserve up to 4 chars for a `-NN` suffix so retries actually produce distinct codes.
-    const trunk = baseCode.slice(0, 36);
-    let candidate = trunk;
-    for (let i = 1; i < 50; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      const dup = await subjectCombinationModel.findByCode(candidate);
-      if (!dup) return candidate;
-      candidate = `${trunk}-${i}`;
-    }
-    throw httpError(500, 'Could not allocate unique subject combination code');
+    return { title };
   }
 
   async createSubjectCombination(body) {
@@ -318,12 +307,11 @@ class CatalogService {
     // committed together so the row is never persisted without its membership.
     const subjectIds = await this._resolveSubjectIds(norm.subjects);
 
-    let code = body.code ? String(body.code).trim() : null;
+    const code = await subjectCombinationModel.generateCode();
     let title = body.title ? String(body.title).trim() : null;
-    if (!code || !title) {
+    if (!title) {
       const derived = await this._deriveCombinationDefaults(norm.subjects);
-      if (!code) code = await this._resolveUniqueCombinationCode(derived.code);
-      if (!title) title = derived.title;
+      title = derived.title;
     }
 
     const ig = is_global !== false;
@@ -517,7 +505,6 @@ class CatalogService {
         .map((s) => s.trim())
         .filter(Boolean);
       return this.createSubjectCombination({
-        code: row.designation || undefined,
         title: row.title || undefined,
         subjects,
         is_global: row.is_global === undefined ? true : row.is_global !== 'false',

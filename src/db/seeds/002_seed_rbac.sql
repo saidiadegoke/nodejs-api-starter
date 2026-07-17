@@ -13,7 +13,7 @@ INSERT INTO roles (name, display_name, description, is_system) VALUES
 ('institution_admin', 'Institution Admin', 'Institution-level administration', true),
 ('financial_admin', 'Financial Admin', 'JUPEB finance reporting and reconciliation', true),
 ('student', 'Student', 'JUPEB student participant (registration, finance, submissions)', true)
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT ((LOWER(name))) WHERE owner_jupeb_university_id IS NULL DO NOTHING;
 
 -- ==================== PERMISSIONS ====================
 
