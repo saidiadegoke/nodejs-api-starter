@@ -116,7 +116,7 @@ class CatalogService {
         jupeb_prefix: String(jupeb_prefix).trim(),
         metadata: metadata && typeof metadata === 'object' ? metadata : {},
         university_type: university_type || null,
-        email: body.email ? String(body.email).trim() : null,
+        email: body.email ? String(body.email).trim().toLowerCase() : null,
         address: body.address ? String(body.address).trim() : null,
         phone: body.phone ? String(body.phone).trim() : null,
         expected_candidate_count:
@@ -169,7 +169,7 @@ class CatalogService {
       }
       fields.university_type = body.university_type;
     }
-    if (body.email !== undefined) fields.email = body.email ? String(body.email).trim() : null;
+    if (body.email !== undefined) fields.email = body.email ? String(body.email).trim().toLowerCase() : null;
     if (body.address !== undefined) fields.address = body.address ? String(body.address).trim() : null;
     if (body.phone !== undefined) fields.phone = body.phone ? String(body.phone).trim() : null;
     if (body.expected_candidate_count !== undefined) {
