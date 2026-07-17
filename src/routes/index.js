@@ -19,6 +19,7 @@ const paymentsRoutes = require('../modules/payments/routes');
 const postsRoutes = require('../modules/posts/routes');
 const jupebRoutes = require('../modules/jupeb/routes');
 const ocrRoutes = require('../modules/ocr/routes');
+const attendanceRoutes = require('../modules/attendance/routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -87,6 +88,8 @@ router.get('/', (req, res) => {
       registration: '/registration',
       finance: '/finance',
       academic: '/academic',
+      dashboard: '/dashboard',
+      attendance: '/attendance',
       health: '/health'
     },
     features: {
@@ -110,6 +113,7 @@ router.use('/auth', authRoutes);
 router.use('/users', users);
 router.use('/files', filesRoutes);
 router.use('/notifications', notificationsRoutes);
+router.use('/attendance', attendanceRoutes);
 router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
 router.use('/assets', assetsRoutes);

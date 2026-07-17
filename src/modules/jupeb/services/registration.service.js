@@ -1865,6 +1865,166 @@ class RegistrationService {
       },
     };
   }
+
+  /**
+   * Mobile facade: uploaded O-level exam results grouped by source/sitting.
+   * Distinct from CRMS JUPEB course scores under GET /dashboard/results.
+   */
+  async getMeExamResults(userId, { source, sitting } = {}) {
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.user_id !== userId) {
+      throw httpError(404, 'No registration found for current user');
+    }
+
+    let entries = await resultEntriesModel.findByRegistration(reg.id).catch(() => []);
+    if (source) {
+      const src = String(source).toLowerCase().trim();
+      if (!['waec', 'neco', 'nabteb', 'gce'].includes(src)) {
+        throw httpError(422, 'source must be waec|neco|nabteb|gce', {
+          error_code: 'source_invalid',
+        });
+      }
+      entries = entries.filter((e) => e.source === src);
+    }
+    if (sitting !== undefined && sitting !== null && sitting !== '') {
+      const sit = Number(sitting);
+      if (![1, 2].includes(sit)) {
+        throw httpError(422, 'sitting must be 1 or 2', { error_code: 'sitting_invalid' });
+      }
+      entries = entries.filter((e) => Number(e.sitting) === sit);
+    }
+
+    const documents = await registrationDocumentModel.findByRegistration(reg.id).catch(() => []);
+    const fileBySourceSitting = {};
+    for (const doc of documents) {
+      if (doc.source && doc.sitting) {
+        fileBySourceSitting[`${doc.source}-${doc.sitting}`] = doc.file_id || null;
+      }
+    }
+
+    const grouped = {};
+    for (const entry of entries) {
+      const key = `${entry.source}-${entry.sitting}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          source: entry.source,
+          sitting: entry.sitting,
+          file_id: fileBySourceSitting[key] || null,
+          grades: [],
+          origins: new Set(),
+        };
+      }
+      grouped[key].origins.add(entry.origin);
+      grouped[key].grades.push({
+        sn: entry.serial,
+        subject: entry.subject,
+        grade: entry.grade,
+      });
+    }
+
+    const results = Object.values(grouped).map((g) => {
+      g.grades.sort((a, b) => a.sn - b.sn);
+      const origins = Array.from(g.origins);
+      let parse_status = 'complete';
+      if (g.grades.length === 0) parse_status = 'empty';
+      else if (origins.length === 1 && origins[0] === 'ocr') parse_status = 'complete';
+      else if (origins.includes('manual') && origins.includes('ocr')) parse_status = 'complete';
+      else parse_status = 'complete';
+      return {
+        source: g.source,
+        sitting: g.sitting,
+        file_id: g.file_id,
+        grades: g.grades,
+        parse_status,
+      };
+    });
+
+    results.sort((a, b) => {
+      if (a.source === b.source) return a.sitting - b.sitting;
+      return String(a.source).localeCompare(String(b.source));
+    });
+
+    return { results };
+  }
+
+  /**
+   * Mobile facade: short-lived signed download URL for the registration slip PDF.
+   */
+  async getMeSlip(userId) {
+    const { registration } = await this.getMeRegistrationFormPayload(userId);
+    const READY = new Set(['pending_institution_review', 'approved']);
+    if (!READY.has(registration.status)) {
+      throw httpError(
+        422,
+        'Registration is not ready for export. Submit your registration first.',
+        { error_code: 'not_ready', current_status: registration.status }
+      );
+    }
+
+    const jwt = require('jsonwebtoken');
+    const { jwtSecret } = require('../../../config/env.config');
+    const ttlSeconds = Number(process.env.REGISTRATION_SLIP_TTL_SECONDS) || 900;
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    const token = jwt.sign(
+      {
+        purpose: 'registration_slip',
+        user_id: userId,
+        registration_id: registration.id,
+      },
+      jwtSecret,
+      { expiresIn: ttlSeconds }
+    );
+
+    const baseUrl = (process.env.API_BASE_URL || '').replace(/\/$/, '') || '';
+    const download_url = `${baseUrl}/registration/me/slip/download?token=${encodeURIComponent(token)}`;
+
+    return {
+      download_url,
+      expires_at: expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Validate a slip download token and return PDF buffer + filename.
+   */
+  async downloadMeSlipByToken(token) {
+    if (!token || typeof token !== 'string') {
+      throw httpError(401, 'Slip download token required', { error_code: 'token_required' });
+    }
+    const jwt = require('jsonwebtoken');
+    const { jwtSecret } = require('../../../config/env.config');
+    let payload;
+    try {
+      payload = jwt.verify(token, jwtSecret);
+    } catch {
+      throw httpError(401, 'Invalid or expired slip download token', {
+        error_code: 'token_invalid',
+      });
+    }
+    if (payload.purpose !== 'registration_slip' || !payload.user_id) {
+      throw httpError(401, 'Invalid slip download token', { error_code: 'token_invalid' });
+    }
+
+    const { registration, preview } = await this.getMeRegistrationFormPayload(payload.user_id);
+    if (payload.registration_id && payload.registration_id !== registration.id) {
+      throw httpError(403, 'Slip token does not match current registration', {
+        error_code: 'token_mismatch',
+      });
+    }
+    const READY = new Set(['pending_institution_review', 'approved']);
+    if (!READY.has(registration.status)) {
+      throw httpError(422, 'Registration is not ready for export', {
+        error_code: 'not_ready',
+        current_status: registration.status,
+      });
+    }
+
+    // eslint-disable-next-line global-require
+    const RegistrationFormPdfService = require('./registration-form-pdf.service');
+    const buffer = await RegistrationFormPdfService.render(preview);
+    const filename = `registration-slip-${registration.provisional_candidate_code || registration.id}.pdf`;
+    return { buffer, filename };
+  }
 }
 
 module.exports = new RegistrationService();

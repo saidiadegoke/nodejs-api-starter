@@ -1,11 +1,20 @@
 const router = require('express').Router();
 const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
 const DashboardController = require('../controllers/dashboard.controller');
+const StudentDashboardController = require('../controllers/student-dashboard.controller');
 
 const dashboardRead = [
   requireAuth,
   requirePermission('reports.view'),
 ];
+const jupebStudent = jupebStudentMiddleware();
+
+// Student mobile dashboard (Attendance + CRMS composition).
+// Registered before staff analytics routes; path names do not collide.
+router.get('/home', jupebStudent, StudentDashboardController.getHome);
+router.get('/courses', jupebStudent, StudentDashboardController.getCourses);
+router.get('/results', jupebStudent, StudentDashboardController.getResults);
 
 router.get('/scope', dashboardRead, DashboardController.getScope);
 router.get('/stat-cards', dashboardRead, DashboardController.getStatCards);

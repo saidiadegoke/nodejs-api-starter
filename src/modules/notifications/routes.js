@@ -5,7 +5,7 @@ const { validate } = require('../../shared/validations/validator');
 const { requireAuth } = require('../../shared/middleware/rbac.middleware');
 
 /**
- * @route   GET /api/notifications
+ * @route   GET /notifications
  * @desc    Get user's notifications
  * @access  Private
  */
@@ -15,14 +15,16 @@ router.get(
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('per_page').optional().isInt({ min: 1, max: 100 }),
     query('unread_only').optional().isBoolean(),
+    query('filter').optional().isIn(['all', 'unread']),
     validate
   ],
   NotificationController.getNotifications
 );
 
 /**
- * @route   GET /api/notifications/unread-count
+ * @route   GET /notifications/unread-count
  * @desc    Get unread notification count
  * @access  Private
  */
@@ -33,7 +35,7 @@ router.get(
 );
 
 /**
- * @route   PUT /api/notifications/read-all
+ * @route   PUT|PATCH /notifications/read-all
  * @desc    Mark all notifications as read
  * @access  Private
  */
@@ -42,9 +44,14 @@ router.put(
   requireAuth,
   NotificationController.markAllAsRead
 );
+router.patch(
+  '/read-all',
+  requireAuth,
+  NotificationController.markAllAsRead
+);
 
 /**
- * @route   PUT /api/notifications/:notification_id/read
+ * @route   PUT|PATCH /notifications/:notification_id/read
  * @desc    Mark notification as read
  * @access  Private
  */
@@ -53,9 +60,14 @@ router.put(
   requireAuth,
   NotificationController.markAsRead
 );
+router.patch(
+  '/:notification_id/read',
+  requireAuth,
+  NotificationController.markAsRead
+);
 
 /**
- * @route   DELETE /api/notifications/:notification_id
+ * @route   DELETE /notifications/:notification_id
  * @desc    Delete notification
  * @access  Private
  */
@@ -66,7 +78,7 @@ router.delete(
 );
 
 /**
- * @route   DELETE /api/notifications
+ * @route   DELETE /notifications
  * @desc    Delete all notifications
  * @access  Private
  */

@@ -12,23 +12,40 @@ class NotificationController {
   /**
    * Get user's notifications
    *
-   * @route GET /api/notifications
+   * @route GET /notifications
    * @access Private
    */
   static async getNotifications(req, res) {
     try {
       const userId = req.user.user_id;
-      const { page, limit, unread_only } = req.query;
+      const { page, limit, per_page, unread_only, filter } = req.query;
 
       const options = {
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
-        unread_only: unread_only === 'true'
+        page: parseInt(page, 10) || 1,
+        limit: parseInt(per_page || limit, 10) || 20,
+        per_page: parseInt(per_page || limit, 10) || 20,
+        unread_only: unread_only === 'true' || unread_only === true,
+        filter: filter || undefined,
       };
 
       const result = await NotificationService.getUserNotifications(userId, options);
 
-      sendSuccess(res, result, 'Notifications retrieved successfully', OK);
+      sendSuccess(
+        res,
+        {
+          unread_count: result.unread_count,
+          items: result.items,
+          pagination: {
+            page: result.pagination.page,
+            per_page: result.pagination.per_page,
+            total: result.pagination.total,
+          },
+          // Compatibility for older clients
+          notifications: result.notifications,
+        },
+        'Notifications retrieved successfully',
+        OK
+      );
     } catch (error) {
       console.error('Get notifications error:', error);
       sendError(res, error.message, BAD_REQUEST);
@@ -38,7 +55,7 @@ class NotificationController {
   /**
    * Get unread notification count
    *
-   * @route GET /api/notifications/unread-count
+   * @route GET /notifications/unread-count
    * @access Private
    */
   static async getUnreadCount(req, res) {
@@ -58,17 +75,24 @@ class NotificationController {
   /**
    * Mark notification as read
    *
-   * @route PUT /api/notifications/:notification_id/read
+   * @route PUT|PATCH /notifications/:notification_id/read
    * @access Private
    */
   static async markAsRead(req, res) {
     try {
-      const { notification_id } = req.params;
+      const notificationId = req.params.notification_id || req.params.id;
       const userId = req.user.user_id;
+      const isRead =
+        req.body && typeof req.body.is_read === 'boolean' ? req.body.is_read : true;
 
-      const notification = await NotificationService.markAsRead(notification_id, userId);
+      const notification = await NotificationService.markAsRead(notificationId, userId, isRead);
 
-      sendSuccess(res, notification, 'Notification marked as read', OK);
+      sendSuccess(
+        res,
+        { id: notification.id, is_read: notification.is_read },
+        'Notification updated',
+        OK
+      );
     } catch (error) {
       console.error('Mark as read error:', error);
       if (error.message === 'Notification not found') {
@@ -81,7 +105,7 @@ class NotificationController {
   /**
    * Mark all notifications as read
    *
-   * @route PUT /api/notifications/read-all
+   * @route PUT|PATCH /notifications/read-all
    * @access Private
    */
   static async markAllAsRead(req, res) {
@@ -90,7 +114,12 @@ class NotificationController {
 
       const result = await NotificationService.markAllAsRead(userId);
 
-      sendSuccess(res, result, 'All notifications marked as read', OK);
+      sendSuccess(
+        res,
+        { updated_count: result.updated_count },
+        'All notifications marked as read',
+        OK
+      );
     } catch (error) {
       console.error('Mark all as read error:', error);
       sendError(res, error.message, BAD_REQUEST);
@@ -100,17 +129,17 @@ class NotificationController {
   /**
    * Delete notification
    *
-   * @route DELETE /api/notifications/:notification_id
+   * @route DELETE /notifications/:notification_id
    * @access Private
    */
   static async deleteNotification(req, res) {
     try {
-      const { notification_id } = req.params;
+      const notificationId = req.params.notification_id || req.params.id;
       const userId = req.user.user_id;
 
-      await NotificationService.deleteNotification(notification_id, userId);
+      await NotificationService.deleteNotification(notificationId, userId);
 
-      sendSuccess(res, null, 'Notification deleted successfully', OK);
+      sendSuccess(res, { deleted: true }, 'Notification deleted successfully', OK);
     } catch (error) {
       console.error('Delete notification error:', error);
       if (error.message === 'Notification not found') {
@@ -123,7 +152,7 @@ class NotificationController {
   /**
    * Delete all notifications
    *
-   * @route DELETE /api/notifications
+   * @route DELETE /notifications
    * @access Private
    */
   static async deleteAllNotifications(req, res) {
