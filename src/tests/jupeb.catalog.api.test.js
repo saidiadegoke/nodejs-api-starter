@@ -197,6 +197,53 @@ describe('JUPEB catalog API', () => {
       expect(patch.body.data.expected_candidate_count).toBe(2000);
     });
 
+    it('syncs institution email and phone to its provisioned login user', async () => {
+      if (!catalogMigrated) return;
+      const token = await getAdminAccessToken();
+      if (!token) return;
+      const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+      const originalEmail = `institution-${suffix}@example.com`;
+      const updatedEmail = `institution-updated-${suffix}@example.com`;
+      const create = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: nextJupebTestUniversityCode('SYNC'),
+          name: `Sync Contact University ${suffix}`,
+          jupeb_prefix: nextJupebTestPrefix(),
+          email: originalEmail,
+          phone: '+2348011111111',
+        });
+      expect(create.status).toBe(201);
+
+      const universityId = create.body.data.id;
+      const userId = create.body.data.institution_admin.user_id;
+      try {
+        const patch = await request(app)
+          .patch(`/catalog/universities/${universityId}`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            email: updatedEmail,
+            phone: '+2348022222222',
+          });
+        expect(patch.status).toBe(200);
+        expect(patch.body.data.email).toBe(updatedEmail);
+        expect(patch.body.data.phone).toBe('+2348022222222');
+
+        const user = await pool.query(
+          `SELECT email, phone FROM users WHERE id = $1`,
+          [userId]
+        );
+        expect(user.rows[0]).toEqual({
+          email: updatedEmail,
+          phone: '+2348022222222',
+        });
+      } finally {
+        await pool.query(`DELETE FROM jupeb_universities WHERE id = $1`, [universityId]);
+        await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
+      }
+    });
+
     it('bulk uploads institutions from CSV', async () => {
       if (!catalogMigrated) return;
       const token = await getAdminAccessToken();

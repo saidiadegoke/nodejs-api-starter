@@ -146,28 +146,95 @@ class UniversityModel {
       'expected_candidate_count',
       'description',
     ];
-    const sets = [];
-    const values = [];
-    let i = 1;
-    for (const key of allowed) {
-      if (fields[key] !== undefined) {
-        if (key === 'metadata') {
-          sets.push(`metadata = $${i++}::jsonb`);
-          values.push(JSON.stringify(fields[key]));
-        } else {
-          sets.push(`${key} = $${i++}`);
-          values.push(typeof fields[key] === 'string' ? fields[key].trim() : fields[key]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const currentResult = await client.query(
+        `SELECT email
+           FROM jupeb_universities
+          WHERE id = $1 AND deleted_at IS NULL
+          FOR UPDATE`,
+        [id]
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        await client.query('ROLLBACK');
+        return undefined;
+      }
+
+      const sets = [];
+      const values = [];
+      let i = 1;
+      for (const key of allowed) {
+        if (fields[key] !== undefined) {
+          if (key === 'metadata') {
+            sets.push(`metadata = $${i++}::jsonb`);
+            values.push(JSON.stringify(fields[key]));
+          } else {
+            sets.push(`${key} = $${i++}`);
+            values.push(typeof fields[key] === 'string' ? fields[key].trim() : fields[key]);
+          }
         }
       }
+      if (!sets.length) {
+        await client.query('COMMIT');
+        return this.findById(id);
+      }
+
+      sets.push('updated_at = CURRENT_TIMESTAMP');
+      values.push(id);
+      const result = await client.query(
+        `UPDATE jupeb_universities
+            SET ${sets.join(', ')}
+          WHERE id = $${i} AND deleted_at IS NULL
+          RETURNING *`,
+        values
+      );
+
+      // The institution email is also the login email of the account
+      // provisioned when the institution was created. Match on the previous
+      // email so other staff associated with the university are not changed.
+      if (current.email && (fields.email !== undefined || fields.phone !== undefined)) {
+        const userSets = [];
+        const userValues = [];
+        let userIdx = 1;
+        if (fields.email !== undefined) {
+          userSets.push(`email = $${userIdx++}`);
+          userValues.push(String(fields.email).trim().toLowerCase());
+        }
+        if (fields.phone !== undefined) {
+          userSets.push(`phone = $${userIdx++}`);
+          userValues.push(
+            typeof fields.phone === 'string' ? fields.phone.trim() || null : fields.phone
+          );
+        }
+        userSets.push('updated_at = CURRENT_TIMESTAMP');
+        userValues.push(id, current.email);
+        await client.query(
+          `UPDATE users u
+              SET ${userSets.join(', ')}
+             FROM user_universities uu
+            WHERE u.id = uu.user_id
+              AND uu.university_id = $${userIdx++}
+              AND uu.deleted_at IS NULL
+              AND u.deleted_at IS NULL
+              AND LOWER(u.email) = LOWER($${userIdx})`,
+          userValues
+        );
+      }
+
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Preserve the original database error.
+      }
+      throw err;
+    } finally {
+      client.release();
     }
-    if (!sets.length) return this.findById(id);
-    sets.push(`updated_at = CURRENT_TIMESTAMP`);
-    values.push(id);
-    const result = await pool.query(
-      `UPDATE jupeb_universities SET ${sets.join(', ')} WHERE id = $${i} AND deleted_at IS NULL RETURNING *`,
-      values
-    );
-    return result.rows[0];
   }
 
   async setStatus(id, status) {
