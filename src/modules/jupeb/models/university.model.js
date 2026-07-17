@@ -191,10 +191,12 @@ class UniversityModel {
         values
       );
 
-      // The institution email is also the login email of the account
-      // provisioned when the institution was created. Match on the previous
-      // email so other staff associated with the university are not changed.
-      if (current.email && (fields.email !== undefined || fields.phone !== undefined)) {
+      // Keep the institution_admin login account in sync with institution
+      // contact fields. Prefer the admin whose email still matches the
+      // previous institution email; otherwise use the primary / oldest
+      // institution_admin bound to this university (covers already-drifted
+      // emails and missing user_universities.role values).
+      if (fields.email !== undefined || fields.phone !== undefined) {
         const userSets = [];
         const userValues = [];
         let userIdx = 1;
@@ -209,18 +211,64 @@ class UniversityModel {
           );
         }
         userSets.push('updated_at = CURRENT_TIMESTAMP');
-        userValues.push(id, current.email);
-        await client.query(
+        const previousEmailIdx = userIdx;
+        userValues.push(current.email || null);
+        userIdx += 1;
+        const universityIdIdx = userIdx;
+        userValues.push(id);
+
+        const syncResult = await client.query(
           `UPDATE users u
               SET ${userSets.join(', ')}
-             FROM user_universities uu
-            WHERE u.id = uu.user_id
-              AND uu.university_id = $${userIdx++}
-              AND uu.deleted_at IS NULL
-              AND u.deleted_at IS NULL
-              AND LOWER(u.email) = LOWER($${userIdx})`,
+            WHERE u.id = (
+              SELECT candidate.id
+                FROM (
+                  SELECT usr.id,
+                         usr.created_at,
+                         COALESCE(uu.is_primary, false) AS is_primary,
+                         CASE
+                           WHEN $${previousEmailIdx}::text IS NOT NULL
+                            AND LOWER(usr.email) = LOWER($${previousEmailIdx})
+                           THEN 0 ELSE 1
+                         END AS email_rank
+                    FROM users usr
+                    LEFT JOIN user_universities uu
+                      ON uu.user_id = usr.id
+                     AND uu.university_id = $${universityIdIdx}
+                     AND uu.deleted_at IS NULL
+                    LEFT JOIN profiles p ON p.user_id = usr.id
+                   WHERE usr.deleted_at IS NULL
+                     AND (
+                       uu.role = 'institution_admin'
+                       OR (
+                         p.jupeb_university_id = $${universityIdIdx}
+                         AND EXISTS (
+                           SELECT 1
+                             FROM user_roles ur
+                             JOIN roles r ON r.id = ur.role_id
+                            WHERE ur.user_id = usr.id
+                              AND r.name = 'institution_admin'
+                              AND r.owner_jupeb_university_id IS NULL
+                              AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                         )
+                       )
+                     )
+                 ) candidate
+               ORDER BY candidate.email_rank ASC,
+                        CASE WHEN candidate.is_primary THEN 0 ELSE 1 END ASC,
+                        candidate.created_at ASC
+               LIMIT 1
+            )
+            RETURNING u.id, u.email, u.phone`,
           userValues
         );
+
+        if (!syncResult.rowCount && fields.email !== undefined) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[university.updateById] No institution_admin user found to sync email for university ${id}`
+          );
+        }
       }
 
       await client.query('COMMIT');

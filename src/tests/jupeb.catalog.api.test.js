@@ -219,6 +219,12 @@ describe('JUPEB catalog API', () => {
       const universityId = create.body.data.id;
       const userId = create.body.data.institution_admin.user_id;
       try {
+        // Simulate an already-drifted pair (university updated earlier without user sync).
+        await pool.query(
+          `UPDATE jupeb_universities SET email = $2 WHERE id = $1`,
+          [universityId, `drifted-${suffix}@example.com`]
+        );
+
         const patch = await request(app)
           .patch(`/catalog/universities/${universityId}`)
           .set('Authorization', `Bearer ${token}`)
