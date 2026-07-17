@@ -69,12 +69,15 @@ class CatalogService {
     return row;
   }
 
-  _validateInstitutionContact(body) {
+  _validateInstitutionContact(body, { requireEmail = true } = {}) {
     const email = body.email !== undefined && body.email !== null ? String(body.email).trim() : '';
-    if (!email) {
+    if (requireEmail && !email) {
       throw httpError(422, 'email is required');
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (body.email !== undefined && !email) {
+      throw httpError(422, 'email is required');
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw httpError(422, 'email is malformed');
     }
     if (
@@ -148,7 +151,7 @@ class CatalogService {
 
   async patchUniversity(id, body) {
     await this.getUniversityById(id);
-    this._validateInstitutionContact(body);
+    this._validateInstitutionContact(body, { requireEmail: false });
     const fields = {};
     if (body.name !== undefined) fields.name = body.name;
     if (body.short_name !== undefined) fields.short_name = body.short_name;
