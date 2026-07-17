@@ -1,6 +1,18 @@
 const pool = require('../../../db/pool');
 
 class SubjectCombinationModel {
+  async generateCode() {
+    const result = await pool.query(
+      `WITH next_serial AS (
+         SELECT nextval('jupeb_subject_combination_code_seq')::text AS value
+       )
+       SELECT 'JUPEB SC-' ||
+              LPAD(value, GREATEST(3, LENGTH(value)), '0') AS code
+       FROM next_serial`
+    );
+    return result.rows[0].code;
+  }
+
   async create({ code, title, is_global = true, university_id = null }) {
     const result = await pool.query(
       `INSERT INTO jupeb_subject_combinations (code, title, is_global, university_id)
