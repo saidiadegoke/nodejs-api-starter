@@ -298,6 +298,45 @@ class RegistrationController {
     }
   }
 
+  static async getMeExamResults(req, res) {
+    try {
+      const data = await registrationService.getMeExamResults(req.user.user_id, {
+        source: req.query.source,
+        sitting: req.query.sitting,
+      });
+      return sendSuccess(res, data, 'Exam results');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
+  static async getMeSlip(req, res) {
+    try {
+      const data = await registrationService.getMeSlip(req.user.user_id);
+      return sendSuccess(res, data, 'Registration slip');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
+  /**
+   * Public (token-authenticated) PDF download for the registration slip.
+   * No Bearer auth — the signed query token is the credential.
+   */
+  static async downloadMeSlip(req, res) {
+    try {
+      const { buffer, filename } = await registrationService.downloadMeSlipByToken(
+        req.query.token
+      );
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Content-Length', String(buffer.length));
+      return res.status(200).end(buffer);
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
   static async numberingPreview(req, res) {
     try {
       const data = await registrationService.numberingPreview(req.params.sessionId, req.user.user_id);

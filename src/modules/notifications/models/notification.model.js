@@ -68,6 +68,19 @@ class NotificationModel {
     return result.rows;
   }
 
+  static async countByUser(userId, { unread_only = false } = {}) {
+    let whereClause = 'user_id = $1';
+    const params = [userId];
+    if (unread_only) {
+      whereClause += ' AND read = false';
+    }
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM notifications WHERE ${whereClause}`,
+      params
+    );
+    return result.rows[0]?.count || 0;
+  }
+
   /**
    * Get unread notification count
    *
@@ -101,6 +114,20 @@ class NotificationModel {
       [notificationId, userId]
     );
 
+    return result.rows[0];
+  }
+
+  /**
+   * Set read flag explicitly (mobile PATCH body supports is_read).
+   */
+  static async setReadState(notificationId, userId, isRead) {
+    const result = await pool.query(
+      `UPDATE notifications
+       SET read = $3, updated_at = NOW()
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [notificationId, userId, Boolean(isRead)]
+    );
     return result.rows[0];
   }
 
