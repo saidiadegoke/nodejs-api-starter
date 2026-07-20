@@ -105,6 +105,22 @@ async function main() {
     await client.query('BEGIN');
     await client.query(`SET session_replication_role = 'replica'`);
 
+    // 0) Delete institution-scoped roles (owner_jupeb_university_id IS NOT NULL)
+    //    and their mappings. These belong to institutions being wiped, and
+    //    nulling owner_jupeb_university_id (step 1) would move them into the
+    //    global scope and collide with the ux_roles_global_scope_name_lower
+    //    partial unique index (migration 026). role_permissions is otherwise
+    //    fully preserved, so its rows for these roles must be removed here.
+    const instRoles = await client.query(
+      `SELECT id FROM roles WHERE owner_jupeb_university_id IS NOT NULL`);
+    const instRoleIds = instRoles.rows.map(r => r.id);
+    if (instRoleIds.length) {
+      await client.query(`DELETE FROM role_permissions WHERE role_id = ANY($1)`, [instRoleIds]);
+      await client.query(`DELETE FROM user_roles WHERE role_id = ANY($1)`, [instRoleIds]);
+      await client.query(`DELETE FROM roles WHERE id = ANY($1)`, [instRoleIds]);
+      console.log(`  deleted institution-scoped roles (+ mappings): ${instRoleIds.length}`);
+    }
+
     // 1) Null preserved-table FK columns that point at soon-to-be-cleared tables (avoid dangling refs).
     const fk = await client.query(`
       SELECT tc.table_name AS referencing, ccu.table_name AS referenced, kcu.column_name AS col
