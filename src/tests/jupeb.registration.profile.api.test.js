@@ -186,6 +186,63 @@ describe('GET /registration/me/profile', () => {
     expect(res.body.data.candidate.full_name).toMatch(/Adebayo Salami/);
   });
 
+  it('prefers NIN-verified name over intake_payload.name when verification is verified', async () => {
+    if (!registrationMigrated || !ninPendingMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'NIN');
+
+    const nin = `8${String(Date.now()).slice(-10)}`;
+    const verifyRes = await request(app)
+      .post('/identity/nin/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        nin,
+        provider: 'mock',
+        idempotency_key: `idem-profile-verified-${Date.now()}`,
+        intake_payload: { name: 'James Bonds' },
+      });
+    expect(verifyRes.status).toBe(200);
+    expect(verifyRes.body.data.status).toBe('verified');
+    const ninVerificationId = verifyRes.body.data.verification_id;
+    const ninFullName = [
+      verifyRes.body.data.profile.first_name,
+      verifyRes.body.data.profile.last_name,
+    ].filter(Boolean).join(' ');
+    expect(ninFullName).toBeTruthy();
+    expect(ninFullName).not.toMatch(/James Bonds/);
+
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        session_id: sessionId,
+        university_id: universityId,
+        subject_combination_id: subjectCombinationId,
+        nin_verification_id: ninVerificationId,
+      });
+    expect(createReg.status).toBe(201);
+
+    const stamp = Date.now() + Math.floor(Math.random() * 1000);
+    const reg = await request(app)
+      .post('/auth/complete-registration')
+      .send({
+        code: createReg.body.data.institution_issued_code,
+        password: 'Strong@Password1',
+        email: `nin-name-${stamp}@example.com`,
+      });
+    expect(reg.status).toBe(201);
+    const studentToken = reg.body.data.access_token;
+
+    const res = await request(app)
+      .get('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.nin_verification.status).toBe('verified');
+    expect(res.body.data.candidate.full_name).toBe(ninFullName);
+    expect(res.body.data.candidate.full_name).not.toMatch(/James Bonds/);
+  });
+
   // Regression: when a student has registrations across multiple
   // sessions, findLatestForUser must prefer the row in the currently
   // OPEN session — not the most-recently-touched row across all

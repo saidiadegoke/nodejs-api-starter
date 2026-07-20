@@ -3,10 +3,10 @@
  *
  * Walks a single registration through:
  *   create code → student claims → confirm → submit → approve →
- *   close session → numbering-preview → finalize → login with matric.
+ *   numbering-preview → finalize → login with matric.
  *
- * Asserts the assigned `jupeb_candidate_number` follows the
- * formatCandidateNumber formula (yearShort + jupeb_prefix + serial),
+ * Asserts provisional code omits year; assigned `jupeb_candidate_number`
+ * follows formatCandidateNumber (yearShort + jupeb_prefix + serial),
  * is persisted, and that the lockdown rule kicks in (email login
  * stops working once matric is set).
  */
@@ -91,6 +91,11 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     const registrationId = createReg.body.data.id;
     const code = createReg.body.data.institution_issued_code;
     const provisionalSerial = createReg.body.data.provisional_serial;
+    const expectedProvisional = `${jupebPrefix}${String(provisionalSerial).padStart(4, '0')}`;
+    expect(createReg.body.data.provisional_candidate_code).toBe(expectedProvisional);
+    expect(createReg.body.data.provisional_candidate_code).not.toMatch(
+      new RegExp(`^${String(yearShort).padStart(2, '0')}`)
+    );
 
     // ── 3. Student claims via register-with-code (claimed)
     const stamp = Date.now() + Math.floor(Math.random() * 1000);
@@ -130,11 +135,7 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     );
     expect(before.rows[0].jupeb_candidate_number).toBeNull();
 
-    // ── 7. Close session (required for finalize)
-    const close = await request(app).post(`/sessions/${sessionId}/close`).set('Authorization', `Bearer ${token}`);
-    expect(close.status).toBe(200);
-
-    // ── 8. Numbering preview surfaces the proposed matric
+    // ── 7. Numbering preview surfaces the proposed matric (session still open)
     const preview = await request(app)
       .get(`/registration/sessions/${sessionId}/numbering-preview`)
       .set('Authorization', `Bearer ${token}`);
@@ -145,7 +146,7 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     const expectedMatric = `${String(yearShort).padStart(2, '0')}${jupebPrefix}${String(provisionalSerial).padStart(4, '0')}`;
     expect(proposed.proposed_jupeb_candidate_number).toBe(expectedMatric);
 
-    // ── 9. Finalize — actually writes the matric
+    // ── 8. Finalize — actually writes the matric
     const finalize = await request(app)
       .post(`/sessions/${sessionId}/finalize-candidate-numbers`)
       .set('Authorization', `Bearer ${token}`);
@@ -162,7 +163,7 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     );
     expect(after.rows[0].jupeb_candidate_number).toBe(expectedMatric);
 
-    // ── 10. Finalize is idempotent — re-running doesn't overwrite
+    // ── 9. Finalize is idempotent — re-running doesn't overwrite
     const finalize2 = await request(app)
       .post(`/sessions/${sessionId}/finalize-candidate-numbers`)
       .set('Authorization', `Bearer ${token}`);
@@ -172,7 +173,7 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     const second = finalize2.body.data.numbers.find((n) => n.registration_id === registrationId);
     expect(second).toBeUndefined();
 
-    // ── 11. Student can now log in with the matric
+    // ── 10. Student can now log in with the matric
     const loginByMatric = await request(app)
       .post('/auth/login')
       .send({ identifier: expectedMatric, password });
@@ -180,14 +181,14 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     expect(loginByMatric.body.data.user.email).toBe(email);
     expect(loginByMatric.body.data.registration.jupeb_candidate_number).toBe(expectedMatric);
 
-    // ── 12. Lockdown — email login no longer resolves to the student
+    // ── 11. Lockdown — email login no longer resolves to the student
     const loginByEmail = await request(app)
       .post('/auth/login')
       .send({ identifier: email, password });
     expect(loginByEmail.status).not.toBe(200);
   });
 
-  it('numbering-preview returns 422 when the session is still open', async () => {
+  it('numbering-preview works while the session is still open', async () => {
     if (!migrated) return;
     const token = await adminToken();
     let sessRes;
@@ -208,7 +209,9 @@ describe('JUPEB matric-number lifecycle (provisional → finalize)', () => {
     const r = await request(app)
       .get(`/registration/sessions/${sessRes.body.data.id}/numbering-preview`)
       .set('Authorization', `Bearer ${token}`);
-    expect(r.status).toBe(422);
+    expect(r.status).toBe(200);
+    expect(r.body.data.proposed).toBeDefined();
+    expect(Array.isArray(r.body.data.proposed)).toBe(true);
   });
 
   it('finalize requires an authenticated registrar/admin role (401 without auth)', async () => {

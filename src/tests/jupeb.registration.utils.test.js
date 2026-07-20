@@ -1,11 +1,21 @@
 const { canTransition } = require('../modules/jupeb/services/registration-state.service');
-const { formatCandidateNumber, makeInstitutionCode } = require('../modules/jupeb/utils/registration-numbering');
+const {
+  formatCandidateNumber,
+  formatProvisionalCandidateCode,
+  makeInstitutionCode,
+} = require('../modules/jupeb/utils/registration-numbering');
 
 describe('JUPEB registration utils', () => {
   it('formatCandidateNumber matches DB-style pattern', () => {
     expect(formatCandidateNumber('24', '001', 7)).toBe('240010007');
     // year_short is two digits; jupeb_prefix is three digits from catalog
     expect(formatCandidateNumber('25', '012', 9999)).toBe('250129999');
+  });
+
+  it('formatProvisionalCandidateCode omits year and differs from final number', () => {
+    expect(formatProvisionalCandidateCode('001', 7)).toBe('0010007');
+    expect(formatProvisionalCandidateCode('012', 9999)).toBe('0129999');
+    expect(formatProvisionalCandidateCode('001', 7)).not.toBe(formatCandidateNumber('24', '001', 7));
   });
 
   describe('makeInstitutionCode', () => {

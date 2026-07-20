@@ -1,6 +1,7 @@
 const AuthModel = require('../models/auth.model');
 const CountryModel = require('../../../shared/models/country.model');
 const universityModel = require('../../jupeb/models/university.model');
+const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -196,10 +197,11 @@ class AuthService {
     const intake = (ninRow && ninRow.intake_payload) || {};
     const ninPayload = (ninRow && ninRow.response_payload) || {};
 
-    const fullName =
-      (intake.name && String(intake.name).trim())
-      || [ninPayload.first_name, ninPayload.last_name].filter(Boolean).join(' ').trim()
-      || null;
+    const fullName = resolveCandidateDisplayName({
+      ninPayload,
+      intake,
+      ninStatus: ninRow ? ninRow.status : null,
+    });
 
     return {
       candidate: {
@@ -326,14 +328,16 @@ class AuthService {
       // 2. Resolve email/phone/name. Prefer body, fall back to NIN intake/payload.
       let intakePayload = {};
       let ninResponse = {};
+      let ninStatus = null;
       if (reg.nin_verification_id) {
         const ninRes = await client.query(
-          `SELECT response_payload, intake_payload FROM jupeb_nin_verifications WHERE id = $1`,
+          `SELECT response_payload, intake_payload, status FROM jupeb_nin_verifications WHERE id = $1`,
           [reg.nin_verification_id]
         );
         if (ninRes.rows[0]) {
           intakePayload = ninRes.rows[0].intake_payload || {};
           ninResponse = ninRes.rows[0].response_payload || {};
+          ninStatus = ninRes.rows[0].status || null;
         }
       }
 
@@ -353,9 +357,11 @@ class AuthService {
         throw err;
       }
 
-      const fullName = (intakePayload.name && String(intakePayload.name).trim())
-        || [ninResponse.first_name, ninResponse.last_name].filter(Boolean).join(' ').trim()
-        || null;
+      const fullName = resolveCandidateDisplayName({
+        ninPayload: ninResponse,
+        intake: intakePayload,
+        ninStatus,
+      });
       const [first_name, ...rest] = (body.first_name
         ? [String(body.first_name).trim(), String(body.last_name || '').trim()]
         : (fullName ? fullName.split(/\s+/) : ['Candidate', '']));

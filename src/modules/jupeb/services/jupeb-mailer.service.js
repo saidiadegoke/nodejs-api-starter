@@ -9,6 +9,7 @@
  * Templates live under src/shared/emails/ and use {{key}} placeholders.
  */
 const pool = require('../../../db/pool');
+const { resolveCandidateDisplayName } = require('../utils/candidate-name');
 const sendEmail = require('../../../shared/utils/sendEmail');
 
 function appName() {
@@ -47,7 +48,8 @@ async function loadRecipient(registrationId) {
             p.first_name AS profile_first_name,
             uni.name AS university_name,
             n.intake_payload AS nin_intake,
-            n.response_payload AS nin_payload
+            n.response_payload AS nin_payload,
+            n.status AS nin_verification_status
        FROM jupeb_registrations r
        LEFT JOIN users u            ON u.id = r.user_id
        LEFT JOIN profiles p         ON p.user_id = r.user_id
@@ -66,11 +68,13 @@ async function loadRecipient(registrationId) {
   const email = row.user_email || intake.email || null;
   if (!email) return null;
 
-  const firstName =
-    row.profile_first_name
-    || (intake.name ? String(intake.name).split(/\s+/)[0] : null)
-    || nin.first_name
-    || 'Candidate';
+  const fullName = resolveCandidateDisplayName({
+    ninPayload: nin,
+    intake,
+    profile: { first_name: row.profile_first_name },
+    ninStatus: row.nin_verification_status || null,
+  });
+  const firstName = (fullName && fullName.split(/\s+/)[0]) || 'Candidate';
 
   return {
     registrationId: row.id,
