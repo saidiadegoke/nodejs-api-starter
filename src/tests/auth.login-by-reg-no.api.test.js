@@ -5,7 +5,7 @@
  * up with three identifiers usable on /auth/login:
  *   1. email (always)
  *   2. phone (when supplied at signup)
- *   3. jupeb_registrations.provisional_candidate_code   (9-digit reg no.)
+ *   3. jupeb_registrations.provisional_candidate_code   (7-digit prefix+serial reg no.)
  *   4. jupeb_registrations.jupeb_candidate_number       (final matric no.,
  *      set during finalization)
  *
@@ -299,7 +299,7 @@ describe('Login by reg/matric number', () => {
           userId,
           scB.body.data.id,
           // Unique provisional code to satisfy any downstream queries.
-          `${yearShort}${uniB.body.data.jupeb_prefix}${String(Math.floor(1000 + Math.random() * 8999))}`,
+          `${uniB.body.data.jupeb_prefix}${String(Math.floor(1000 + Math.random() * 8999)).padStart(4, '0')}`,
         ]
       );
       return { ...seedA, matric, sessionBRegId: reg.rows[0].id };
