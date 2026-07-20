@@ -436,9 +436,8 @@ SELECT
   d.nin_verification_id,
   s.code,
   CAST(s.slot AS INT),
-  -- provisional code: yearShort (2) + uniPrefix (3) + last-4-of-slot (4) = 9 digits
-  -- Matches `jupeb_reg_final_number_format` regex `^[0-9]{2}[0-9]{3}[0-9]{4,}$`.
-  sess.year_short || uni.jupeb_prefix || RIGHT(s.slot, 4),
+  -- provisional code: uniPrefix (3) + last-4-of-slot (4) = 7 digits
+  uni.jupeb_prefix || RIGHT(s.slot, 4),
   CASE WHEN s.status = 'approved'
     THEN sess.year_short || uni.jupeb_prefix || RIGHT(s.slot, 4)
     ELSE NULL END,

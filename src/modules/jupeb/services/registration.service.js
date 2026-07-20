@@ -10,7 +10,12 @@ const registrationDocumentModel = require('../models/registration-document.model
 const resultEntriesModel = require('../models/result-entries.model');
 const FileService = require('../../files/services/file.service');
 const { canTransition } = require('./registration-state.service');
-const { formatCandidateNumber, makeInstitutionCode } = require('../utils/registration-numbering');
+const { resolveCandidateDisplayName } = require('../utils/candidate-name');
+const {
+  formatCandidateNumber,
+  formatProvisionalCandidateCode,
+  makeInstitutionCode,
+} = require('../utils/registration-numbering');
 const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
 const {
   assertInstitutionUniversityAccess,
@@ -247,12 +252,16 @@ function enrichListRow(row) {
   if (!row) return row;
   const intakeName = row.nin_intake_name ? String(row.nin_intake_name).trim() : '';
   const ninFromPayload = row.nin_display_name ? String(row.nin_display_name).trim() : '';
-  const fullName =
-    row.display_name ||
-    [row.first_name, row.last_name].filter(Boolean).join(' ') ||
-    (intakeName || null) ||
-    (ninFromPayload || null) ||
-    null;
+  const fullName = resolveCandidateDisplayName({
+    intake: intakeName ? { name: intakeName } : {},
+    profile: {
+      display_name: row.display_name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+    },
+    ninStatus: row.nin_verification_status || null,
+    ninFullName: ninFromPayload || null,
+  });
   const biometric_status =
     row.has_face && row.has_fingerprint
       ? 'yes'
@@ -344,8 +353,8 @@ function institutionCodeExpiresAt() {
   return new Date(Date.now() + hours * 3600 * 1000).toISOString();
 }
 
-function buildProvisionalCandidateCode(yearShort, jupebPrefix, serial) {
-  return formatCandidateNumber(yearShort, jupebPrefix, serial);
+function buildProvisionalCandidateCode(jupebPrefix, serial) {
+  return formatProvisionalCandidateCode(jupebPrefix, serial);
 }
 
 async function loadNinVerificationSummary(reg) {
@@ -376,19 +385,23 @@ async function loadNinVerificationForInstitutionDetail(reg) {
  * Same field precedence as `getMeProfile` so institution GET matches
  * `GET /registration/me/submission-preview` for NIN-backed demographics.
  */
-function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake) {
+function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninStatus = null) {
   if (!candidateRow) return null;
   const u = candidateRow;
   const n = ninPayload || {};
   const i = intake || {};
-  const first_name = u.first_name || n.first_name || null;
-  const last_name = u.last_name || n.last_name || null;
-  const display_name =
-    u.display_name
-    || [first_name, last_name].filter(Boolean).join(' ').trim()
-    || (i.name ? String(i.name).trim() : null)
-    || [n.first_name, n.last_name].filter(Boolean).join(' ').trim()
-    || null;
+  const first_name = (ninStatus === 'verified' && n.first_name)
+    ? String(n.first_name).trim()
+    : (u.first_name || n.first_name || null);
+  const last_name = (ninStatus === 'verified' && n.last_name)
+    ? String(n.last_name).trim()
+    : (u.last_name || n.last_name || null);
+  const display_name = resolveCandidateDisplayName({
+    ninPayload: n,
+    intake: i,
+    profile: u,
+    ninStatus,
+  });
   return {
     id: u.id,
     email: u.email || i.email || null,
@@ -627,7 +640,6 @@ class RegistrationService {
     const institution_issued_code = await generateUniqueInstitutionCode();
     const provisional_serial = await registrationModel.nextProvisionalSerial(session_id, university_id);
     const provisional_candidate_code = buildProvisionalCandidateCode(
-      session.year_short,
       university.jupeb_prefix,
       provisional_serial
     );
@@ -803,7 +815,12 @@ class RegistrationService {
     );
 
     const { nin_verification, ninPayload, intake } = ninBundle;
-    const mergedCandidate = mergeInstitutionCandidateFromNin(candidate, ninPayload, intake);
+    const mergedCandidate = mergeInstitutionCandidateFromNin(
+      candidate,
+      ninPayload,
+      intake,
+      nin_verification && nin_verification.status
+    );
     let next_of_kin_response = null;
     if (next_of_kin) {
       next_of_kin_response = {
@@ -1584,19 +1601,21 @@ class RegistrationService {
     const u = userRow.rows[0] || {};
     let ninPayload = {};
     let intake = {};
+    let ninStatus = null;
     if (reg.nin_verification_id) {
       const ninRow = await ninVerificationModel.findById(reg.nin_verification_id);
       if (ninRow) {
         ninPayload = ninRow.response_payload || {};
         intake = ninRow.intake_payload || {};
+        ninStatus = ninRow.status || null;
       }
     }
-    const fullName =
-      intake.name
-      || u.display_name
-      || [u.first_name, u.last_name].filter(Boolean).join(' ')
-      || [ninPayload.first_name, ninPayload.last_name].filter(Boolean).join(' ')
-      || null;
+    const fullName = resolveCandidateDisplayName({
+      ninPayload,
+      intake,
+      profile: u,
+      ninStatus,
+    });
     // M.2: prefer student-edited profile values; fall back to NIN payload.
     let nokRow = null;
     try {
@@ -1735,9 +1754,6 @@ class RegistrationService {
     if (!isUuid(sessionId)) throw httpError(422, 'Invalid session id');
     const session = await sessionModel.findById(sessionId);
     if (!session) throw httpError(404, 'Session not found');
-    if (session.status !== 'closed') {
-      throw httpError(422, 'numbering-preview requires a closed session');
-    }
     const rows = await registrationModel.findApprovedWithoutCandidateNumber(sessionId);
     const proposed = [];
     const seen = new Map();
@@ -1764,9 +1780,6 @@ class RegistrationService {
     if (!isUuid(sessionId)) throw httpError(422, 'Invalid session id');
     const session = await sessionModel.findById(sessionId);
     if (!session) throw httpError(404, 'Session not found');
-    if (session.status !== 'closed') {
-      throw httpError(422, 'finalize-candidate-numbers requires a closed session');
-    }
     const rows = await registrationModel.findApprovedWithoutCandidateNumber(sessionId);
     let assigned = 0;
     let skipped = 0;
@@ -1814,8 +1827,7 @@ class RegistrationService {
     const elig = await pool.query(
       `SELECT s.*
          FROM jupeb_registration_sessions s
-        WHERE s.status = 'closed'
-          AND EXISTS (
+        WHERE EXISTS (
             SELECT 1 FROM jupeb_registrations r
              WHERE r.session_id = s.id
                AND r.status = 'approved'

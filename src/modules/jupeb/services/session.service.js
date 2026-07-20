@@ -414,10 +414,7 @@ class SessionService {
   }
 
   async finalizeCandidateNumbers(id, userId) {
-    const row = await this.getById(id);
-    if (row.status !== 'closed') {
-      throw httpError(422, 'finalize-candidate-numbers requires a closed session');
-    }
+    await this.getById(id);
     await sessionModel.insertEvent(id, 'finalization_triggered', {}, userId);
     return registrationService.finalizeCandidateNumbers(id, userId);
   }
