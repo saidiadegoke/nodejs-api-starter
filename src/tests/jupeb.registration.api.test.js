@@ -871,6 +871,56 @@ describe('JUPEB registration API', () => {
       expect(d.next_of_kin.name).toMatch(/^Jane /);
       expect(d.next_of_kin.source).toBe('nin');
     });
+
+    it('rejects a second institution registration when the same NIN is already in use', async () => {
+      if (!registrationMigrated || !ninPendingMigrated) return;
+      const token = await getAdminToken();
+      if (!token) return;
+      const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'NDUP');
+
+      const nin = `7${String(Date.now()).slice(-10)}`;
+      const verifyRes = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          nin,
+          provider: 'mock',
+          idempotency_key: `idem-ndup-${Date.now()}`,
+        });
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.data.status).toBe('verified');
+      const ninVerificationId = verifyRes.body.data.verification_id;
+
+      const firstReg = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          session_id: sessionId,
+          university_id: universityId,
+          subject_combination_id: subjectCombinationId,
+          nin_verification_id: ninVerificationId,
+        });
+      expect(firstReg.status).toBe(201);
+
+      const cacheHit = await request(app)
+        .post('/identity/nin/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ nin, provider: 'mock' });
+      expect(cacheHit.status).toBe(200);
+      expect(cacheHit.body.data.verification_id).toBe(ninVerificationId);
+
+      const secondReg = await request(app)
+        .post('/registration/institution/registrations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          session_id: sessionId,
+          university_id: universityId,
+          subject_combination_id: subjectCombinationId,
+          nin_verification_id: ninVerificationId,
+        });
+      expect(secondReg.status).toBe(409);
+      expect(secondReg.body.message).toMatch(/already linked/i);
+    });
   });
 });
 

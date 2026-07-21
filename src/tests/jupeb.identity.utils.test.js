@@ -32,7 +32,7 @@ describe('JUPEB identity crypto utils', () => {
   });
 
   describe('validateBiometricPayload', () => {
-    it('requires file_id or external_reference', () => {
+    it('requires file_id or external_reference for face', () => {
       expect(validateBiometricPayload({ capture_type: 'face' }).ok).toBe(false);
       expect(
         validateBiometricPayload({ capture_type: 'face', file_id: '00000000-0000-0000-0000-000000000001' }).ok
@@ -42,7 +42,28 @@ describe('JUPEB identity crypto utils', () => {
       ).toBe(true);
     });
 
-    it('rejects both file_id and external_reference', () => {
+    it('accepts fingerprint confirmed: true without external_reference', () => {
+      const v = validateBiometricPayload({ capture_type: 'fingerprint', confirmed: true });
+      expect(v.ok).toBe(true);
+      expect(v.file_id).toBeNull();
+      expect(v.external_reference).toBe('device_local_auth');
+    });
+
+    it('rejects fingerprint without confirmed or external_reference', () => {
+      expect(validateBiometricPayload({ capture_type: 'fingerprint' }).ok).toBe(false);
+    });
+
+    it('rejects fingerprint with file_id', () => {
+      expect(
+        validateBiometricPayload({
+          capture_type: 'fingerprint',
+          confirmed: true,
+          file_id: '00000000-0000-0000-0000-000000000001',
+        }).ok
+      ).toBe(false);
+    });
+
+    it('rejects both file_id and external_reference for face', () => {
       expect(
         validateBiometricPayload({
           capture_type: 'face',

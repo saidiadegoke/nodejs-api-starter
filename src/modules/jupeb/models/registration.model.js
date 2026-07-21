@@ -15,6 +15,47 @@ class RegistrationModel {
     return result.rows[0] || null;
   }
 
+  /**
+   * Registrations linked to a NIN verification row (may be more than one when
+   * session/university differ — callers enforce business rules).
+   */
+  async findByNinVerificationId(ninVerificationId) {
+    if (!ninVerificationId) return [];
+    const result = await pool.query(
+      `SELECT id, status, session_id, university_id, nin_verification_id
+         FROM jupeb_registrations
+        WHERE nin_verification_id = $1
+        ORDER BY created_at DESC`,
+      [ninVerificationId]
+    );
+    return result.rows;
+  }
+
+  /**
+   * True when a non-retry registration exists for this NIN hash. Rejected and
+   * withdrawn rows are ignored so a candidate may re-apply after those outcomes.
+   */
+  async hasBlockingRegistrationForNinHash(ninHash, { sessionId } = {}) {
+    if (!ninHash) return false;
+    const values = [ninHash];
+    let sessionClause = '';
+    if (sessionId) {
+      values.push(sessionId);
+      sessionClause = ` AND r.session_id = $${values.length}`;
+    }
+    const result = await pool.query(
+      `SELECT 1
+         FROM jupeb_registrations r
+         INNER JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+        WHERE nv.nin_hash = $1
+          AND r.status NOT IN ('rejected', 'withdrawn')
+          ${sessionClause}
+        LIMIT 1`,
+      values
+    );
+    return result.rowCount > 0;
+  }
+
   async findByInstitutionCode(code) {
     const result = await pool.query(
       `SELECT * FROM jupeb_registrations WHERE institution_issued_code = $1`,

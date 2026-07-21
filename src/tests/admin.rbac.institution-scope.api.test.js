@@ -300,6 +300,18 @@ describe('Admin RBAC — institution-scoped lists', () => {
     expect(names).not.toContain('admin');
     expect(names).not.toContain('super_admin');
 
+    // group_by=role must use the same scope as GET /admin/roles
+    const grouped = await request(app)
+      .get('/admin/permissions?group_by=role&limit=200')
+      .set('Authorization', `Bearer ${instToken}`);
+    expect(grouped.status).toBe(200);
+    const groupedNames = grouped.body.data.map((r) => r.role_name);
+    expect(groupedNames).toEqual(expect.arrayContaining(['institution_admin', ownRoleName]));
+    expect(groupedNames).not.toContain(registrarRoleName);
+    expect(groupedNames).not.toContain('registrar');
+    expect(groupedNames).not.toContain('admin');
+    expect(groupedNames).not.toContain('super_admin');
+
     const foreignGet = await request(app)
       .get(`/admin/roles/${registrarRoleId}`)
       .set('Authorization', `Bearer ${instToken}`);

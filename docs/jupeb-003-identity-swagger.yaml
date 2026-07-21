@@ -295,7 +295,17 @@ paths:
       tags: [Identity — Biometrics]
       summary: Record a biometric capture for a registration
       description: |
-        Exactly one of `file_id` or `external_reference` is required.
+        **Face (selfie):** use `file_id` from `POST /files/upload` (do not put the
+        file UUID in `external_reference`). On success the durable `files.file_url`
+        is written to the registration owner's `profiles.profile_photo_url`, replacing
+        any expiring NIN provider photo. Exactly one of `file_id` or `external_reference`.
+
+        **Fingerprint (device-local):** after successful device auth, send
+        `confirmed: true` (no token/value required from the device). The server
+        stores `external_reference = "device_local_auth"`. You may still send an
+        explicit `external_reference` if you have one. There is no file upload.
+        If unavailable, call `POST /identity/registrations/{id}/biometrics/skip`
+        with `{ "capture_type": "fingerprint" }` instead.
 
         **Self-service lock:** if the registration's matching `*_skipped_at` column is set
         and the caller is not a privileged role (`super_admin`, `admin`, `registrar`,
@@ -312,20 +322,31 @@ paths:
           application/json:
             schema:
               type: object
-              required: [registration_id, capture_type, quality_score]
+              required: [registration_id, capture_type]
               properties:
                 registration_id: { type: string, format: uuid }
                 capture_type:
                   type: string
                   enum: [face, fingerprint]
-                file_id: { type: string, format: uuid }
-                external_reference: { type: string }
+                file_id:
+                  type: string
+                  format: uuid
+                  description: Required for face selfies (XOR with external_reference)
+                external_reference:
+                  type: string
+                  description: Optional for fingerprint if confirmed is true; XOR with file_id for face
+                confirmed:
+                  type: boolean
+                  description: |
+                    Fingerprint only. Set true after successful device-local biometric auth
+                    when there is no token to send. Server stores external_reference=device_local_auth.
                 quality_score: { type: number, minimum: 0, maximum: 1 }
                 device_metadata: { type: object }
                 captured_at: { type: string, format: date-time }
       responses:
         '201': { description: Created }
         '403': { description: Access denied or self-service capture is locked }
+        '404': { description: Face file_id not found }
         '409': { description: Duplicate active capture type for registration }
         '422': { description: Validation error or quality below threshold }
 
@@ -337,6 +358,9 @@ paths:
         Soft-archives the existing row by setting `replaced_at`, then inserts a fresh
         capture for the same `(registration_id, capture_type)`. The unique index excludes
         replaced rows, so re-capture works without manual delete.
+
+        When replacing a face capture with a new `file_id`, also overwrites
+        `profiles.profile_photo_url` with the durable file URL (same as create).
       security:
         - BearerAuth: []
       parameters:
@@ -348,14 +372,19 @@ paths:
             schema:
               type: object
               properties:
-                file_id: { type: string, format: uuid }
-                external_reference: { type: string }
+                file_id:
+                  type: string
+                  format: uuid
+                  description: Use for face selfie replacement (XOR with external_reference)
+                external_reference:
+                  type: string
+                  description: Use for fingerprint / vault refs (XOR with file_id)
                 quality_score: { type: number }
                 device_metadata: { type: object }
                 captured_at: { type: string, format: date-time }
       responses:
         '200': { description: New active capture row }
-        '404': { description: Capture not found }
+        '404': { description: Capture or face file_id not found }
         '422': { description: Already replaced or invalid payload }
     delete:
       tags: [Identity — Biometrics]
@@ -412,10 +441,11 @@ paths:
   /identity/registrations/{registrationId}/photo:
     get:
       tags: [Identity — Biometrics]
-      summary: Signed URL for the latest face capture
+      summary: URL for the latest face capture file
       description: |
-        Returns `{ url, file_id, file_type, captured_at }` for the most recent active
-        face capture. Leverages the existing `files` module's signed-URL helper.
+        Returns `{ url, file_id, file_type, captured_at }` for the most recent face
+        capture that has a `file_id` (selfie uploaded via `/files`). Face rows that
+        only have `external_reference` are ignored here — use `file_id` for selfies.
       security:
         - BearerAuth: []
       parameters:
