@@ -84,6 +84,22 @@ class PaymentService {
     return updated;
   }
 
+  /**
+   * Mark payment failed after gateway verification reports a terminal failure.
+   * Clears the pending checkout so a new payment can be started.
+   */
+  async failPayment(paymentId, processorPayload = null, notes = null) {
+    const payment = await this.paymentModel.findByPaymentId(paymentId);
+    if (!payment) throw new Error('Payment not found');
+    if (payment.status === 'completed' || payment.status === 'refunded') return payment;
+    if (payment.status === 'failed') return payment;
+
+    return this.paymentModel.updateStatus(payment.id, 'failed', {
+      processor_response: processorPayload,
+      notes: notes || `Gateway verification: ${processorPayload?.status || 'failed'}`,
+    });
+  }
+
   async refundPayment(idOrPaymentId, reason) {
     let payment = await this.paymentModel.findById(idOrPaymentId);
     if (!payment) payment = await this.paymentModel.findByPaymentId(idOrPaymentId);
