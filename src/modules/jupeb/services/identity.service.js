@@ -6,6 +6,7 @@ const registrationModel = require('../models/registration.model');
 const ninAdapter = require('./nin-adapter.service');
 const { emitNinResolved } = require('./nin-events.service');
 const FileService = require('../../files/services/file.service');
+const FileModel = require('../../files/models/file.model');
 const { normalizeNin, hashNin, ninLast4, validateBiometricPayload } = require('../utils/identity-crypto');
 const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
 const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
@@ -63,6 +64,28 @@ function skipColumnFor(type) {
 async function userHasPrivilegedIdentityRole(userId) {
   const roles = await getUserRoles(userId);
   return roles.some((r) => PRIVILEGED.has(r));
+}
+
+/**
+ * Face selfies uploaded via /files must become the durable candidate photo
+ * (NIN provider photo_url expires). Writes the stored files.file_url onto
+ * the registration owner's profiles.profile_photo_url (overwrite).
+ */
+async function applyFaceSelfieToProfile(registration, fileId) {
+  if (!registration || !registration.user_id || !fileId) return;
+  if (!isUuid(fileId)) throw httpError(422, 'file_id must be a valid UUID');
+  const file = await FileModel.findById(fileId);
+  if (!file) throw httpError(404, 'File not found');
+  const url = file.file_url != null ? String(file.file_url).trim() : '';
+  if (!url) throw httpError(422, 'Face capture file has no file_url');
+  await pool.query(
+    `INSERT INTO profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
+    [registration.user_id]
+  );
+  await pool.query(
+    `UPDATE profiles SET profile_photo_url = $2, updated_at = NOW() WHERE user_id = $1`,
+    [registration.user_id, url]
+  );
 }
 
 function sanitizeVerification(row) {
@@ -287,6 +310,11 @@ class IdentityService {
         if (updated) rowOut = updated;
       }
       return publicVerifyResponse(rowOut, userId);
+    }
+
+    const blocked = await registrationModel.hasBlockingRegistrationForNinHash(ninHash);
+    if (blocked) {
+      throw httpError(409, 'This NIN is already registered');
     }
 
     const adapterResult = await ninAdapter.verifyNin(normalized, adapterOpts);
@@ -534,12 +562,22 @@ class IdentityService {
     if (Number.isNaN(capturedAt.getTime())) {
       throw httpError(422, 'captured_at must be a valid ISO date');
     }
+    // Validate face file early so we fail before insert when file_id is bad.
+    if (body.capture_type === 'face' && v.file_id) {
+      if (!isUuid(v.file_id)) throw httpError(422, 'file_id must be a valid UUID');
+      const file = await FileModel.findById(v.file_id);
+      if (!file) throw httpError(404, 'File not found');
+      if (!file.file_url || !String(file.file_url).trim()) {
+        throw httpError(422, 'Face capture file has no file_url');
+      }
+    }
+    let row;
     try {
-      return await biometricCaptureModel.create({
+      row = await biometricCaptureModel.create({
         registration_id: body.registration_id,
         capture_type: body.capture_type,
-        file_id: body.file_id || null,
-        external_reference: body.external_reference || null,
+        file_id: v.file_id,
+        external_reference: v.external_reference,
         quality_score: body.quality_score,
         device_metadata: body.device_metadata,
         captured_at: capturedAt.toISOString(),
@@ -550,6 +588,10 @@ class IdentityService {
       }
       throw e;
     }
+    if (body.capture_type === 'face' && v.file_id) {
+      await applyFaceSelfieToProfile(registration, v.file_id);
+    }
+    return row;
   }
 
   async skipBiometric(registrationId, body, userId) {
@@ -598,6 +640,7 @@ class IdentityService {
       capture_type: old.capture_type,
       file_id: body.file_id,
       external_reference: body.external_reference,
+      confirmed: body.confirmed,
       quality_score: body.quality_score,
       device_metadata: body.device_metadata,
       captured_at: body.captured_at,
@@ -609,13 +652,23 @@ class IdentityService {
       throw httpError(422, 'captured_at must be a valid ISO date');
     }
 
+    if (old.capture_type === 'face' && v.file_id) {
+      if (!isUuid(v.file_id)) throw httpError(422, 'file_id must be a valid UUID');
+      const file = await FileModel.findById(v.file_id);
+      if (!file) throw httpError(404, 'File not found');
+      if (!file.file_url || !String(file.file_url).trim()) {
+        throw httpError(422, 'Face capture file has no file_url');
+      }
+    }
+
     await biometricCaptureModel.markReplaced(captureId);
+    let row;
     try {
-      return await biometricCaptureModel.create({
+      row = await biometricCaptureModel.create({
         registration_id: old.registration_id,
         capture_type: old.capture_type,
-        file_id: body.file_id || null,
-        external_reference: body.external_reference || null,
+        file_id: v.file_id,
+        external_reference: v.external_reference,
         quality_score: body.quality_score,
         device_metadata: body.device_metadata,
         captured_at: capturedAt.toISOString(),
@@ -626,6 +679,10 @@ class IdentityService {
       }
       throw e;
     }
+    if (old.capture_type === 'face' && v.file_id) {
+      await applyFaceSelfieToProfile(registration, v.file_id);
+    }
+    return row;
   }
 
   async deleteBiometric(captureId, userId) {

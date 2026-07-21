@@ -414,7 +414,8 @@ function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninS
     display_name,
     date_of_birth: n.date_of_birth || u.date_of_birth || null,
     gender: n.gender || u.gender || null,
-    profile_photo_url: n.photo_url || u.profile_photo_url || null,
+    // Prefer durable selfie (profiles.profile_photo_url) over expiring NIN photo_url.
+    profile_photo_url: u.profile_photo_url || n.photo_url || null,
     residential_address: u.residential_address || n.address || null,
     state_of_origin: u.state_of_origin || n.state_of_origin || null,
     lga: u.lga || n.lga || null,
@@ -512,6 +513,29 @@ function mapErrorCode(err) {
 }
 
 const TERMINAL_STATUSES = new Set(['approved', 'rejected', 'withdrawn']);
+/** Registrations in these states free the NIN for reuse (same session / verification). */
+const NIN_REGISTRATION_RETRY_STATUSES = new Set(['rejected', 'withdrawn']);
+
+async function assertNinAvailableForNewRegistration({ session_id, nin_verification_id }) {
+  if (!nin_verification_id) return;
+  const ninRow = await ninVerificationModel.findById(nin_verification_id);
+  if (!ninRow) throw httpError(404, 'NIN verification not found');
+
+  const linked = await registrationModel.findByNinVerificationId(nin_verification_id);
+  for (const reg of linked) {
+    if (!NIN_REGISTRATION_RETRY_STATUSES.has(reg.status)) {
+      throw httpError(409, 'This NIN verification is already linked to an active registration');
+    }
+  }
+
+  const blockedInSession = await registrationModel.hasBlockingRegistrationForNinHash(
+    ninRow.nin_hash,
+    { sessionId: session_id }
+  );
+  if (blockedInSession) {
+    throw httpError(409, 'This NIN is already registered for this session');
+  }
+}
 
 /**
  * Institution list / batch UI hints: which row-level actions are allowed
@@ -636,6 +660,10 @@ class RegistrationService {
     }
     await assertInstitutionUniversityAccess(userId, university_id);
     await assertComboForUniversity(subject_combination_id, university_id);
+
+    if (nin_verification_id) {
+      await assertNinAvailableForNewRegistration({ session_id, nin_verification_id });
+    }
 
     const institution_issued_code = await generateUniqueInstitutionCode();
     const provisional_serial = await registrationModel.nextProvisionalSerial(session_id, university_id);
@@ -1632,7 +1660,8 @@ class RegistrationService {
         provisional_candidate_code: reg.provisional_candidate_code,
         jupeb_candidate_number: reg.jupeb_candidate_number,
         status: reg.status,
-        photo_url: ninPayload.photo_url || u.profile_photo_url || null,
+        // Prefer durable selfie over expiring NIN provider photo_url.
+        photo_url: u.profile_photo_url || ninPayload.photo_url || null,
       },
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,

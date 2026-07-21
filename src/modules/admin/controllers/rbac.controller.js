@@ -67,9 +67,6 @@ class RbacController {
         q: req.query.q,
         actorUserId: req.user && req.user.user_id,
       });
-      if (result.grouped) {
-        return sendPaginated(res, result.rows, result.page, result.limit, result.total);
-      }
       return sendPaginated(res, result.rows, result.page, result.limit, result.total);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
