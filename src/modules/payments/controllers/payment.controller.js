@@ -3,6 +3,25 @@ const PaymentService = require('../services/payment.service');
 const PaymentProcessorService = require('../services/paymentProcessor.service');
 const { validatePaymentData } = require('../utils/validators');
 
+const TERMINAL_FAILURE_STATUSES = new Set([
+  'failed',
+  'abandoned',
+  'cancelled',
+  'canceled',
+]);
+
+function isVerificationSuccess(verificationResult) {
+  return (
+    verificationResult?.success &&
+    (verificationResult.status === 'successful' || verificationResult.status === 'success')
+  );
+}
+
+function isVerificationFailed(verificationResult) {
+  const status = String(verificationResult?.status || '').toLowerCase();
+  return TERMINAL_FAILURE_STATUSES.has(status);
+}
+
 class PaymentController {
   constructor() {
     this.paymentService = PaymentService;
@@ -113,12 +132,7 @@ class PaymentController {
         transactionId
       );
 
-      const ok =
-        verificationResult.success &&
-        (verificationResult.status === 'successful' ||
-          verificationResult.status === 'success');
-
-      if (ok) {
+      if (isVerificationSuccess(verificationResult)) {
         await this.paymentService.verifyPayment(
           payment.payment_id,
           reference,
@@ -126,6 +140,8 @@ class PaymentController {
           processor,
           verificationResult
         );
+      } else if (isVerificationFailed(verificationResult)) {
+        await this.paymentService.failPayment(payment.payment_id, verificationResult);
       }
 
       const updated = await this.paymentService.paymentModel.findByTransactionRef(reference);
@@ -185,7 +201,7 @@ class PaymentController {
             payment.payment_method,
             transactionId
           );
-          if (vr.success && (vr.status === 'successful' || vr.status === 'success')) {
+          if (isVerificationSuccess(vr)) {
             await this.paymentService.verifyPayment(
               payment.payment_id,
               reference,
@@ -193,6 +209,8 @@ class PaymentController {
               payment.payment_method,
               vr
             );
+          } else if (isVerificationFailed(vr)) {
+            await this.paymentService.failPayment(payment.payment_id, vr);
           }
         }
       }
@@ -485,9 +503,7 @@ class PaymentController {
         payment.payment_method,
         transactionId
       );
-      const ok =
-        vr.success && (vr.status === 'successful' || vr.status === 'success');
-      if (ok) {
+      if (isVerificationSuccess(vr)) {
         await this.paymentService.verifyPayment(
           payment.payment_id,
           reference,
@@ -495,6 +511,8 @@ class PaymentController {
           payment.payment_method,
           vr
         );
+      } else if (isVerificationFailed(vr)) {
+        await this.paymentService.failPayment(payment.payment_id, vr);
       }
       const updated = await this.paymentService.paymentModel.findById(req.params.id);
       return res.json({ success: true, data: updated, verification: vr });
