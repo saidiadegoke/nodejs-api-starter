@@ -16,7 +16,7 @@ const startServer = async () => {
     logger.info('Database connection successful');
 
     // Run seeds (idempotent: ON CONFLICT DO NOTHING in seed SQL)
-    await runSeeds();
+    // await runSeeds();
 
     // Create HTTP server
     const server = http.createServer(app);
