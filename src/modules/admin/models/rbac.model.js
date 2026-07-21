@@ -292,33 +292,17 @@ class RbacModel {
   }
 
   async listPermissionsGroupedByRole({ limit, offset, q, scope } = {}) {
-    const values = [];
-    let idx = 1;
-
-    const conditions = [];
-    if (q) {
-      const pattern = `%${q}%`;
-      conditions.push(`(r.name ILIKE $${idx} OR r.display_name ILIKE $${idx})`);
-      values.push(pattern);
-      idx++;
-    }
-    if (scope && scope.mode === 'institution') {
-      const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
-      conditions.push(
-        `(
-          r.owner_jupeb_university_id = $${idx}
-          OR r.created_by = $${idx + 1}
-          OR (r.is_system = true AND r.name = ANY($${idx + 2}::text[]))
-        )`
-      );
-      values.push(scope.universityId, scope.actorId, assignable);
-      idx += 3;
-    }
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    // Same visibility rules as GET /admin/roles (institution: university-owned +
+    // created_by actor + assignable system roles).
+    const { whereClause, values, nextIdx } = this._roleListFilters({ q, scope });
+    values.push(limit, offset);
 
     const roleIdsResult = await pool.query(
-      `SELECT id FROM roles r ${whereClause} ORDER BY r.name ASC LIMIT $${idx} OFFSET $${idx + 1}`,
-      [...values, limit, offset]
+      `SELECT id FROM roles
+       ${whereClause}
+       ORDER BY name ASC
+       LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`,
+      values
     );
     const roleIds = roleIdsResult.rows.map((row) => row.id);
 
@@ -354,31 +338,12 @@ class RbacModel {
         });
       }
     }
-    return [...grouped.values()];
+    // Preserve the roles query order (Map insertion follows roleIds order).
+    return roleIds.map((id) => grouped.get(id)).filter(Boolean);
   }
 
   async countRolesGrouped({ q, scope } = {}) {
-    const values = [];
-    const conditions = [];
-    let idx = 1;
-    if (q) {
-      conditions.push(`(name ILIKE $${idx} OR display_name ILIKE $${idx})`);
-      values.push(`%${q}%`);
-      idx++;
-    }
-    if (scope && scope.mode === 'institution') {
-      const assignable = [...INSTITUTION_ASSIGNABLE_SYSTEM_ROLES];
-      conditions.push(
-        `(
-          owner_jupeb_university_id = $${idx}
-          OR created_by = $${idx + 1}
-          OR (is_system = true AND name = ANY($${idx + 2}::text[]))
-        )`
-      );
-      values.push(scope.universityId, scope.actorId, assignable);
-      idx += 3;
-    }
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { whereClause, values } = this._roleListFilters({ q, scope });
     const r = await pool.query(`SELECT COUNT(*)::int AS c FROM roles ${whereClause}`, values);
     return r.rows[0].c;
   }

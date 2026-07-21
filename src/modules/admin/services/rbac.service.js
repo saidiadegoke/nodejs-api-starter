@@ -198,7 +198,8 @@ class RbacService {
   // ---------- Permissions ----------
   async listPermissions({ page, limit, resource, group_by, q, actorUserId }) {
     const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
-    if (group_by === 'role') {
+    const groupBy = group_by != null ? String(group_by).trim().toLowerCase() : '';
+    if (groupBy === 'role') {
       const safePage = Math.max(1, parseInt(page, 10) || 1);
       const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
       const offset = (safePage - 1) * safeLimit;
