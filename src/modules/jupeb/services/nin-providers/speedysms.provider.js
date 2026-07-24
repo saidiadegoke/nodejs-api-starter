@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 
 // SpeedySMS Identity API — POST /identity/nin returns IdentityLookupResult
 // (see /Users/pro/websites/speedysms-web/IDENTITY_PROVIDER_CONTRACT.md §5).
@@ -136,13 +137,33 @@ function getConfig() {
   return {
     apiKey: process.env.SPEEDYSMS_API_KEY || '',
     baseUrl: (process.env.SPEEDYSMS_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, ''),
+    signingSecret: process.env.SPEEDYSMS_SIGNING_SECRET || '',
     timeoutMs: timeout,
     retryAfterSeconds: retry,
   };
 }
 
+/**
+ * Request signing (SpeedySMS "signed requests" — docs/SIGNED_REQUESTS_DESIGN.md).
+ * Returns {} when SPEEDYSMS_SIGNING_SECRET is unset (feature off — rollout-safe),
+ * else X-Timestamp / X-Nonce / X-Signature over a canonical string binding
+ * method + path + body + time + a single-use nonce. Makes a captured request
+ * un-replayable and a leaked bearer key insufficient on its own. Enable signing
+ * on this integration's API key in the SpeedySMS dashboard, then set the secret.
+ */
+function signedHeaders(method, path, bodyStr, secret) {
+  const s = String(secret || '').trim();
+  if (!s) return {};
+  const ts = Date.now().toString();
+  const nonce = crypto.randomUUID();
+  const bodyHash = crypto.createHash('sha256').update(bodyStr).digest('hex');
+  const canonical = [method, path, bodyHash, ts, nonce].join('\n');
+  const signature = crypto.createHmac('sha256', s).update(canonical).digest('hex');
+  return { 'X-Timestamp': ts, 'X-Nonce': nonce, 'X-Signature': signature };
+}
+
 async function verifyNin(normalizedNin, { http = axios, provider, force_fresh } = {}) {
-  const { apiKey, baseUrl, timeoutMs, retryAfterSeconds } = getConfig();
+  const { apiKey, baseUrl, signingSecret, timeoutMs, retryAfterSeconds } = getConfig();
 
   // Local input checks. SpeedySMS will reject malformed NINs too, but a
   // short-circuit here saves a billed round-trip on obvious junk.
@@ -176,16 +197,26 @@ async function verifyNin(normalizedNin, { http = axios, provider, force_fresh } 
   if (provider) upstreamBody.provider = String(provider);
   if (force_fresh) upstreamBody.force_fresh = true;
 
+  // Sign the JSON we're about to send. axios serializes a plain object with
+  // JSON.stringify (no whitespace) — identical bytes to bodyStr — so the
+  // verifier's sha256(body) matches. We pass the object (not the string) so
+  // this stays a drop-in change.
+  const url = `${baseUrl}/identity/nin`;
+  const bodyStr = JSON.stringify(upstreamBody);
+  let path = '/identity/nin';
+  try { path = new URL(url).pathname; } catch { /* keep default */ }
+
   let response;
   try {
     response = await http.post(
-      `${baseUrl}/identity/nin`,
+      url,
       upstreamBody,
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'content-type': 'application/json',
           accept: 'application/json',
+          ...signedHeaders('POST', path, bodyStr, signingSecret),
         },
         timeout: timeoutMs,
         // Inspect 4xx ourselves to map status precisely; let 5xx and network
