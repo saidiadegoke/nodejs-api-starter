@@ -81,14 +81,15 @@ Code locations:
 |----------|---------|-------------|
 | `ATTENDANCE_PROVIDER` | `mock` | `mock` \| `http` |
 | `ATTENDANCE_SERVICE_BASE_URL` | — | Required when `http` (no trailing slash) |
-| `ATTENDANCE_SERVICE_API_KEY` | — | Bearer token sent to Attendance |
+| `ATTENDANCE_ADMIN_SECRET` | — | Sent as `x-admin-secret` for generate/refresh token |
+| `ATTENDANCE_APPLICATION_NAME` | — | App id for token body and `x-app-name` on data calls |
 | `ATTENDANCE_SERVICE_TIMEOUT_MS` | `15000` | Axios timeout |
 | `CRMS_PROVIDER` | `mock` | `mock` \| `http` |
 | `CRMS_SERVICE_BASE_URL` | — | Required when `http` |
 | `CRMS_SERVICE_API_KEY` | — | Bearer token sent to CRMS |
 | `CRMS_SERVICE_TIMEOUT_MS` | `15000` | Axios timeout |
 
-When `http` is selected but base URL or API key is missing, this API returns:
+When `http` is selected but base URL, admin secret, or application name is missing, this API returns:
 
 ```json
 {
@@ -139,15 +140,15 @@ If the student has no registration, mobile routes return **404** with `error_cod
 
 | Mobile endpoint | Status | Upstream |
 |-----------------|--------|----------|
-| `GET /dashboard/home` | 🟡 | Attendance `GET /v1/students/me/home` + CRMS `GET /v1/students/me/home-summary` + local unread count |
+| `GET /dashboard/home` | 🟡 | Attendance `GET /api/students/me/home` + CRMS `GET /v1/students/me/home-summary` + local unread count |
 | `GET /dashboard/courses` | 🟡 | CRMS `GET /v1/students/me/courses` |
 | `GET /dashboard/results` | 🟡 | CRMS `GET /v1/students/me/results` |
 | `GET /attendance/home` | 🟡 | Same composition as `/dashboard/home` |
-| `GET /attendance/summary` | 🟡 | Attendance `GET /v1/students/me/summary` |
-| `GET /attendance/classes` | 🟡 | Attendance `GET /v1/students/me/classes` |
-| `GET /attendance/history` | 🟡 | Attendance `GET /v1/students/me/history` |
-| `GET /attendance/classes/:courseCode/sessions` | 🟡 | Attendance `GET /v1/students/me/classes/:courseCode/sessions` |
-| `GET /attendance/timetable` | 🟡 | Attendance `GET /v1/students/me/timetable` |
+| `GET /attendance/summary` | 🟡 | Attendance `GET /api/students/me/summary` |
+| `GET /attendance/classes` | 🟡 | Attendance `GET /api/students/me/classes` |
+| `GET /attendance/history` | 🟡 | Attendance `GET /api/students/me/history` |
+| `GET /attendance/classes/:courseCode/sessions` | 🟡 | Attendance `GET /api/students/me/classes/:courseCode/sessions` |
+| `GET /attendance/timetable` | 🟡 | Attendance `GET /api/students/me/timetable` |
 | `POST /attendance/sessions/:sessionId/check-in` | ❌ | Not proxied yet |
 
 ---
@@ -156,7 +157,10 @@ If the student has no registration, mobile routes return **404** with `error_cod
 
 **Base URL:** value of `ATTENDANCE_SERVICE_BASE_URL`
 
-**Auth:** `Authorization: Bearer <ATTENDANCE_SERVICE_API_KEY>`
+**Auth:**
+1. `POST /api/auth/generate-token` with `x-admin-secret: <ATTENDANCE_ADMIN_SECRET>` and body `{ "applicationName": "<ATTENDANCE_APPLICATION_NAME>" }` → `{ token }`
+2. `POST /api/auth/refresh-token` with `x-admin-secret` to renew (portal retries on `401`)
+3. Student endpoints: headers `x-app-name` + `x-app-token` (not Bearer)
 
 **Content-Type:** `application/json`
 
@@ -164,7 +168,7 @@ All paths below are relative to the Attendance base URL.
 
 ---
 
-### `GET /v1/students/me/home` 🟡
+### `GET /api/students/me/home` 🟡
 
 **Used by:** `GET /dashboard/home`, `GET /attendance/home`
 
@@ -225,7 +229,7 @@ All paths below are relative to the Attendance base URL.
 
 ---
 
-### `GET /v1/students/me/summary` 🟡
+### `GET /api/students/me/summary` 🟡
 
 **Used by:** `GET /attendance/summary`
 
@@ -246,7 +250,7 @@ All paths below are relative to the Attendance base URL.
 
 ---
 
-### `GET /v1/students/me/classes` 🟡
+### `GET /api/students/me/classes` 🟡
 
 **Used by:** `GET /attendance/classes`
 
@@ -276,7 +280,7 @@ All paths below are relative to the Attendance base URL.
 
 ---
 
-### `GET /v1/students/me/history` 🟡
+### `GET /api/students/me/history` 🟡
 
 **Used by:** `GET /attendance/history`
 
@@ -298,7 +302,7 @@ All paths below are relative to the Attendance base URL.
 
 ---
 
-### `GET /v1/students/me/classes/:courseCode/sessions` 🟡
+### `GET /api/students/me/classes/:courseCode/sessions` 🟡
 
 **Used by:** `GET /attendance/classes/:courseCode/sessions`
 
@@ -326,7 +330,7 @@ All paths below are relative to the Attendance base URL.
 
 ---
 
-### `GET /v1/students/me/timetable` 🟡
+### `GET /api/students/me/timetable` 🟡
 
 **Used by:** `GET /attendance/timetable`
 
@@ -361,7 +365,7 @@ Invalid `month` on the mobile route returns **422** (`error_code: month_invalid`
 
 ---
 
-### `POST /v1/students/me/sessions/:sessionId/check-in` ❌
+### `POST /api/students/me/sessions/:sessionId/check-in` ❌
 
 **Planned for:** `POST /attendance/sessions/:sessionId/check-in`
 
@@ -530,7 +534,8 @@ Switching to live upstream:
 ```bash
 ATTENDANCE_PROVIDER=http
 ATTENDANCE_SERVICE_BASE_URL=https://attendance.example.com
-ATTENDANCE_SERVICE_API_KEY=sk_live_…
+ATTENDANCE_ADMIN_SECRET=…
+ATTENDANCE_APPLICATION_NAME=…
 
 CRMS_PROVIDER=http
 CRMS_SERVICE_BASE_URL=https://crms.example.com
@@ -560,9 +565,10 @@ These mobile routes from [`MOBILE_API_ENDPOINTS.md`](MOBILE_API_ENDPOINTS.md) ar
 
 ### Attendance service
 
-- [ ] Expose the six `GET /v1/students/me/…` routes above
+- [ ] Expose the six `GET /api/students/me/…` routes above
+- [ ] Expose `POST /api/auth/generate-token` and `POST /api/auth/refresh-token`
 - [ ] Accept `student_id`, `registration_id`, `candidate_code` query params
-- [ ] Authenticate service Bearer API keys
+- [ ] Authenticate via `x-app-name` + `x-app-token` on student routes
 - [ ] Return JSON matching the documented `data` shapes (envelope optional)
 - [ ] Support optional `q` on classes / history / sessions
 - [ ] Support optional `month=YYYY-MM` on timetable
@@ -579,8 +585,8 @@ These mobile routes from [`MOBILE_API_ENDPOINTS.md`](MOBILE_API_ENDPOINTS.md) ar
 ### reg-portal-api (when contracts are live)
 
 - [ ] Set `ATTENDANCE_PROVIDER=http` and `CRMS_PROVIDER=http` in each environment
-- [ ] Store API keys as secrets (not in git)
-- [ ] Confirm path prefixes if upstream uses a different `/v1` layout — adjust `http.provider.js` mappers only
+- [ ] Store `ATTENDANCE_ADMIN_SECRET` / `ATTENDANCE_APPLICATION_NAME` and CRMS API keys as secrets (not in git)
+- [ ] Confirm path prefixes if upstream differs — adjust `http.provider.js` mappers only
 - [ ] Re-run `npm run test:mobile` with mocks; add contract tests against staging when available
 
 ---

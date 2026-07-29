@@ -136,3 +136,15 @@ DB_NAME=your_app
 - **DB connection errors** — check `.env` and verify Postgres is reachable (`pg_isready`)
 
 Run `node scripts/rbac.js --help` for full CLI usage.
+
+## SSO key generation
+
+Generate an RSA keypair for CRP SSO issuer env vars:
+
+```bash
+npm run sso:generate-keys
+# or with a custom kid:
+node scripts/generate-sso-keys.js crp-key-2026-07
+```
+
+Prints `CRP_SSO_PRIVATE_KEY_PEM`, `CRP_SSO_CURRENT_KID`, and `CRP_SSO_JWKS_JSON` for `.env`. Set `CRP_SSO_ISSUER` to your public API URL separately. See `docs/crp-sso-integration.md`.
