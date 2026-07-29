@@ -29,7 +29,8 @@
     "rbac:add-role-to-user": "node scripts/add-role-to-user.js",
     "rbac:list-user-roles": "node scripts/list-user-roles.js",
     "rbac:list-role-permissions": "node scripts/list-role-permissions.js",
-    "rbac:set-user-password": "node scripts/set-user-password.js"
+    "rbac:set-user-password": "node scripts/set-user-password.js",
+    "sso:generate-keys": "node scripts/generate-sso-keys.js"
   },
   "repository": {
     "type": "git",
@@ -69,6 +70,7 @@
     "form-data": "^4.0.0",
     "helmet": "^7.1.0",
     "joi": "^18.0.2",
+    "jose": "^4.15.9",
     "js-yaml": "^4.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
@@ -80,8 +82,8 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-twitter": "^0.1.5",
     "pdf-parse": "^1.1.1",
-    "pdfkit": "^0.15.0",
     "pdfjs-dist": "^4.0.379",
+    "pdfkit": "^0.15.0",
     "pg": "^8.11.3",
     "sharp": "^0.33.5",
     "socket.io": "^4.7.5",

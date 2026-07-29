@@ -20,6 +20,9 @@ const postsRoutes = require('../modules/posts/routes');
 const jupebRoutes = require('../modules/jupeb/routes');
 const ocrRoutes = require('../modules/ocr/routes');
 const attendanceRoutes = require('../modules/attendance/routes');
+const crmsRoutes = require('../modules/crms/routes');
+const ssoRoutes = require('../modules/auth/routes/sso.routes');
+const wellKnownRoutes = require('../modules/auth/routes/well-known.routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -65,7 +68,10 @@ router.get('/', (req, res) => {
       jupeb007Academic: '/docs/jupeb-007-academic',
       jupeb008Dashboard: '/docs/jupeb-008-dashboard',
       jupeb009InstitutionScope: '/docs/jupeb-009-institution-scope',
-      ocr: '/docs/ocr'
+      ocr: '/docs/ocr',
+      sso: '/docs/sso',
+      attendanceUpstream: '/docs/attendance-upstream',
+      crmsUpstream: '/docs/crms-upstream'
     },
     endpoints: {
       auth: '/auth',
@@ -90,6 +96,8 @@ router.get('/', (req, res) => {
       academic: '/academic',
       dashboard: '/dashboard',
       attendance: '/attendance',
+      sso: '/sso',
+      jwks: '/.well-known/jwks.json',
       health: '/health'
     },
     features: {
@@ -98,7 +106,8 @@ router.get('/', (req, res) => {
       file_storage: 'Centralized with multi-provider support',
       real_time: 'WebSocket support enabled',
       payments: 'Paystack, Flutterwave, direct bank transfer, webhooks',
-      posts: 'User-authored posts with draft / published workflow'
+      posts: 'User-authored posts with draft / published workflow',
+      sso: 'RS256 handoff tokens for CRMS / Attendance (JWKS issuer)'
     }
   });
 });
@@ -109,11 +118,14 @@ router.get('/', (req, res) => {
  * e.g. `/catalog`, `/registration` — they must be registered before `/admin` so `PATCH /admin/users/.../jupeb-university` is handled here.
  */
 router.use('/', jupebRoutes);
+router.use('/', wellKnownRoutes);
+router.use('/sso', ssoRoutes);
 router.use('/auth', authRoutes);
 router.use('/users', users);
 router.use('/files', filesRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/attendance', attendanceRoutes);
+router.use('/crms', crmsRoutes);
 router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
 router.use('/assets', assetsRoutes);
@@ -171,7 +183,6 @@ const swaggerDocs = {
   'jupeb-009-institution-scope': YAML.load(
     fs.readFileSync(path.join(docsDir, 'jupeb-009-institution-scope-swagger.yaml'), 'utf8')
   ),
-  ocr: YAML.load(fs.readFileSync(path.join(docsDir, 'ocr-swagger.yaml'), 'utf8'))
 };
 
 Object.keys(swaggerDocs).forEach((key) => {
