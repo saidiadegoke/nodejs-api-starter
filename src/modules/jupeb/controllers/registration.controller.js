@@ -282,8 +282,8 @@ class RegistrationController {
 
   static async submit(req, res) {
     try {
-      const row = await registrationService.submitForReview(req.user.user_id);
-      return sendSuccess(res, row, 'Submitted for review');
+      const { row, message } = await registrationService.submitForReview(req.user.user_id);
+      return sendSuccess(res, row, message);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

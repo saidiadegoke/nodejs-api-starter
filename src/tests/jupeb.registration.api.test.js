@@ -141,6 +141,14 @@ describe('JUPEB registration API', () => {
     expect(submitRes.status).toBe(200);
     expect(submitRes.body.data.status).toBe('pending_institution_review');
 
+    const resubmitRes = await request(app)
+      .post('/registration/me/submit')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(resubmitRes.status).toBe(200);
+    expect(resubmitRes.body.data.status).toBe('pending_institution_review');
+    expect(resubmitRes.body.message).toBe('Your registration has been received and is waiting approval');
+
     const approveRes = await request(app)
       .post(`/registration/institution/registrations/${registrationId}/approve`)
       .set('Authorization', `Bearer ${token}`)
