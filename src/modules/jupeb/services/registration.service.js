@@ -1758,12 +1758,19 @@ class RegistrationService {
   async submitForReview(userId) {
     const reg = await registrationModel.findLatestForUser(userId);
     if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+    if (reg.status === 'pending_institution_review') {
+      return {
+        row: reg,
+        message: 'Your registration has been received and is waiting approval',
+      };
+    }
     const now = new Date().toISOString();
-    return transitionStatus(reg, 'pending_institution_review', {
+    const row = await transitionStatus(reg, 'pending_institution_review', {
       userId,
       reason: null,
       extraFields: { submitted_at: now },
     });
+    return { row, message: 'Submitted for review' };
   }
 
   async getDashboardAccess(userId) {
