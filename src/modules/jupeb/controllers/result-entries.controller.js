@@ -25,6 +25,17 @@ class ResultEntriesController {
     });
   }
 
+  static patchMine(req, res) {
+    return handle(res, async () => {
+      const data = await resultEntriesService.patchMineEntry(
+        req.user.user_id,
+        req.params.entryId,
+        req.body
+      );
+      sendSuccess(res, data, 'Entry updated');
+    });
+  }
+
   static listForInstitution(req, res) {
     return handle(res, async () => {
       const data = await resultEntriesService.listForInstitution(

@@ -46,11 +46,11 @@ class RegistrationDocumentModel {
   }
 
   async create(data) {
-    const { registration_id, requirement_id, file_id, status, source, sitting } = data;
+    const { registration_id, requirement_id, file_id, status, source, sitting, institution_type } = data;
     const result = await pool.query(
       `INSERT INTO jupeb_registration_documents
-         (registration_id, requirement_id, file_id, status, source, sitting)
-       VALUES ($1, $2, $3, COALESCE($4, 'submitted'), $5, $6)
+         (registration_id, requirement_id, file_id, status, source, sitting, institution_type)
+       VALUES ($1, $2, $3, COALESCE($4, 'submitted'), $5, $6, $7)
        RETURNING *`,
       [
         registration_id,
@@ -58,7 +58,8 @@ class RegistrationDocumentModel {
         file_id,
         status || 'submitted',
         source || null,
-        sitting || null
+        sitting || null,
+        institution_type || null
       ]
     );
     return result.rows[0];
@@ -67,6 +68,15 @@ class RegistrationDocumentModel {
   async markReplaced(id) {
     const result = await pool.query(
       `UPDATE jupeb_registration_documents SET status = 'replaced', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    return result.rows[0];
+  }
+
+  async markDeleted(id) {
+    const result = await pool.query(
+      `UPDATE jupeb_registration_documents SET status = 'deleted', updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 RETURNING *`,
       [id]
     );

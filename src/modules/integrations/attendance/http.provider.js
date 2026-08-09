@@ -117,7 +117,7 @@ async function dataClient() {
   });
 }
 
-async function request(method, path, { params, studentContext } = {}, { retried = false } = {}) {
+async function request(method, path, { params, data, studentContext } = {}, { retried = false } = {}) {
   try {
     const http = await dataClient();
     const res = await http.request({
@@ -129,6 +129,7 @@ async function request(method, path, { params, studentContext } = {}, { retried 
         registration_id: studentContext.registration_id,
         candidate_code: studentContext.candidate_code,
       },
+      data,
     });
     return res.data?.data !== undefined ? res.data.data : res.data;
   } catch (err) {
@@ -136,7 +137,7 @@ async function request(method, path, { params, studentContext } = {}, { retried 
 
     if (!retried && err?.response?.status === 401) {
       await ensureAccessToken({ forceRefresh: true });
-      return request(method, path, { params, studentContext }, { retried: true });
+      return request(method, path, { params, data, studentContext }, { retried: true });
     }
 
     throw normalizeUpstreamError('attendance', err);
@@ -174,6 +175,20 @@ async function getTimetable(studentContext, { month } = {}) {
   });
 }
 
+async function checkIn(studentContext, classId, payload) {
+  return request('POST', `/api/students/me/classes/${encodeURIComponent(classId)}/check-in`, {
+    studentContext,
+    data: payload,
+  });
+}
+
+async function checkOut(studentContext, classId, payload) {
+  return request('POST', `/api/students/me/classes/${encodeURIComponent(classId)}/check-out`, {
+    studentContext,
+    data: payload,
+  });
+}
+
 module.exports = {
   name,
   getHomeSummary,
@@ -182,6 +197,8 @@ module.exports = {
   getHistory,
   getCourseSessions,
   getTimetable,
+  checkIn,
+  checkOut,
   // Test helpers
   _clearTokenCache: clearTokenCache,
   _getTokenCache: () => tokenCache,

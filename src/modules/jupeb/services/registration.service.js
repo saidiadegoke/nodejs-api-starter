@@ -1943,21 +1943,88 @@ class RegistrationService {
     }
 
     const documents = await registrationDocumentModel.findByRegistration(reg.id).catch(() => []);
-    const fileBySourceSitting = {};
+    
+    // Build metadata map by source-sitting from documents and OCR jobs
+    const docMetaByGroup = {};
     for (const doc of documents) {
       if (doc.source && doc.sitting) {
-        fileBySourceSitting[`${doc.source}-${doc.sitting}`] = doc.file_id || null;
+        const key = `${doc.source}-${doc.sitting}`;
+        // Documents are ordered by created_at, so the later one overrides, matching current state
+        docMetaByGroup[key] = {
+          document_id: doc.id,
+          document_status: doc.status,
+          institution_type: doc.institution_type || null,
+          file_id: doc.file_id,
+          ocr_job_id: null,
+          ocr_status: null,
+          ocr_confidence: null,
+        };
+      }
+    }
+
+    const fileIds = Object.values(docMetaByGroup).map((d) => d.file_id).filter(Boolean);
+    if (fileIds.length > 0) {
+      const ocrRes = await pool.query(
+        `SELECT oj.file_id, oj.id as ocr_job_id, oj.status as ocr_status, or2.confidence as ocr_confidence
+         FROM ocr_jobs oj
+         LEFT JOIN ocr_results or2 ON or2.job_id = oj.id
+         WHERE oj.file_id = ANY($1)
+         ORDER BY oj.created_at DESC`,
+        [fileIds]
+      );
+      
+      const ocrByFile = {};
+      for (const row of ocrRes.rows) {
+        if (!ocrByFile[row.file_id]) {
+          ocrByFile[row.file_id] = row;
+        }
+      }
+
+      for (const key in docMetaByGroup) {
+        const d = docMetaByGroup[key];
+        if (d.file_id && ocrByFile[d.file_id]) {
+          d.ocr_job_id = ocrByFile[d.file_id].ocr_job_id;
+          d.ocr_status = ocrByFile[d.file_id].ocr_status;
+          d.ocr_confidence = ocrByFile[d.file_id].ocr_confidence !== null 
+            ? Number(ocrByFile[d.file_id].ocr_confidence) 
+            : null;
+        }
       }
     }
 
     const grouped = {};
+    
+    // Initialize groups from documents so we return OCR status even if no result entries exist yet
+    for (const key in docMetaByGroup) {
+      const parts = key.split('-');
+      grouped[key] = {
+        source: parts[0],
+        sitting: Number(parts[1]),
+        document_id: docMetaByGroup[key].document_id,
+        document_status: docMetaByGroup[key].document_status,
+        institution_type: docMetaByGroup[key].institution_type,
+        file_id: docMetaByGroup[key].file_id,
+        ocr_job_id: docMetaByGroup[key].ocr_job_id,
+        ocr_status: docMetaByGroup[key].ocr_status,
+        ocr_confidence: docMetaByGroup[key].ocr_confidence,
+        grades: [],
+        origins: new Set(),
+      };
+    }
+
     for (const entry of entries) {
       const key = `${entry.source}-${entry.sitting}`;
       if (!grouped[key]) {
         grouped[key] = {
           source: entry.source,
           sitting: entry.sitting,
-          file_id: fileBySourceSitting[key] || null,
+          document_id: null,
+          document_status: null,
+          institution_type: null,
+          file_id: null,
+          ocr_job_id: null,
+          ocr_status: null,
+          ocr_confidence: null,
           grades: [],
           origins: new Set(),
         };
@@ -1978,10 +2045,24 @@ class RegistrationService {
       else if (origins.length === 1 && origins[0] === 'ocr') parse_status = 'complete';
       else if (origins.includes('manual') && origins.includes('ocr')) parse_status = 'complete';
       else parse_status = 'complete';
+      
+      // Map OCR processing states to parse_status for the UI
+      if (g.ocr_status === 'queued' || g.ocr_status === 'processing') {
+        parse_status = 'processing';
+      } else if (g.ocr_status === 'failed') {
+        parse_status = 'failed';
+      }
+
       return {
         source: g.source,
         sitting: g.sitting,
+        document_id: g.document_id,
+        document_status: g.document_status,
+        institution_type: g.institution_type,
         file_id: g.file_id,
+        ocr_job_id: g.ocr_job_id,
+        ocr_status: g.ocr_status,
+        ocr_confidence: g.ocr_confidence,
         grades: g.grades,
         parse_status,
       };

@@ -152,6 +152,54 @@ class ResultEntriesService {
     };
   }
 
+  async patchMineEntry(userId, entryId, body) {
+    if (!isUuid(entryId)) throw httpError(422, 'Invalid entry id');
+    
+    const existing = await resultEntriesModel.findById(entryId);
+    if (!existing) throw httpError(404, 'Entry not found');
+
+    const reg = await registrationModel.findLatestForUser(userId);
+    if (!reg || reg.id !== existing.registration_id) {
+      throw httpError(403, 'Forbidden: entry belongs to another registration');
+    }
+
+    const errors = [];
+    const update = { origin: 'manual', created_by: userId }; // set origin to manual so OCR won't overwrite
+
+    if (body.subject !== undefined) {
+      const s = String(body.subject || '').trim();
+      if (s.length < 2) errors.push({ field: 'subject', error_code: 'subject_required' });
+      else update.subject = s.toUpperCase();
+    }
+    if (body.grade !== undefined) {
+      const g = String(body.grade || '').trim().toUpperCase();
+      if (!g || g.length > 4) {
+        errors.push({ field: 'grade', error_code: 'grade_invalid' });
+      } else {
+        update.grade = g;
+        update.grade_normalized = normalizeGrade(g);
+      }
+    }
+    if (body.score !== undefined) {
+      if (body.score === null) {
+        update.score = null;
+      } else {
+        const n = Number(body.score);
+        if (Number.isNaN(n) || n < 0 || n > 100) {
+          errors.push({ field: 'score', error_code: 'score_invalid' });
+        } else {
+          update.score = Math.round(n);
+        }
+      }
+    }
+    if (errors.length) throw httpError(422, 'Override payload invalid', { errors });
+    if (Object.keys(update).length === 2) {
+      // Only `origin` and `created_by` would change — no-op write.
+      return existing;
+    }
+    return resultEntriesModel.updateById(entryId, update);
+  }
+
   /**
    * M.13 — Registrar listing of result entries with origin + OCR confidence.
    * Joins ocr_results so the registrar UI can see how confident the OCR
