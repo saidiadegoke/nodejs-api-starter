@@ -37,6 +37,16 @@ class StudentDashboardService {
     const ctx = await resolveStudentContext(userId);
     return crmsProviders.get().getResults(ctx);
   }
+
+  static async checkIn(userId, classId, payload) {
+    const ctx = await resolveStudentContext(userId);
+    return attendanceProviders.get().checkIn(ctx, classId, payload);
+  }
+
+  static async checkOut(userId, classId, payload) {
+    const ctx = await resolveStudentContext(userId);
+    return attendanceProviders.get().checkOut(ctx, classId, payload);
+  }
 }
 
 module.exports = StudentDashboardService;

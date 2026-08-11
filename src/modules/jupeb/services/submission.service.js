@@ -377,7 +377,8 @@ class SubmissionService {
       file_id,
       status: 'submitted',
       source,
-      sitting
+      sitting,
+      institution_type: body.institution_type
     });
 
     // M.6 — auto-trigger OCR for result-type uploads (best effort).
@@ -422,7 +423,8 @@ class SubmissionService {
       file_id: body.file_id,
       status: 'submitted',
       source,
-      sitting
+      sitting,
+      institution_type: body.institution_type !== undefined ? body.institution_type : row.institution_type
     });
 
     // M.6 — re-trigger OCR on replace.
@@ -434,6 +436,20 @@ class SubmissionService {
     });
 
     return ocr_job ? { ...document, ocr_job } : document;
+  }
+
+  async deleteMyDocument(userId, documentId) {
+    if (!isUuid(documentId)) throw httpError(422, 'Invalid document id');
+    const row = await registrationDocumentModel.findById(documentId);
+    if (!row) throw httpError(404, 'Document not found');
+    if (row.registration_user_id !== userId) {
+      throw httpError(403, 'Forbidden');
+    }
+    if (row.status !== 'submitted') {
+      throw httpError(422, 'Only submitted documents can be deleted');
+    }
+
+    return registrationDocumentModel.markDeleted(row.id);
   }
 
   async validateCompleteness(userId, registrationIdOpt) {
@@ -534,6 +550,7 @@ class SubmissionService {
       status: 'submitted',
       source: vs.source,
       sitting: vs.sitting,
+      institution_type: item.institution_type !== undefined ? item.institution_type : row.institution_type
     });
     const ocr_job = await dispatchOcrForDocument({
       document,
@@ -593,6 +610,7 @@ class SubmissionService {
       status: 'submitted',
       source,
       sitting,
+      institution_type: body.institution_type
     });
 
     const ocr_job = await dispatchOcrForDocument({

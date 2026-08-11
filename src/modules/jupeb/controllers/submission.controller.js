@@ -89,6 +89,15 @@ class SubmissionController {
     }
   }
 
+  static async deleteMeDocument(req, res) {
+    try {
+      const row = await submissionService.deleteMyDocument(req.user.user_id, req.params.documentId);
+      return sendSuccess(res, row, 'Document deleted');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
   static async downloadUrlMine(req, res) {
     try {
       const data = await submissionService.downloadUrlMine(

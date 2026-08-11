@@ -118,6 +118,7 @@ async function getHomeSummary(_studentContext) {
       course_code: c.course_code,
       status: c.status,
       time_range: c.time_range,
+      venue: c.room,
       action: c.action,
       action_disabled: c.action_disabled,
     })),
@@ -216,6 +217,14 @@ async function getTimetable(_studentContext, { month } = {}) {
   };
 }
 
+async function checkIn(_studentContext, classId, _payload) {
+  return { checked_in_at: new Date().toISOString() };
+}
+
+async function checkOut(_studentContext, classId, _payload) {
+  return { checked_out_at: new Date().toISOString() };
+}
+
 module.exports = {
   name,
   getHomeSummary,
@@ -224,4 +233,6 @@ module.exports = {
   getHistory,
   getCourseSessions,
   getTimetable,
+  checkIn,
+  checkOut,
 };

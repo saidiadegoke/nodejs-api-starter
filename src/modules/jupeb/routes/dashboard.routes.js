@@ -16,6 +16,9 @@ router.get('/home', jupebStudent, StudentDashboardController.getHome);
 router.get('/courses', jupebStudent, StudentDashboardController.getCourses);
 router.get('/results', jupebStudent, StudentDashboardController.getResults);
 
+router.post('/attendance/classes/:classId/check-in', jupebStudent, StudentDashboardController.checkIn);
+router.post('/attendance/classes/:classId/check-out', jupebStudent, StudentDashboardController.checkOut);
+
 router.get('/scope', dashboardRead, DashboardController.getScope);
 router.get('/stat-cards', dashboardRead, DashboardController.getStatCards);
 router.get('/quick-stats', dashboardRead, DashboardController.getQuickStats);

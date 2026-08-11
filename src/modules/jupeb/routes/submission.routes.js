@@ -17,6 +17,7 @@ router.get('/me/requirements', jupebStudent, SubmissionController.getMeRequireme
 router.get('/me/documents', jupebStudent, SubmissionController.listMeDocuments);
 router.post('/me/documents', jupebStudent, SubmissionController.attachMeDocument);
 router.patch('/me/documents/:documentId', jupebStudent, SubmissionController.patchMeDocument);
+router.delete('/me/documents/:documentId', jupebStudent, SubmissionController.deleteMeDocument);
 router.post('/me/validate-completeness', jupebStudent, SubmissionController.validateCompleteness);
 
 // M.11 — short-lived signed download URL for the candidate's own document
@@ -25,6 +26,7 @@ router.get('/me/documents/:documentId/download-url', jupebStudent, SubmissionCon
 // M.8c — manual subject + grade entries (the figma `log in 18` table)
 router.get('/me/result-entries', jupebStudent, ResultEntriesController.listMine);
 router.post('/me/result-entries', jupebStudent, ResultEntriesController.upsertMine);
+router.patch('/me/result-entries/:entryId', jupebStudent, ResultEntriesController.patchMine);
 
 router.get(
   '/institution/registrations/:registrationId/documents',

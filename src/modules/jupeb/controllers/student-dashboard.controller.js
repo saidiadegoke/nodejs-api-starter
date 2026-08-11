@@ -33,6 +33,26 @@ class StudentDashboardController {
       return sendError(res, err.message, statusOf(err), err.details || null);
     }
   }
+
+  static async checkIn(req, res) {
+    try {
+      const { classId } = req.params;
+      const data = await StudentDashboardService.checkIn(req.user.user_id, classId, req.body);
+      return sendSuccess(res, data, 'Checked in successfully', OK);
+    } catch (err) {
+      return sendError(res, err.message, statusOf(err), err.details || null);
+    }
+  }
+
+  static async checkOut(req, res) {
+    try {
+      const { classId } = req.params;
+      const data = await StudentDashboardService.checkOut(req.user.user_id, classId, req.body);
+      return sendSuccess(res, data, 'Checked out successfully', OK);
+    } catch (err) {
+      return sendError(res, err.message, statusOf(err), err.details || null);
+    }
+  }
 }
 
 module.exports = StudentDashboardController;
