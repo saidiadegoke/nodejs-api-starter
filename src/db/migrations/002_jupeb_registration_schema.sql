@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS jupeb_registration_documents (
   reviewed_at TIMESTAMP WITHOUT TIME ZONE NULL,
   created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT jupeb_reg_doc_status_check CHECK (status IN ('submitted', 'replaced', 'rejected', 'accepted'))
+  CONSTRAINT jupeb_reg_doc_status_check CHECK (status IN ('submitted', 'replaced', 'rejected', 'accepted', 'deleted'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_docs_one_active_submitted_accepted
