@@ -1,5 +1,5 @@
 // Attendance provider registry.
-// Set ATTENDANCE_PROVIDER=mock|http (default: mock).
+// Set ATTENDANCE_PROVIDER=mock|http (default: http).
 
 const mock = require('./mock.provider');
 const http = require('./http.provider');
@@ -9,7 +9,7 @@ const PROVIDERS = {
   [http.name]: http,
 };
 
-const DEFAULT_PROVIDER = 'mock';
+const DEFAULT_PROVIDER = 'http';
 
 function list() {
   return Object.keys(PROVIDERS);

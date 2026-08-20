@@ -153,7 +153,15 @@ async function getSummary(studentContext) {
 }
 
 async function getClasses(studentContext, { q } = {}) {
-  return request('GET', '/api/students/me/classes', { studentContext, params: { q } });
+  const data = await request('GET', '/api/students/me/classes', { studentContext, params: { q } });
+  // eslint-disable-next-line no-console
+  console.log('[attendance.http] getClasses', {
+    student_id: studentContext.user_id,
+    registration_id: studentContext.registration_id,
+    q: q || null,
+    data,
+  });
+  return data;
 }
 
 async function getHistory(studentContext, { q } = {}) {
