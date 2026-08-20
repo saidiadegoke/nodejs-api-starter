@@ -79,7 +79,7 @@ Code locations:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ATTENDANCE_PROVIDER` | `mock` | `mock` \| `http` |
+| `ATTENDANCE_PROVIDER` | `http` | `mock` \| `http` |
 | `ATTENDANCE_SERVICE_BASE_URL` | — | Required when `http` (no trailing slash) |
 | `ATTENDANCE_ADMIN_SECRET` | — | Sent as `x-admin-secret` for generate/refresh token |
 | `ATTENDANCE_APPLICATION_NAME` | — | App id for token body and `x-app-name` on data calls |
@@ -522,7 +522,7 @@ Axios / stack traces are **never** forwarded to the client.
 
 ## 4. Mock provider behaviour
 
-With `ATTENDANCE_PROVIDER=mock` and `CRMS_PROVIDER=mock` (defaults for development and tests):
+With `ATTENDANCE_PROVIDER=mock` and `CRMS_PROVIDER=mock` (recommended for local development and tests):
 
 - No network calls are made.
 - Responses match the contracts above with deterministic fixture UUIDs.
@@ -584,7 +584,7 @@ These mobile routes from [`MOBILE_API_ENDPOINTS.md`](MOBILE_API_ENDPOINTS.md) ar
 
 ### reg-portal-api (when contracts are live)
 
-- [ ] Set `ATTENDANCE_PROVIDER=http` and `CRMS_PROVIDER=http` in each environment
+- [ ] Ensure `ATTENDANCE_PROVIDER=http` (now the default) and set `CRMS_PROVIDER=http` in each environment
 - [ ] Store `ATTENDANCE_ADMIN_SECRET` / `ATTENDANCE_APPLICATION_NAME` and CRMS API keys as secrets (not in git)
 - [ ] Confirm path prefixes if upstream differs — adjust `http.provider.js` mappers only
 - [ ] Re-run `npm run test:mobile` with mocks; add contract tests against staging when available
