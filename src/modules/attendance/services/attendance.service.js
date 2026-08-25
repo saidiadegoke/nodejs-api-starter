@@ -18,17 +18,42 @@ function validateMonth(month) {
   return String(month);
 }
 
-class AttendanceService {
-  static async getHome(userId) {
-    const ctx = await resolveStudentContext(userId);
-    const attendance = attendanceProviders.get();
-    const crms = crmsProviders.get();
+/** Optional upstream filter query params (identity is handled in student-context). */
+function pickFilterQuery(query = {}) {
+  const out = {};
+  for (const key of ['q', 'month']) {
+    const v = query[key];
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      out[key] = String(v).trim();
+    }
+  }
+  return out;
+}
 
-    const [attHome, crmsHome, unread] = await Promise.all([
-      attendance.getHomeSummary(ctx),
-      crms.getHomeSummary(ctx),
-      NotificationModel.getUnreadCount(userId),
-    ]);
+async function resolveAttendanceContext(userId, query = {}) {
+  return resolveStudentContext(userId, { query, forAttendance: true });
+}
+
+class AttendanceService {
+  static async getHome(userId, query = {}) {
+    const ctx = await resolveAttendanceContext(userId, query);
+    const attendance = attendanceProviders.get();
+    const filters = pickFilterQuery(query);
+
+    const attHomePromise = attendance.getHomeSummary(ctx, filters);
+    const unreadPromise = NotificationModel.getUnreadCount(userId);
+
+    // CRMS needs a real CRP registration; skip gracefully for synthetic/mock contexts.
+    let crmsHome = {};
+    if (!ctx.synthetic) {
+      try {
+        crmsHome = await crmsProviders.get().getHomeSummary(ctx);
+      } catch {
+        crmsHome = {};
+      }
+    }
+
+    const [attHome, unread] = await Promise.all([attHomePromise, unreadPromise]);
 
     return {
       summary: {
@@ -36,6 +61,8 @@ class AttendanceService {
         average_score_percent: crmsHome.average_score_percent ?? 0,
         subjects_count: crmsHome.subjects_count ?? 0,
         overall_grade: crmsHome.overall_grade ?? null,
+        ...crmsHome,
+        ...attHome,
       },
       todays_classes: attHome.todays_classes || [],
       attendance_chart: attHome.attendance_chart || null,
@@ -43,35 +70,41 @@ class AttendanceService {
     };
   }
 
-  static async getSummary(userId) {
-    const ctx = await resolveStudentContext(userId);
-    return attendanceProviders.get().getSummary(ctx);
+  static async getSummary(userId, query = {}) {
+    const ctx = await resolveAttendanceContext(userId, query);
+    return attendanceProviders.get().getSummary(ctx, pickFilterQuery(query));
   }
 
-  static async getClasses(userId, { q } = {}) {
-    const ctx = await resolveStudentContext(userId);
-    return attendanceProviders.get().getClasses(ctx, { q: q || undefined });
+  static async getClasses(userId, query = {}) {
+    const ctx = await resolveAttendanceContext(userId, query);
+    return attendanceProviders.get().getClasses(ctx, pickFilterQuery(query));
   }
 
-  static async getHistory(userId, { q } = {}) {
-    const ctx = await resolveStudentContext(userId);
-    return attendanceProviders.get().getHistory(ctx, { q: q || undefined });
+  static async getHistory(userId, query = {}) {
+    const ctx = await resolveAttendanceContext(userId, query);
+    return attendanceProviders.get().getHistory(ctx, pickFilterQuery(query));
   }
 
-  static async getCourseSessions(userId, courseCode, { q } = {}) {
+  static async getCourseSessions(userId, courseCode, query = {}) {
     if (!courseCode || !String(courseCode).trim()) {
       throw httpError(422, 'courseCode is required', { error_code: 'course_code_required' });
     }
-    const ctx = await resolveStudentContext(userId);
-    return attendanceProviders.get().getCourseSessions(ctx, String(courseCode).trim(), {
-      q: q || undefined,
-    });
+    const ctx = await resolveAttendanceContext(userId, query);
+    return attendanceProviders.get().getCourseSessions(
+      ctx,
+      String(courseCode).trim(),
+      pickFilterQuery(query)
+    );
   }
 
-  static async getTimetable(userId, { month } = {}) {
-    const validatedMonth = validateMonth(month);
-    const ctx = await resolveStudentContext(userId);
-    return attendanceProviders.get().getTimetable(ctx, { month: validatedMonth || undefined });
+  static async getTimetable(userId, query = {}) {
+    const filters = pickFilterQuery(query);
+    const validatedMonth = validateMonth(filters.month);
+    const ctx = await resolveAttendanceContext(userId, query);
+    return attendanceProviders.get().getTimetable(ctx, {
+      ...filters,
+      month: validatedMonth || undefined,
+    });
   }
 }
 

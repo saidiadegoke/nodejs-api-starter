@@ -10,7 +10,7 @@ This service can be deployed independently using Docker.
    ```bash
    APP_NAME=Your App
    NODE_ENV=production
-   PORT=5269                                  # deploy port
+   PORT=5269 # deploy port
    API_BASE_URL=https://api.your-domain.com
    FRONTEND_URL=https://your-domain.com
    CORS_ORIGIN=https://your-domain.com

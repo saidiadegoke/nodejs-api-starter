@@ -37,13 +37,28 @@ function normalizeUpstreamError(serviceName, err) {
     return unavailable(serviceName, `${serviceName} request timed out`);
   }
   if (err?.response) {
-    const status = err.response.status >= 500 ? 503 : err.response.status;
-    return providerError(
-      status === 404 ? 404 : status >= 400 && status < 500 ? status : 503,
-      err.response.data?.message || `${serviceName} request failed`,
-      'provider_upstream_error',
-      { service: serviceName }
-    );
+    const upstreamStatus = err.response.status;
+    const body = err.response.data;
+    const status =
+      upstreamStatus >= 500 ? 503 : upstreamStatus >= 400 ? upstreamStatus : 503;
+    const message =
+      (body && (body.message || body.error || body.error_message)) ||
+      `${serviceName} request failed`;
+
+    // Prefer upstream details/body so clients see the real provider payload.
+    const upstreamDetails =
+      body && typeof body === 'object'
+        ? body.details && typeof body.details === 'object'
+          ? body.details
+          : body
+        : undefined;
+
+    return providerError(status, message, 'provider_upstream_error', {
+      service: serviceName,
+      upstream_status: upstreamStatus,
+      ...(upstreamDetails && typeof upstreamDetails === 'object' ? upstreamDetails : {}),
+      upstream: body,
+    });
   }
   return unavailable(serviceName, err?.message || `${serviceName} request failed`);
 }
