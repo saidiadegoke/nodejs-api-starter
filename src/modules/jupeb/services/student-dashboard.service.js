@@ -1,31 +1,13 @@
 const attendanceProviders = require('../../integrations/attendance');
 const crmsProviders = require('../../integrations/crms');
 const { resolveStudentContext } = require('../../integrations/student-context');
-const NotificationModel = require('../../notifications/models/notification.model');
 
 class StudentDashboardService {
-  static async getHome(userId) {
-    const ctx = await resolveStudentContext(userId);
-    const attendance = attendanceProviders.get();
-    const crms = crmsProviders.get();
-
-    const [attHome, crmsHome, unread] = await Promise.all([
-      attendance.getHomeSummary(ctx),
-      crms.getHomeSummary(ctx),
-      NotificationModel.getUnreadCount(userId),
-    ]);
-
-    return {
-      summary: {
-        attendance_percent: attHome.attendance_percent ?? 0,
-        average_score_percent: crmsHome.average_score_percent ?? 0,
-        subjects_count: crmsHome.subjects_count ?? 0,
-        overall_grade: crmsHome.overall_grade ?? null,
-      },
-      todays_classes: attHome.todays_classes || [],
-      attendance_chart: attHome.attendance_chart || null,
-      unread_notifications_count: unread,
-    };
+  static async getHome(userId, query = {}) {
+    // Reuse attendance home composition (supports optional upstream identity overrides).
+    // eslint-disable-next-line global-require
+    const AttendanceService = require('../../attendance/services/attendance.service');
+    return AttendanceService.getHome(userId, query);
   }
 
   static async getCourses(userId) {
@@ -38,13 +20,13 @@ class StudentDashboardService {
     return crmsProviders.get().getResults(ctx);
   }
 
-  static async checkIn(userId, classId, payload) {
-    const ctx = await resolveStudentContext(userId);
+  static async checkIn(userId, classId, payload, query = {}) {
+    const ctx = await resolveStudentContext(userId, { query, forAttendance: true });
     return attendanceProviders.get().checkIn(ctx, classId, payload);
   }
 
-  static async checkOut(userId, classId, payload) {
-    const ctx = await resolveStudentContext(userId);
+  static async checkOut(userId, classId, payload, query = {}) {
+    const ctx = await resolveStudentContext(userId, { query, forAttendance: true });
     return attendanceProviders.get().checkOut(ctx, classId, payload);
   }
 }

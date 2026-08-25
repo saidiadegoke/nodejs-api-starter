@@ -117,18 +117,54 @@ async function dataClient() {
   });
 }
 
+function compactParams(obj = {}) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  );
+}
+
+const IDENTITY_PARAM_KEYS = new Set(['student_id', 'registration_id', 'candidate_code']);
+
+/** Filters only — identity must come from buildUpstreamIdentity, never from callers. */
+function filterParams(params = {}) {
+  return compactParams(
+    Object.fromEntries(Object.entries(params).filter(([k]) => !IDENTITY_PARAM_KEYS.has(k)))
+  );
+}
+
+/**
+ * Build upstream identity query params.
+ * Attendance matches on candidate_code alone. Sending CRP registration UUIDs
+ * alongside candidate_code makes upstream return 404 ("couldn't find a student").
+ */
+function buildUpstreamIdentity(studentContext = {}) {
+  const candidateCode = studentContext.candidate_code;
+  if (candidateCode) {
+    return compactParams({
+      candidate_code: candidateCode,
+      // Only when the client explicitly overrode these for attendance.
+      student_id: studentContext.explicit_student_id,
+      registration_id: studentContext.explicit_registration_id,
+    });
+  }
+  return compactParams({
+    student_id: studentContext.explicit_student_id || studentContext.user_id,
+    registration_id: studentContext.explicit_registration_id || studentContext.registration_id,
+    candidate_code: studentContext.candidate_code,
+  });
+}
+
 async function request(method, path, { params, data, studentContext } = {}, { retried = false } = {}) {
   try {
     const http = await dataClient();
+    const cleaned = {
+      ...buildUpstreamIdentity(studentContext),
+      ...filterParams(params),
+    };
     const res = await http.request({
       method,
       url: path,
-      params: {
-        ...params,
-        student_id: studentContext.user_id,
-        registration_id: studentContext.registration_id,
-        candidate_code: studentContext.candidate_code,
-      },
+      params: cleaned,
       data,
     });
     return res.data?.data !== undefined ? res.data.data : res.data;
@@ -144,43 +180,32 @@ async function request(method, path, { params, data, studentContext } = {}, { re
   }
 }
 
-async function getHomeSummary(studentContext) {
-  return request('GET', '/api/students/me/home', { studentContext });
+async function getHomeSummary(studentContext, filters = {}) {
+  return request('GET', '/api/students/me/home', { studentContext, params: filters });
 }
 
-async function getSummary(studentContext) {
-  return request('GET', '/api/students/me/summary', { studentContext });
+async function getSummary(studentContext, filters = {}) {
+  return request('GET', '/api/students/me/summary', { studentContext, params: filters });
 }
 
-async function getClasses(studentContext, { q } = {}) {
-  const data = await request('GET', '/api/students/me/classes', { studentContext, params: { q } });
-  // eslint-disable-next-line no-console
-  console.log('[attendance.http] getClasses', {
-    student_id: studentContext.user_id,
-    registration_id: studentContext.registration_id,
-    q: q || null,
-    data,
-  });
-  return data;
+async function getClasses(studentContext, filters = {}) {
+  return request('GET', '/api/students/me/classes', { studentContext, params: filters });
 }
 
-async function getHistory(studentContext, { q } = {}) {
-  return request('GET', '/api/students/me/history', { studentContext, params: { q } });
+async function getHistory(studentContext, filters = {}) {
+  return request('GET', '/api/students/me/history', { studentContext, params: filters });
 }
 
-async function getCourseSessions(studentContext, courseCode, { q } = {}) {
+async function getCourseSessions(studentContext, courseCode, filters = {}) {
   const encoded = encodeURIComponent(courseCode);
   return request('GET', `/api/students/me/classes/${encoded}/sessions`, {
     studentContext,
-    params: { q },
+    params: filters,
   });
 }
 
-async function getTimetable(studentContext, { month } = {}) {
-  return request('GET', '/api/students/me/timetable', {
-    studentContext,
-    params: { month },
-  });
+async function getTimetable(studentContext, filters = {}) {
+  return request('GET', '/api/students/me/timetable', { studentContext, params: filters });
 }
 
 async function checkIn(studentContext, classId, payload) {
@@ -210,4 +235,5 @@ module.exports = {
   // Test helpers
   _clearTokenCache: clearTokenCache,
   _getTokenCache: () => tokenCache,
+  _buildUpstreamIdentity: buildUpstreamIdentity,
 };
