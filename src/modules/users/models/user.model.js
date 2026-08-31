@@ -16,6 +16,9 @@ const USER_LIST_COLUMNS = `
     p.last_name,
     p.display_name,
     p.jupeb_university_id,
+    ju.code AS jupeb_university_code,
+    ju.short_name AS jupeb_university_short_name,
+    ju.name AS jupeb_university_name,
     COALESCE(
       (
         SELECT array_agg(r.name ORDER BY r.name)
@@ -29,7 +32,8 @@ const USER_LIST_COLUMNS = `
 
 const USER_LIST_FROM = `
   FROM users u
-  LEFT JOIN profiles p ON u.id = p.user_id`;
+  LEFT JOIN profiles p ON u.id = p.user_id
+  LEFT JOIN jupeb_universities ju ON p.jupeb_university_id = ju.id AND ju.deleted_at IS NULL`;
 
 const USER_LIST_SELECT = `
   SELECT

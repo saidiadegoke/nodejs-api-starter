@@ -89,6 +89,9 @@ Same in both phases — relying parties should implement against this shape from
   "email": "registrar@institution.edu",
   "roles": ["institution_admin"],
   "institution_id": "82b3c1f8-e650-4e3b-8e3e-ca98b1d5a5b6",
+  "institution_code": "UNILAG",
+  "institution_short_code": "UNILAG",
+  "short_code": "UNILAG",
   "aud": "crms",
   "iss": "https://crp.yourorg.com",
   "iat": 1753600000,
@@ -102,7 +105,9 @@ Same in both phases — relying parties should implement against this shape from
 | `sub` | Stable registrar ID (CRP `users.id`) | Yes — JIT join key |
 | `email` | Registrar email | Optional display; don't re-match on this alone |
 | `roles` | Role name strings | Map locally; don't blindly authorize from token alone |
-| `institution_id` | `profiles.jupeb_university_id` | Yes — data scoping |
+| `institution_id` | `profiles.jupeb_university_id` (CRP UUID) | Yes — local reference |
+| `institution_code` | `jupeb_universities.code` (e.g. `"UNILAG"`) — consistent across apps | **Yes** — cross-app institution mapping |
+| `institution_short_code` / `short_code` | `jupeb_universities.short_name` (e.g. `"UNILAG"`) | Optional display / cross-app mapping |
 | `aud` | `"crms"` or `"attendance"` | **Yes** |
 | `iss` | CRP public URL | **Yes** |
 | `exp` / `iat` | ≤ 60s lifetime | **Yes** |

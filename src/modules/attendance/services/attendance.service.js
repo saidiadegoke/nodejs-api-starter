@@ -30,13 +30,13 @@ function pickFilterQuery(query = {}) {
   return out;
 }
 
-async function resolveAttendanceContext(userId, query = {}) {
-  return resolveStudentContext(userId, { query, forAttendance: true });
+async function resolveAttendanceContext(userId) {
+  return resolveStudentContext(userId);
 }
 
 class AttendanceService {
   static async getHome(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId, query);
+    const ctx = await resolveAttendanceContext(userId);
     const attendance = attendanceProviders.get();
     const filters = pickFilterQuery(query);
 
@@ -71,17 +71,17 @@ class AttendanceService {
   }
 
   static async getSummary(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId, query);
+    const ctx = await resolveAttendanceContext(userId);
     return attendanceProviders.get().getSummary(ctx, pickFilterQuery(query));
   }
 
   static async getClasses(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId, query);
+    const ctx = await resolveAttendanceContext(userId);
     return attendanceProviders.get().getClasses(ctx, pickFilterQuery(query));
   }
 
   static async getHistory(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId, query);
+    const ctx = await resolveAttendanceContext(userId);
     return attendanceProviders.get().getHistory(ctx, pickFilterQuery(query));
   }
 
@@ -89,7 +89,7 @@ class AttendanceService {
     if (!courseCode || !String(courseCode).trim()) {
       throw httpError(422, 'courseCode is required', { error_code: 'course_code_required' });
     }
-    const ctx = await resolveAttendanceContext(userId, query);
+    const ctx = await resolveAttendanceContext(userId);
     return attendanceProviders.get().getCourseSessions(
       ctx,
       String(courseCode).trim(),
@@ -100,7 +100,7 @@ class AttendanceService {
   static async getTimetable(userId, query = {}) {
     const filters = pickFilterQuery(query);
     const validatedMonth = validateMonth(filters.month);
-    const ctx = await resolveAttendanceContext(userId, query);
+    const ctx = await resolveAttendanceContext(userId);
     return attendanceProviders.get().getTimetable(ctx, {
       ...filters,
       month: validatedMonth || undefined,

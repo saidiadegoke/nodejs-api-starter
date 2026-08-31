@@ -390,6 +390,48 @@ class RegistrationModel {
     return result.rows[0];
   }
 
+  async getStudentSyncPayloads(registrationIds) {
+    if (!registrationIds || !registrationIds.length) return [];
+    const query = `
+      SELECT
+        r.id AS "registration_id",
+        r.jupeb_candidate_number AS "jupebNumber",
+        p.first_name AS "firstName",
+        p.last_name AS "lastName",
+        u.email AS "email",
+        uni.code AS "institutionCode",
+        'STUDENT' AS "role",
+        p.gender AS "gender",
+        p.date_of_birth AS "dateOfBirth",
+        u.phone AS "phone",
+        p.residential_address AS "address",
+        p.profile_photo_url AS "base64image",
+        (
+          SELECT array_agg(si.code)
+          FROM jupeb_subject_combination_items sci
+          JOIN jupeb_subjects si ON si.id = sci.subject_id
+          WHERE sci.combination_id = r.subject_combination_id
+        ) AS "subjects"
+      FROM jupeb_registrations r
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN profiles p ON p.user_id = u.id
+      JOIN jupeb_universities uni ON uni.id = r.university_id
+      WHERE r.id = ANY($1::uuid[])
+    `;
+    const result = await pool.query(query, [registrationIds]);
+    return result.rows;
+  }
+
+  async updateAttendanceSync(registrationId, { registrationCode, studentId }) {
+    const result = await pool.query(
+      `UPDATE jupeb_registrations
+       SET attendance_registration_code = $2, attendance_student_id = $3, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [registrationId, registrationCode, studentId]
+    );
+    return result.rowCount > 0;
+  }
+
   /** Hard-delete a registration row; child tables with ON DELETE CASCADE are cleaned up. */
   async deleteRegistration(id) {
     const result = await pool.query(`DELETE FROM jupeb_registrations WHERE id = $1 RETURNING id`, [id]);

@@ -185,6 +185,9 @@ JWT signed with RS256. Lifetime: **60 seconds**.
   "email": "registrar@institution.edu",
   "roles": ["institution_admin"],
   "institution_id": "82b3c1f8-e650-4e3b-8e3e-ca98b1d5a5b6",
+  "institution_code": "UNILAG",
+  "institution_short_code": "UNILAG",
+  "short_code": "UNILAG",
   "aud": "crms",
   "iss": "https://crp.yourorg.com",
   "iat": 1753600000,
@@ -198,7 +201,9 @@ JWT signed with RS256. Lifetime: **60 seconds**.
 | `sub` | **Primary key** — store as `crp_global_id` (or similar); use for JIT find/create |
 | `email` | Display, notifications; do not use alone to match users |
 | `roles` | Map to local roles if needed |
-| `institution_id` | Scope data access to this institution |
+| `institution_id` | Scope data access to this institution (CRP UUID) |
+| `institution_code` | **Institution Code** (e.g. `"UNILAG"`) — consistent code across apps |
+| `institution_short_code` / `short_code` | Short code / short name (e.g. `"UNILAG"`) |
 | `aud` | Must equal your app: `crms` or `attendance` |
 | `iss` | Must equal `CRP_ISSUER` env on your app |
 | `exp` | Reject expired tokens |

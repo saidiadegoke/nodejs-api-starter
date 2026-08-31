@@ -222,6 +222,12 @@ async function checkOut(studentContext, classId, payload) {
   });
 }
 
+async function syncStudents(payload) {
+  // Uses an empty studentContext because this is a server-to-server bulk sync
+  // and does not act on behalf of a single student.
+  return request('POST', '/api/auth/sync-students', { data: payload });
+}
+
 module.exports = {
   name,
   getHomeSummary,
@@ -232,6 +238,7 @@ module.exports = {
   getTimetable,
   checkIn,
   checkOut,
+  syncStudents,
   // Test helpers
   _clearTokenCache: clearTokenCache,
   _getTokenCache: () => tokenCache,
