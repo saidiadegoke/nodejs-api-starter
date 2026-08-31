@@ -74,10 +74,10 @@ describe('CRP SSO issuer', () => {
   async function createUniversity() {
     const suffix = Date.now().toString(36);
     const result = await pool.query(
-      `INSERT INTO jupeb_universities (code, name, jupeb_prefix, status)
-       VALUES ($1, $2, $3, 'active')
+      `INSERT INTO jupeb_universities (code, name, short_name, jupeb_prefix, status)
+       VALUES ($1, $2, $3, $4, 'active')
        RETURNING id`,
-      [`SSO_${suffix}`, `SSO Test University ${suffix}`, nextJupebTestPrefix()]
+      [`SSO_${suffix}`, `SSO Test University ${suffix}`, `SSO_${suffix}`, nextJupebTestPrefix()]
     );
     return result.rows[0].id;
   }
@@ -213,6 +213,9 @@ describe('CRP SSO issuer', () => {
       expect(payload.aud).toBe('crms');
       expect(payload.iss).toBe('https://crp.test.local');
       expect(payload.institution_id).toBe(String(universityId));
+      expect(payload.institution_code).toMatch(/^SSO_/);
+      expect(payload.institution_short_code).toMatch(/^SSO_/);
+      expect(payload.short_code).toMatch(/^SSO_/);
       expect(payload.email).toBe(email);
       expect(payload.jti).toBeTruthy();
     });
@@ -287,13 +290,28 @@ describe('CRP SSO issuer', () => {
   });
 
   describe('buildHandoffClaims', () => {
-    it('requires institution scope on the user profile', () => {
-      expect(() =>
-        buildHandoffClaims({
-          id: '00000000-0000-4000-8000-000000000001',
-          email: 'registrar@example.com',
-        })
-      ).toThrow(/institution/i);
+    it('requires user record and email', () => {
+      expect(() => buildHandoffClaims(null)).toThrow(/user record/i);
+      expect(() => buildHandoffClaims({ id: '123' })).toThrow(/email/i);
+    });
+
+    it('extracts institution_id, institution_code, and short_code claims', () => {
+      const claims = buildHandoffClaims({
+        id: 'user-1',
+        email: 'user@example.com',
+        roles: ['institution_admin'],
+        jupeb_university_id: 'uni-1',
+        jupeb_university_code: 'UNILAG',
+        jupeb_university_short_name: 'UNILAG',
+      });
+      expect(claims).toEqual({
+        sub: 'user-1',
+        email: 'user@example.com',
+        roles: ['institution_admin'],
+        institution_id: 'uni-1',
+        institution_code: 'UNILAG',
+        institution_short_code: 'UNILAG',
+      });
     });
   });
 });

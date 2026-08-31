@@ -21,12 +21,12 @@ class StudentDashboardService {
   }
 
   static async checkIn(userId, classId, payload, query = {}) {
-    const ctx = await resolveStudentContext(userId, { query, forAttendance: true });
+    const ctx = await resolveStudentContext(userId);
     return attendanceProviders.get().checkIn(ctx, classId, payload);
   }
 
   static async checkOut(userId, classId, payload, query = {}) {
-    const ctx = await resolveStudentContext(userId, { query, forAttendance: true });
+    const ctx = await resolveStudentContext(userId);
     return attendanceProviders.get().checkOut(ctx, classId, payload);
   }
 }

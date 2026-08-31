@@ -1,3 +1,4 @@
+
 -- Seed Nigerian states + LGAs (generated from aacparty-backend/config/nigerian-states.json)
 -- Idempotent: safe to re-run via the seed runner.
 

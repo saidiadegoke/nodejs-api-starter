@@ -26,6 +26,7 @@ const jupebMailer = require('./jupeb-mailer.service');
 const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
+const attendanceProviders = require('../../integrations/attendance');
 
 function httpError(status, message, details = null) {
   const err = new Error(message);
@@ -1816,6 +1817,7 @@ class RegistrationService {
     if (!isUuid(sessionId)) throw httpError(422, 'Invalid session id');
     const session = await sessionModel.findById(sessionId);
     if (!session) throw httpError(404, 'Session not found');
+    if (session.status !== 'closed') throw httpError(422, 'Session is not closed');
     const rows = await registrationModel.findApprovedWithoutCandidateNumber(sessionId);
     let assigned = 0;
     let skipped = 0;
@@ -1836,6 +1838,15 @@ class RegistrationService {
       }
     }
     await sessionModel.insertEvent(sessionId, 'finalization_completed', { assigned, skipped }, userId);
+    
+    if (numbers.length > 0) {
+      setImmediate(() => {
+        this._syncStudentsToAttendance(numbers.map(n => n.registration_id)).catch(err => {
+          console.error('[AttendanceSync] Background sync failed:', err);
+        });
+      });
+    }
+
     return {
       session_id: sessionId,
       assigned,
@@ -2153,6 +2164,41 @@ class RegistrationService {
     const buffer = await RegistrationFormPdfService.render(preview);
     const filename = `registration-slip-${registration.provisional_candidate_code || registration.id}.pdf`;
     return { buffer, filename };
+  }
+
+  async _syncStudentsToAttendance(registrationIds) {
+    if (!registrationIds || registrationIds.length === 0) return;
+    try {
+      // Chunk into batches of 100
+      const chunkSize = 100;
+      for (let i = 0; i < registrationIds.length; i += chunkSize) {
+        const chunk = registrationIds.slice(i, i + chunkSize);
+        const payloads = await registrationModel.getStudentSyncPayloads(chunk);
+        if (payloads.length === 0) continue;
+        
+        const attendanceProvider = attendanceProviders.get();
+        if (!attendanceProvider.syncStudents) continue;
+
+        const response = await attendanceProvider.syncStudents({ students: payloads });
+        
+        // Update DB with results
+        if (response && response.results && Array.isArray(response.results)) {
+          for (const res of response.results) {
+            if (res.registrationCode && res.student_id) {
+              const payloadItem = payloads.find(p => p.jupebNumber === res.jupebNumber);
+              if (payloadItem) {
+                await registrationModel.updateAttendanceSync(payloadItem.registration_id, {
+                  registrationCode: res.registrationCode,
+                  studentId: res.student_id,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[AttendanceSync] Failed to sync students:', err);
+    }
   }
 }
 
