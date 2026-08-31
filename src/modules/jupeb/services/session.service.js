@@ -180,16 +180,17 @@ class SessionService {
       : null;
     const cutoffCa = ca_cutoff_at ? parseTs(ca_cutoff_at, 'ca_cutoff_at') : null;
     const ordered = [
-      ['closes_at', c],
-      ['candidate_info_cutoff_at', cutoffCandidate],
-      ['profile_update_cutoff_at', cutoffProfile],
-      ['ca_cutoff_at', cutoffCa],
+      ['Session close date', c],
+      ['Candidate info cutoff', cutoffCandidate],
+      ['Profile update cutoff', cutoffProfile],
+      ['CA cutoff', cutoffCa],
     ].filter(([, v]) => v != null);
     for (let i = 1; i < ordered.length; i += 1) {
       const [prevName, prevTs] = ordered[i - 1];
       const [thisName, thisTs] = ordered[i];
       if (thisTs.getTime() < prevTs.getTime()) {
-        throw httpError(422, `${thisName} must be on or after ${prevName}`);
+        const fmt = (d) => d.toISOString().replace('T', ' ').substring(0, 16);
+        throw httpError(422, `The ${thisName} (${fmt(thisTs)}) cannot be earlier than the ${prevName} (${fmt(prevTs)}).`);
       }
     }
 
@@ -286,21 +287,21 @@ class SessionService {
     }
 
     const ordered = [
-      ['closes_at', closes],
+      ['Session close date', closes],
       [
-        'candidate_info_cutoff_at',
+        'Candidate info cutoff',
         nullableTime(fields.candidate_info_cutoff_at !== undefined
           ? fields.candidate_info_cutoff_at
           : row.candidate_info_cutoff_at),
       ],
       [
-        'profile_update_cutoff_at',
+        'Profile update cutoff',
         nullableTime(fields.profile_update_cutoff_at !== undefined
           ? fields.profile_update_cutoff_at
           : row.profile_update_cutoff_at),
       ],
       [
-        'ca_cutoff_at',
+        'CA cutoff',
         nullableTime(fields.ca_cutoff_at !== undefined ? fields.ca_cutoff_at : row.ca_cutoff_at),
       ],
     ].filter(([, v]) => v != null);
@@ -308,7 +309,8 @@ class SessionService {
       const [prevName, prevTs] = ordered[i - 1];
       const [thisName, thisTs] = ordered[i];
       if (thisTs.getTime() < prevTs.getTime()) {
-        throw httpError(422, `${thisName} must be on or after ${prevName}`);
+        const fmt = (d) => d.toISOString().replace('T', ' ').substring(0, 16);
+        throw httpError(422, `The ${thisName} (${fmt(thisTs)}) cannot be earlier than the ${prevName} (${fmt(prevTs)}).`);
       }
     }
 

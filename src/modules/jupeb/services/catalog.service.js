@@ -296,7 +296,10 @@ class CatalogService {
   }
 
   async createSubjectCombination(body) {
-    const { subjects, is_global, university_id } = body;
+    const { subjects, is_global, university_id, code } = body;
+    if (!code) {
+      throw httpError(422, 'code is required');
+    }
     if (subjects === undefined) {
       throw httpError(422, 'subjects is required');
     }
@@ -307,7 +310,6 @@ class CatalogService {
     // committed together so the row is never persisted without its membership.
     const subjectIds = await this._resolveSubjectIds(norm.subjects);
 
-    const code = await subjectCombinationModel.generateCode();
     let title = body.title ? String(body.title).trim() : null;
     if (!title) {
       const derived = await this._deriveCombinationDefaults(norm.subjects);
@@ -505,6 +507,7 @@ class CatalogService {
         .map((s) => s.trim())
         .filter(Boolean);
       return this.createSubjectCombination({
+        code: row.code || undefined,
         title: row.title || undefined,
         subjects,
         is_global: row.is_global === undefined ? true : row.is_global !== 'false',

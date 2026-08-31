@@ -263,12 +263,7 @@ function enrichListRow(row) {
     ninStatus: row.nin_verification_status || null,
     ninFullName: ninFromPayload || null,
   });
-  const biometric_status =
-    row.has_face && row.has_fingerprint
-      ? 'yes'
-      : row.has_face || row.has_fingerprint
-      ? 'partial'
-      : 'no';
+  const biometric_status = row.has_face || row.has_fingerprint ? 'yes' : 'no';
   const ninEmail = row.nin_intake_email ? String(row.nin_intake_email).trim() : '';
   const candidate = {
     id: row.user_id || null,
@@ -873,7 +868,7 @@ class RegistrationService {
     };
     const hasFace = captureTypes.has('face') || skipped.face;
     const hasFinger = captureTypes.has('fingerprint') || skipped.fingerprint;
-    const biometric_status = hasFace && hasFinger ? 'yes' : (hasFace || hasFinger ? 'partial' : 'no');
+    const biometric_status = hasFace || hasFinger ? 'yes' : 'no';
 
     return {
       id: reg.id,
@@ -1555,12 +1550,7 @@ class RegistrationService {
       })
     );
     const types = new Set(biometrics.map((b) => b.capture_type));
-    const biometric_status =
-      types.has('face') && types.has('fingerprint')
-        ? 'complete'
-        : types.size > 0
-        ? 'partial'
-        : 'none';
+    const biometric_status = types.size > 0 ? 'complete' : 'none';
     // Group result entries by (source, sitting) for the figma `log in 18`
     // grouped subject/grade tables.
     const groupedAcademic = {};
