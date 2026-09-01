@@ -1807,7 +1807,7 @@ class RegistrationService {
     if (!isUuid(sessionId)) throw httpError(422, 'Invalid session id');
     const session = await sessionModel.findById(sessionId);
     if (!session) throw httpError(404, 'Session not found');
-    if (session.status !== 'closed') throw httpError(422, 'Session is not closed');
+    
     const rows = await registrationModel.findApprovedWithoutCandidateNumber(sessionId);
     let assigned = 0;
     let skipped = 0;
