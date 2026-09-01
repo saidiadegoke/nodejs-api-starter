@@ -420,21 +420,7 @@ class RegistrationModel {
     `;
     const result = await pool.query(query, [registrationIds]);
     
-    // Fetch images and convert to base64 data URIs
-    for (let i = 0; i < result.rows.length; i++) {
-      const row = result.rows[i];
-      if (row.base64image && row.base64image.startsWith('http')) {
-        try {
-          const imageRes = await axios.get(row.base64image, { responseType: 'arraybuffer' });
-          const contentType = imageRes.headers['content-type'] || 'image/jpeg';
-          const base64 = Buffer.from(imageRes.data).toString('base64');
-          row.base64image = `data:${contentType};base64,${base64}`;
-        } catch (err) {
-          console.error(`[AttendanceSync] Failed to fetch image for jupebNumber ${row.jupebNumber}:`, err.message);
-          row.base64image = "";
-        }
-      }
-    }
+    // Return the URLs directly as requested
     
     return result.rows;
   }

@@ -1651,8 +1651,8 @@ class RegistrationService {
         provisional_candidate_code: reg.provisional_candidate_code,
         jupeb_candidate_number: reg.jupeb_candidate_number,
         status: reg.status,
-        // Prefer durable selfie over expiring NIN provider photo_url.
-        photo_url: u.profile_photo_url || ninPayload.photo_url || null,
+        photo_url: ninPayload.photo_url || null,
+        face_photo_url: u.profile_photo_url || null,
       },
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
