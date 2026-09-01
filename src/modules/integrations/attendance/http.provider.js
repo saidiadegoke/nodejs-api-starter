@@ -105,6 +105,10 @@ async function ensureAccessToken({ forceRefresh = false } = {}) {
 async function dataClient() {
   const { baseUrl, applicationName, timeoutMs } = assertConfigured();
   const token = await ensureAccessToken();
+  console.info('token', token);
+  console.info('baseUrl', baseUrl);
+  console.info('applicationName', applicationName);
+  console.info('timeoutMs', timeoutMs);
   return axios.create({
     baseURL: baseUrl,
     timeout: timeoutMs,
@@ -223,9 +227,15 @@ async function checkOut(studentContext, classId, payload) {
 }
 
 async function syncStudents(payload) {
-  // Uses an empty studentContext because this is a server-to-server bulk sync
-  // and does not act on behalf of a single student.
-  return request('POST', '/api/auth/sync-students', { data: payload });
+  try {
+    console.info('payload', payload);
+    return request('POST', '/api/auth/sync-students', { data: payload });
+  } catch (error) {
+    console.log('payload', payload);
+    console.log('error', error.response.data);
+    console.error('Error syncing students:', error);
+    throw error;
+  }
 }
 
 module.exports = {

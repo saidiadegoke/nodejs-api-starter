@@ -1,3 +1,4 @@
+const axios = require('axios');
 const pool = require('../../../db/pool');
 const registrationKpi = require('../services/registration-kpi.service');
 
@@ -394,14 +395,13 @@ class RegistrationModel {
     if (!registrationIds || !registrationIds.length) return [];
     const query = `
       SELECT
-        r.id AS "registration_id",
         r.jupeb_candidate_number AS "jupebNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         u.email AS "email",
-        uni.code AS "institutionCode",
+        uni.jupeb_prefix AS "institutionCode",
         'STUDENT' AS "role",
-        p.gender AS "gender",
+        UPPER(p.gender) AS "gender",
         p.date_of_birth AS "dateOfBirth",
         u.phone AS "phone",
         p.residential_address AS "address",
@@ -419,6 +419,23 @@ class RegistrationModel {
       WHERE r.id = ANY($1::uuid[])
     `;
     const result = await pool.query(query, [registrationIds]);
+    
+    // Fetch images and convert to base64 data URIs
+    for (let i = 0; i < result.rows.length; i++) {
+      const row = result.rows[i];
+      if (row.base64image && row.base64image.startsWith('http')) {
+        try {
+          const imageRes = await axios.get(row.base64image, { responseType: 'arraybuffer' });
+          const contentType = imageRes.headers['content-type'] || 'image/jpeg';
+          const base64 = Buffer.from(imageRes.data).toString('base64');
+          row.base64image = `data:${contentType};base64,${base64}`;
+        } catch (err) {
+          console.error(`[AttendanceSync] Failed to fetch image for jupebNumber ${row.jupebNumber}:`, err.message);
+          row.base64image = "";
+        }
+      }
+    }
+    
     return result.rows;
   }
 
