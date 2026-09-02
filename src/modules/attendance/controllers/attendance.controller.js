@@ -64,6 +64,32 @@ class AttendanceController {
       return sendError(res, err.message, statusOf(err), err.details || null);
     }
   }
+
+  static async checkIn(req, res) {
+    try {
+      const data = await AttendanceService.checkIn(
+        req.user.user_id,
+        req.params.classId || req.body.lecture_id,
+        req.body
+      );
+      return sendSuccess(res, data, 'Checked in successfully', OK);
+    } catch (err) {
+      return sendError(res, err.message, statusOf(err), err.details || null);
+    }
+  }
+
+  static async checkOut(req, res) {
+    try {
+      const data = await AttendanceService.checkOut(
+        req.user.user_id,
+        req.params.classId || req.body.lecture_id,
+        req.body
+      );
+      return sendSuccess(res, data, 'Checked out successfully', OK);
+    } catch (err) {
+      return sendError(res, err.message, statusOf(err), err.details || null);
+    }
+  }
 }
 
 module.exports = AttendanceController;

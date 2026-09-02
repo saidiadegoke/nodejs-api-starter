@@ -212,17 +212,49 @@ async function getTimetable(studentContext, filters = {}) {
   return request('GET', '/api/students/me/timetable', { studentContext, params: filters });
 }
 
-async function checkIn(studentContext, classId, payload) {
-  return request('POST', `/api/students/me/classes/${encodeURIComponent(classId)}/check-in`, {
+async function checkIn(studentContext, classId, payload = {}) {
+  const data = {
+    student_id: studentContext?.student_id || payload.student_id,
+    registration_id: studentContext?.attendance_registration_code || payload.registration_id,
+    lecture_id: classId || payload.lecture_id,
+    location: payload.location || (payload.latitude && payload.longitude ? [{
+      latitude: String(payload.latitude),
+      longitude: String(payload.longitude),
+      accuracy: payload.accuracy !== undefined ? String(payload.accuracy) : '0',
+      timestamp: payload.timestamp || new Date().toISOString(),
+    }] : []),
+    ...payload,
+  };
+  data.student_id = studentContext?.student_id || data.student_id;
+  data.registration_id = studentContext?.attendance_registration_code || data.registration_id;
+  data.lecture_id = classId || data.lecture_id;
+
+  return request('POST', '/api/students/me/check-in', {
     studentContext,
-    data: payload,
+    data,
   });
 }
 
-async function checkOut(studentContext, classId, payload) {
-  return request('POST', `/api/students/me/classes/${encodeURIComponent(classId)}/check-out`, {
+async function checkOut(studentContext, classId, payload = {}) {
+  const data = {
+    student_id: studentContext?.student_id || payload.student_id,
+    registration_id: studentContext?.attendance_registration_code || payload.registration_id,
+    lecture_id: classId || payload.lecture_id,
+    location: payload.location || (payload.latitude && payload.longitude ? [{
+      latitude: String(payload.latitude),
+      longitude: String(payload.longitude),
+      accuracy: payload.accuracy !== undefined ? String(payload.accuracy) : '0',
+      timestamp: payload.timestamp || new Date().toISOString(),
+    }] : []),
+    ...payload,
+  };
+  data.student_id = studentContext?.student_id || data.student_id;
+  data.registration_id = studentContext?.attendance_registration_code || data.registration_id;
+  data.lecture_id = classId || data.lecture_id;
+
+  return request('POST', '/api/students/me/check-out', {
     studentContext,
-    data: payload,
+    data,
   });
 }
 

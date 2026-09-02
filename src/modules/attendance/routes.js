@@ -10,5 +10,9 @@ router.get('/classes', jupebStudent, AttendanceController.getClasses);
 router.get('/history', jupebStudent, AttendanceController.getHistory);
 router.get('/classes/:courseCode/sessions', jupebStudent, AttendanceController.getCourseSessions);
 router.get('/timetable', jupebStudent, AttendanceController.getTimetable);
+router.post('/check-in', jupebStudent, AttendanceController.checkIn);
+router.post('/classes/:classId/check-in', jupebStudent, AttendanceController.checkIn);
+router.post('/check-out', jupebStudent, AttendanceController.checkOut);
+router.post('/classes/:classId/check-out', jupebStudent, AttendanceController.checkOut);
 
 module.exports = router;
