@@ -1651,8 +1651,8 @@ class RegistrationService {
         provisional_candidate_code: reg.provisional_candidate_code,
         jupeb_candidate_number: reg.jupeb_candidate_number,
         status: reg.status,
-        // Prefer durable selfie over expiring NIN provider photo_url.
-        photo_url: u.profile_photo_url || ninPayload.photo_url || null,
+        photo_url: ninPayload.photo_url || null,
+        face_photo_url: u.profile_photo_url || null,
       },
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
@@ -1829,13 +1829,21 @@ class RegistrationService {
     }
     await sessionModel.insertEvent(sessionId, 'finalization_completed', { assigned, skipped }, userId);
     
-    if (numbers.length > 0) {
-      setImmediate(() => {
-        this._syncStudentsToAttendance(numbers.map(n => n.registration_id)).catch(err => {
-          console.error('[AttendanceSync] Background sync failed:', err);
-        });
-      });
-    }
+    setImmediate(async () => {
+      try {
+        const approvedIdsRes = await pool.query(
+          "SELECT id FROM jupeb_registrations WHERE session_id = $1 AND status = 'approved'",
+          [sessionId]
+        );
+        const approvedIds = approvedIdsRes.rows.map(r => r.id);
+        if (approvedIds.length > 0) {
+          console.log(`[AttendanceSync] Found ${approvedIds.length} approved candidates to sync for session ${sessionId}`);
+          await this._syncStudentsToAttendance(approvedIds);
+        }
+      } catch (err) {
+        console.error('[AttendanceSync] Background sync failed:', err);
+      }
+    });
 
     return {
       session_id: sessionId,
@@ -2169,7 +2177,19 @@ class RegistrationService {
         const attendanceProvider = attendanceProviders.get();
         if (!attendanceProvider.syncStudents) continue;
 
-        const response = await attendanceProvider.syncStudents({ students: payloads });
+        let response;
+        try {
+          response = await attendanceProvider.syncStudents({ students: payloads });
+          console.log(`[AttendanceSync] Chunk synced successfully. Response:`, JSON.stringify(response, null, 2));
+        } catch (syncErr) {
+          console.error(`[AttendanceSync] Error syncing chunk:`, syncErr.message || syncErr);
+          if (syncErr.details) {
+            console.error(`[AttendanceSync] Provider response error details:`, JSON.stringify(syncErr.details, null, 2));
+          } else if (syncErr.response && syncErr.response.data) {
+            console.error(`[AttendanceSync] Provider response error body:`, JSON.stringify(syncErr.response.data, null, 2));
+          }
+          continue;
+        }
         
         // Update DB with results
         if (response && response.results && Array.isArray(response.results)) {

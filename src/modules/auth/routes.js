@@ -91,6 +91,9 @@ router.post(
     body('first_name').optional().isString().trim(),
     body('last_name').optional().isString().trim(),
     body('residential_address').optional().isString().trim(),
+    body('residential_address').optional().isString().trim(),
+    body('file_id').optional().isUUID().withMessage('Valid file_id is required'),
+    body('id').optional().isUUID().withMessage('Valid id is required'),
     validate,
   ],
   AuthController.completeRegistration

@@ -1,3 +1,4 @@
+const axios = require('axios');
 const pool = require('../../../db/pool');
 const registrationKpi = require('../services/registration-kpi.service');
 
@@ -394,14 +395,13 @@ class RegistrationModel {
     if (!registrationIds || !registrationIds.length) return [];
     const query = `
       SELECT
-        r.id AS "registration_id",
         r.jupeb_candidate_number AS "jupebNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         u.email AS "email",
-        uni.code AS "institutionCode",
+        uni.jupeb_prefix AS "institutionCode",
         'STUDENT' AS "role",
-        p.gender AS "gender",
+        UPPER(p.gender) AS "gender",
         p.date_of_birth AS "dateOfBirth",
         u.phone AS "phone",
         p.residential_address AS "address",
@@ -419,6 +419,9 @@ class RegistrationModel {
       WHERE r.id = ANY($1::uuid[])
     `;
     const result = await pool.query(query, [registrationIds]);
+    
+    // Return the URLs directly as requested
+    
     return result.rows;
   }
 

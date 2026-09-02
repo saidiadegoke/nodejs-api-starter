@@ -209,6 +209,7 @@ class AuthService {
         full_name: fullName,
         provisional_candidate_code: reg.provisional_candidate_code,
         photo_url: ninPayload.photo_url || null,
+        face_photo_url: null,
         status: reg.status,
       },
       basic_information: {
@@ -275,7 +276,7 @@ class AuthService {
       throw err;
     }
     const code = body.code ? String(body.code).trim() : '';
-    const password = body.password ? String(body.password) : '';
+    const password = body.password ? String(body.password).trim() : '';
     if (!code) {
       const err = new Error('code is required');
       err.status = 422;
@@ -413,11 +414,22 @@ class AuthService {
         || (intakePayload.address && String(intakePayload.address).trim())
         || (ninResponse.address && String(ninResponse.address).trim())
         || null;
+
+      // Extract the selfie upload file ID (mobile app might send id or file_id)
+      const fileId = body.file_id || body.id;
+      let facePhotoUrl = null;
+      if (fileId) {
+        const fileRow = await client.query(`SELECT file_url FROM files WHERE id = $1`, [fileId]);
+        if (fileRow.rows.length) {
+          facePhotoUrl = fileRow.rows[0].file_url;
+        }
+      }
+
       await client.query(
-        `INSERT INTO profiles (user_id, first_name, last_name, display_name, residential_address)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO profiles (user_id, first_name, last_name, display_name, residential_address, profile_photo_url)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id) DO NOTHING`,
-        [user.id, first_name || null, last_name || null, displayName, residentialAddress]
+        [user.id, first_name || null, last_name || null, displayName, residentialAddress, facePhotoUrl]
       );
 
       // Prefer 'student' role; fall back to 'user' if 'student' isn't seeded.

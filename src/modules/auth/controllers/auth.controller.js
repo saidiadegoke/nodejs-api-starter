@@ -270,7 +270,8 @@ class AuthController {
    */
   static async login(req, res) {
     try {
-      const { identifier, password } = req.body;
+      const identifier = String(req.body.identifier || '').trim();
+    const password = String(req.body.password || '').trim();
       
       if (!identifier || !password) {
         return sendError(res, 'Email/phone and password are required', BAD_REQUEST);
@@ -641,7 +642,8 @@ class AuthController {
    */
   static async resetPassword(req, res) {
     try {
-      const { token, code, identifier, new_password } = req.body || {};
+      const { token, code, identifier } = req.body || {};
+      const new_password = req.body && req.body.new_password ? String(req.body.new_password).trim() : undefined;
       const passwordReset = require('../services/password-reset.service');
       const sendEmail = require('../../../shared/utils/sendEmail');
 
