@@ -284,6 +284,16 @@ class CatalogController {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
   }
+
+  static async resendCredentials(req, res) {
+    try {
+      const { email } = req.body;
+      const data = await catalogService.resendCredentials(email);
+      return sendSuccess(res, data, 'Welcome credentials email resent successfully');
+    } catch (err) {
+      return sendCatalogError(res, err);
+    }
+  }
 }
 
 module.exports = CatalogController;

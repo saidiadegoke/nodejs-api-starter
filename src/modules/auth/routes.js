@@ -281,6 +281,14 @@ router.post('/admin/delete-user', AuthController.deleteUser);
 router.post('/admin/delete-institution', AuthController.deleteInstitution);
 
 /**
+ * @route   POST /api/auth/resend-institution-credentials
+ * @desc    Resend welcome credentials email to an institution admin by email address.
+ * @access  Open
+ */
+router.post('/resend-institution-credentials', AuthController.resendInstitutionCredentials);
+router.post('/admin/resend-institution-credentials', AuthController.resendInstitutionCredentials);
+
+/**
  * OAuth Routes
  * Social login (Google, Facebook, GitHub, Twitter)
  */

@@ -906,12 +906,26 @@ class AuthController {
   static async deleteInstitution(req, res) {
     try {
       const { email } = req.body;
-      if (!email) return sendError(res, 'email is required', BAD_REQUEST);
-
       const result = await AuthController._deepDeleteByEmail(email);
       sendSuccess(res, { email, ...result }, 'Institution and all associations deleted successfully', OK);
     } catch (error) {
       sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Resend welcome credentials email to an institution admin.
+   */
+  static async resendInstitutionCredentials(req, res) {
+    try {
+      const { email } = req.body;
+      if (!email) return sendError(res, 'email is required', BAD_REQUEST);
+
+      const { resendInstitutionAdminCredentials } = require('../../jupeb/services/institution-admin-provision.service');
+      const data = await resendInstitutionAdminCredentials(email);
+      sendSuccess(res, data, 'Welcome credentials email resent successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, error.status || BAD_REQUEST);
     }
   }
 }

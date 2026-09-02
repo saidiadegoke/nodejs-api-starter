@@ -1,6 +1,9 @@
 const pool = require('../../../db/pool');
 const universityModel = require('../models/university.model');
-const { provisionInstitutionAdminOnUniversityCreate } = require('./institution-admin-provision.service');
+const {
+  provisionInstitutionAdminOnUniversityCreate,
+  resendInstitutionAdminCredentials,
+} = require('./institution-admin-provision.service');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const subjectModel = require('../models/subject.model');
 const { validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
@@ -514,6 +517,10 @@ class CatalogService {
         university_id: row.university_id || undefined,
       });
     });
+  }
+
+  async resendCredentials(email) {
+    return resendInstitutionAdminCredentials(email);
   }
 }
 
