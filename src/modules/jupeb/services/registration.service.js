@@ -1643,6 +1643,36 @@ class RegistrationService {
     } catch (e) {
       nokRow = null;
     }
+
+    // Resolve face_photo_url (prefer profiles.profile_photo_url; fall back to biometric captures)
+    let facePhotoUrl = u.profile_photo_url || null;
+    if (!facePhotoUrl) {
+      try {
+        const faceRes = await pool.query(
+          `SELECT b.file_id, b.external_reference, f.file_url
+             FROM jupeb_biometric_captures b
+             LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+            WHERE b.registration_id = $1
+              AND b.capture_type = 'face'
+              AND b.replaced_at IS NULL
+            ORDER BY b.created_at DESC
+            LIMIT 1`,
+          [reg.id]
+        );
+        if (faceRes.rows[0]) {
+          const row = faceRes.rows[0];
+          facePhotoUrl = row.file_url
+            || (row.external_reference && (row.external_reference.startsWith('http://') || row.external_reference.startsWith('https://')) ? row.external_reference : null);
+          if (facePhotoUrl && userId) {
+            pool.query(
+              `UPDATE profiles SET profile_photo_url = $2, updated_at = NOW() WHERE user_id = $1 AND profile_photo_url IS NULL`,
+              [userId, facePhotoUrl]
+            ).catch(() => {});
+          }
+        }
+      } catch (_) { /* non-fatal */ }
+    }
+
     return {
       candidate: {
         id: reg.id,
@@ -1652,7 +1682,7 @@ class RegistrationService {
         jupeb_candidate_number: reg.jupeb_candidate_number,
         status: reg.status,
         photo_url: ninPayload.photo_url || null,
-        face_photo_url: u.profile_photo_url || null,
+        face_photo_url: facePhotoUrl,
       },
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,

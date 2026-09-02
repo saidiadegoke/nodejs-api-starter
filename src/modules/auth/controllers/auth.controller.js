@@ -755,7 +755,165 @@ class AuthController {
       sendError(res, error.message, BAD_REQUEST);
     }
   }
+  /**
+   * Helper to thoroughly clean up all user and institution associations for an email.
+   */
+  static async _deepDeleteByEmail(email) {
+    const pool = require('../../../db/pool');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) return { usersDeleted: 0, institutionsDeleted: 0 };
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Find all users matching email (case-insensitive)
+      const userRes = await client.query(
+        `SELECT id, phone FROM users WHERE LOWER(email) = $1`,
+        [normalizedEmail]
+      );
+      const userIds = userRes.rows.map((r) => r.id);
+      const phoneNumbers = userRes.rows.map((r) => r.phone).filter(Boolean);
+
+      // 2. Find all institutions matching email (case-insensitive)
+      const uniRes = await client.query(
+        `SELECT id FROM jupeb_universities WHERE LOWER(email) = $1`,
+        [normalizedEmail]
+      );
+      const uniIds = uniRes.rows.map((r) => r.id);
+
+      // 3. Collect all registration IDs tied to these users or institutions
+      const regRes = await client.query(
+        `SELECT id FROM jupeb_registrations 
+          WHERE (user_id = ANY($1::uuid[]) OR university_id = ANY($2::uuid[]))`,
+        [userIds.length ? userIds : [null], uniIds.length ? uniIds : [null]]
+      );
+      const regIds = regRes.rows.map((r) => r.id);
+
+      if (regIds.length) {
+        await client.query(`DELETE FROM jupeb_biometric_captures WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM jupeb_registration_documents WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM jupeb_registration_status_history WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM jupeb_registration_results WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM jupeb_registration_scores WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM jupeb_result_entries WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM jupeb_next_of_kin WHERE registration_id = ANY($1::uuid[])`, [regIds]);
+        await client.query(`DELETE FROM ocr_results WHERE job_id IN (SELECT id FROM ocr_jobs WHERE metadata->>'registration_id' = ANY($1::text[]))`, [regIds.map(String)]);
+        await client.query(`DELETE FROM ocr_jobs WHERE metadata->>'registration_id' = ANY($1::text[])`, [regIds.map(String)]);
+        await client.query(`DELETE FROM jupeb_registrations WHERE id = ANY($1::uuid[])`, [regIds]);
+      }
+
+      // 4. Clean user-specific associations
+      if (userIds.length) {
+        await client.query(`DELETE FROM jupeb_registration_status_history WHERE changed_by = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM jupeb_nin_verifications WHERE requested_by = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM user_universities WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM user_roles WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM user_permissions WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM user_sessions WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM user_preferences WHERE user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+        await client.query(`DELETE FROM social_accounts WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM password_resets WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM verification_tokens WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM notifications WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM api_keys WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM webhooks WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM admin_audit_logs WHERE admin_user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM posts WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM profiles WHERE user_id = ANY($1::uuid[])`, [userIds]);
+        await client.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [userIds]);
+      }
+
+      // Also clean any leftover user by email directly
+      await client.query(`DELETE FROM users WHERE LOWER(email) = $1`, [normalizedEmail]);
+
+      // Clean OTP codes by email or phone
+      await client.query(
+        `DELETE FROM otp_codes WHERE LOWER(email) = $1 OR phone = ANY($2::text[])`,
+        [normalizedEmail, phoneNumbers]
+      ).catch(() => {});
+
+      // Clean NIN verifications with matching email inside JSON payload
+      await client.query(
+        `DELETE FROM jupeb_nin_verifications 
+          WHERE LOWER(intake_payload->>'email') = $1 
+             OR LOWER(response_payload->>'email') = $1`,
+        [normalizedEmail]
+      ).catch(() => {});
+
+      // 5. Clean university-specific associations
+      if (uniIds.length) {
+        await client.query(
+          `DELETE FROM jupeb_subject_combination_items 
+            WHERE combination_id IN (SELECT id FROM jupeb_subject_combinations WHERE university_id = ANY($1::uuid[]))`,
+          [uniIds]
+        );
+        await client.query(`DELETE FROM jupeb_subject_combinations WHERE university_id = ANY($1::uuid[])`, [uniIds]);
+        await client.query(`DELETE FROM jupeb_document_requirements WHERE university_id = ANY($1::uuid[])`, [uniIds]);
+        await client.query(`DELETE FROM jupeb_courses WHERE university_id = ANY($1::uuid[])`, [uniIds]);
+        await client.query(`DELETE FROM user_universities WHERE university_id = ANY($1::uuid[])`, [uniIds]);
+        await client.query(`UPDATE profiles SET jupeb_university_id = NULL WHERE jupeb_university_id = ANY($1::uuid[])`, [uniIds]);
+        
+        // Roles owned by this university
+        const uniRoles = await client.query(
+          `SELECT id FROM roles WHERE owner_jupeb_university_id = ANY($1::uuid[])`,
+          [uniIds]
+        );
+        const uniRoleIds = uniRoles.rows.map((r) => r.id);
+        if (uniRoleIds.length) {
+          await client.query(`DELETE FROM user_roles WHERE role_id = ANY($1::uuid[])`, [uniRoleIds]);
+          await client.query(`DELETE FROM role_permissions WHERE role_id = ANY($1::uuid[])`, [uniRoleIds]);
+          await client.query(`DELETE FROM roles WHERE id = ANY($1::uuid[])`, [uniRoleIds]);
+        }
+
+        await client.query(`DELETE FROM jupeb_universities WHERE id = ANY($1::uuid[])`, [uniIds]);
+      }
+
+      // Also clean any leftover university by email directly
+      await client.query(`DELETE FROM jupeb_universities WHERE LOWER(email) = $1`, [normalizedEmail]);
+
+      await client.query('COMMIT');
+      return {
+        usersDeleted: userIds.length,
+        institutionsDeleted: uniIds.length,
+      };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * TEMPORARY open endpoint — delete a user and all associations by email.
+   */
+  static async deleteUser(req, res) {
+    try {
+      const { email } = req.body;
+      if (!email) return sendError(res, 'email is required', BAD_REQUEST);
+
+      const result = await AuthController._deepDeleteByEmail(email);
+      sendSuccess(res, { email, ...result }, 'User and all associations deleted successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
+
+  /**
+   * TEMPORARY open endpoint — delete an institution and all associations by email.
+   */
+  static async deleteInstitution(req, res) {
+    try {
+      const { email } = req.body;
+      if (!email) return sendError(res, 'email is required', BAD_REQUEST);
+
+      const result = await AuthController._deepDeleteByEmail(email);
+      sendSuccess(res, { email, ...result }, 'Institution and all associations deleted successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, BAD_REQUEST);
+    }
+  }
 }
 
 module.exports = AuthController;
-

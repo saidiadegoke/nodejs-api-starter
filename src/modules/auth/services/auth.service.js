@@ -203,13 +203,34 @@ class AuthService {
       ninStatus: ninRow ? ninRow.status : null,
     });
 
+    // Resolve face_photo_url from biometric captures if already taken
+    let facePhotoUrl = null;
+    try {
+      const faceRes = await pool.query(
+        `SELECT b.file_id, b.external_reference, f.file_url
+           FROM jupeb_biometric_captures b
+           LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+          WHERE b.registration_id = $1
+            AND b.capture_type = 'face'
+            AND b.replaced_at IS NULL
+          ORDER BY b.created_at DESC
+          LIMIT 1`,
+        [reg.id]
+      );
+      if (faceRes.rows[0]) {
+        const row = faceRes.rows[0];
+        facePhotoUrl = row.file_url
+          || (row.external_reference && (row.external_reference.startsWith('http://') || row.external_reference.startsWith('https://')) ? row.external_reference : null);
+      }
+    } catch (_) { /* non-fatal */ }
+
     return {
       candidate: {
         registration_id: reg.id,
         full_name: fullName,
         provisional_candidate_code: reg.provisional_candidate_code,
         photo_url: ninPayload.photo_url || null,
-        face_photo_url: null,
+        face_photo_url: facePhotoUrl,
         status: reg.status,
       },
       basic_information: {
@@ -424,11 +445,32 @@ class AuthService {
           facePhotoUrl = fileRow.rows[0].file_url;
         }
       }
+      if (!facePhotoUrl) {
+        const faceRes = await client.query(
+          `SELECT b.file_id, b.external_reference, f.file_url
+             FROM jupeb_biometric_captures b
+             LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+            WHERE b.registration_id = $1
+              AND b.capture_type = 'face'
+              AND b.replaced_at IS NULL
+            ORDER BY b.created_at DESC
+            LIMIT 1`,
+          [reg.id]
+        );
+        if (faceRes.rows[0]) {
+          const row = faceRes.rows[0];
+          facePhotoUrl = row.file_url
+            || (row.external_reference && (row.external_reference.startsWith('http://') || row.external_reference.startsWith('https://')) ? row.external_reference : null);
+        }
+      }
 
       await client.query(
         `INSERT INTO profiles (user_id, first_name, last_name, display_name, residential_address, profile_photo_url)
          VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (user_id) DO NOTHING`,
+         ON CONFLICT (user_id) DO UPDATE SET 
+           profile_photo_url = COALESCE(EXCLUDED.profile_photo_url, profiles.profile_photo_url),
+           residential_address = COALESCE(EXCLUDED.residential_address, profiles.residential_address),
+           updated_at = NOW()`,
         [user.id, first_name || null, last_name || null, displayName, residentialAddress, facePhotoUrl]
       );
 
@@ -534,7 +576,10 @@ class AuthService {
           id: claimedReg.id,
           status: claimedReg.status,
           provisional_candidate_code: claimedReg.provisional_candidate_code,
-          claimed_at: claimedReg.claimed_at
+          claimed_at: claimedReg.claimed_at,
+          // After completeRegistration the status is always 'claimed', so the
+          // next step is always confirm_subjects. No doc/bio lookup needed here.
+          next_step: AuthService._computeNextStep(claimedReg),
         }
       };
     } catch (err) {
@@ -599,7 +644,8 @@ class AuthService {
     try {
       const regRes = await pool.query(
         `SELECT id, status, provisional_candidate_code, jupeb_candidate_number,
-                claimed_at, submitted_at, approved_at, dashboard_unlocked_at
+                claimed_at, submitted_at, approved_at, dashboard_unlocked_at,
+                university_id
            FROM jupeb_registrations
           WHERE user_id = $1
           ORDER BY created_at DESC
@@ -608,6 +654,43 @@ class AuthService {
       );
       if (regRes.rows[0]) {
         const r = regRes.rows[0];
+
+        // For pending_documents registrations we need to know whether
+        // documents and biometrics have actually been completed so we can
+        // return the correct next_step instead of always showing
+        // 'upload_documents' even after everything is uploaded.
+        let docsStats = null;
+        let bioStats = null;
+        if (r.status === 'pending_documents') {
+          const [docsRes, bioRes, reqRes] = await Promise.all([
+            pool.query(
+              `SELECT COUNT(*)::int AS uploaded
+                 FROM jupeb_registration_documents
+                WHERE registration_id = $1`,
+              [r.id]
+            ),
+            pool.query(
+              `SELECT COUNT(*)::int AS captured
+                 FROM jupeb_biometric_captures
+                WHERE registration_id = $1
+                  AND replaced_at IS NULL`,
+              [r.id]
+            ),
+            pool.query(
+              `SELECT COUNT(*)::int AS required
+                 FROM jupeb_document_requirements
+                WHERE (university_id = $1 OR is_global = true)
+                  AND is_active = true`,
+              [r.university_id]
+            ),
+          ]);
+          docsStats = {
+            uploaded: docsRes.rows[0].uploaded,
+            required: reqRes.rows[0].required,
+          };
+          bioStats = { captured: bioRes.rows[0].captured };
+        }
+
         registration = {
           id: r.id,
           status: r.status,
@@ -617,7 +700,7 @@ class AuthService {
           submitted_at: r.submitted_at,
           approved_at: r.approved_at,
           dashboard_unlocked: Boolean(r.dashboard_unlocked_at),
-          next_step: AuthService._nextStepForRegistration(r.status),
+          next_step: AuthService._computeNextStep(r, docsStats, bioStats),
         };
       }
     } catch { /* jupeb tables absent — non-fatal */ }
@@ -659,21 +742,53 @@ class AuthService {
   }
 
   /**
-   * Maps a registration status to the next action the mobile / web app
-   * should send the user to. Kept in sync with registration-state.service.
+   * Maps a registration status + optional doc/biometric completion stats to
+   * the next action the mobile/web app should route the user to.
+   *
+   * For statuses other than `pending_documents` the result is determined
+   * solely by the status string (same as the old _nextStepForRegistration).
+   *
+   * For `pending_documents`, we look at whether all required documents have
+   * been uploaded AND at least one biometric capture exists. When both are
+   * satisfied we return 'submit_for_review' so the UI can show the submit
+   * button rather than redirecting back to the upload screen.
+   *
+   * @param {object} reg        - Registration row (must have `status`).
+   * @param {object|null} docs  - `{ uploaded: number, required: number }` or null.
+   * @param {object|null} bio   - `{ captured: number }` or null.
+   */
+  static _computeNextStep(reg, docs = null, bio = null) {
+    const status = reg && reg.status;
+    switch (status) {
+      case 'code_issued':                return 'claim_code';
+      case 'claimed':                    return 'confirm_subjects';
+      case 'pending_student_confirm':    return 'confirm_subjects';
+      case 'pending_documents': {
+        // If we have the completion stats available, use them to give a
+        // more accurate next step. Fall back to 'upload_documents' when
+        // the stats weren't fetched (e.g. from completeRegistration).
+        if (docs !== null && bio !== null) {
+          const docsComplete = docs.required === 0 || docs.uploaded >= docs.required;
+          const bioComplete  = bio.captured > 0;
+          if (docsComplete && bioComplete) return 'submit_for_review';
+          if (docsComplete)                return 'upload_biometrics';
+        }
+        return 'upload_documents';
+      }
+      case 'pending_institution_review': return 'await_review';
+      case 'approved':                   return 'view_dashboard';
+      case 'rejected':                   return 'view_rejection';
+      case 'withdrawn':                  return 'restart';
+      default:                           return null;
+    }
+  }
+
+  /**
+   * @deprecated Use `_computeNextStep(reg)` instead.
+   * Kept for any external callers that reference the old name.
    */
   static _nextStepForRegistration(status) {
-    switch (status) {
-      case 'code_issued':                 return 'claim_code';
-      case 'claimed':                     return 'confirm_subjects';
-      case 'pending_student_confirm':     return 'confirm_subjects';
-      case 'pending_documents':           return 'upload_documents';
-      case 'pending_institution_review':  return 'await_review';
-      case 'approved':                    return 'view_dashboard';
-      case 'rejected':                    return 'view_rejection';
-      case 'withdrawn':                   return 'restart';
-      default:                            return null;
-    }
+    return AuthService._computeNextStep({ status });
   }
 
   /**

@@ -71,19 +71,20 @@ async function userHasPrivilegedIdentityRole(userId) {
  * (NIN provider photo_url expires). Writes the stored files.file_url onto
  * the registration owner's profiles.profile_photo_url (overwrite).
  */
-async function applyFaceSelfieToProfile(registration, fileId) {
-  if (!registration || !registration.user_id || !fileId) return;
-  if (!isUuid(fileId)) throw httpError(422, 'file_id must be a valid UUID');
-  const file = await FileModel.findById(fileId);
-  if (!file) throw httpError(404, 'File not found');
-  const url = file.file_url != null ? String(file.file_url).trim() : '';
-  if (!url) throw httpError(422, 'Face capture file has no file_url');
+async function applyFaceSelfieToProfile(registration, fileIdOrUrl) {
+  if (!registration || !registration.user_id || !fileIdOrUrl) return;
+  let url = null;
+  if (isUuid(fileIdOrUrl)) {
+    const file = await FileModel.findById(fileIdOrUrl);
+    if (!file) return;
+    url = file.file_url != null ? String(file.file_url).trim() : '';
+  } else if (typeof fileIdOrUrl === 'string' && (fileIdOrUrl.startsWith('http://') || fileIdOrUrl.startsWith('https://'))) {
+    url = fileIdOrUrl.trim();
+  }
+  if (!url) return;
   await pool.query(
-    `INSERT INTO profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
-    [registration.user_id]
-  );
-  await pool.query(
-    `UPDATE profiles SET profile_photo_url = $2, updated_at = NOW() WHERE user_id = $1`,
+    `INSERT INTO profiles (user_id, profile_photo_url) VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE SET profile_photo_url = EXCLUDED.profile_photo_url, updated_at = NOW()`,
     [registration.user_id, url]
   );
 }
@@ -562,21 +563,30 @@ class IdentityService {
     if (Number.isNaN(capturedAt.getTime())) {
       throw httpError(422, 'captured_at must be a valid ISO date');
     }
-    // Validate face file early so we fail before insert when file_id is bad.
-    if (body.capture_type === 'face' && v.file_id) {
-      if (!isUuid(v.file_id)) throw httpError(422, 'file_id must be a valid UUID');
-      const file = await FileModel.findById(v.file_id);
-      if (!file) throw httpError(404, 'File not found');
-      if (!file.file_url || !String(file.file_url).trim()) {
-        throw httpError(422, 'Face capture file has no file_url');
+    // Resolve file_id or file_url for face captures
+    let resolvedFileId = v.file_id;
+    let resolvedFileUrl = null;
+    if (body.capture_type === 'face') {
+      const candidateId = v.file_id || (v.external_reference && isUuid(v.external_reference) ? v.external_reference : null);
+      if (candidateId) {
+        const file = await FileModel.findById(candidateId);
+        if (file) {
+          resolvedFileId = file.id;
+          resolvedFileUrl = file.file_url ? String(file.file_url).trim() : null;
+        } else if (v.file_id) {
+          throw httpError(404, 'File not found');
+        }
+      } else if (v.external_reference && (v.external_reference.startsWith('http://') || v.external_reference.startsWith('https://'))) {
+        resolvedFileUrl = v.external_reference.trim();
       }
     }
+
     let row;
     try {
       row = await biometricCaptureModel.create({
         registration_id: body.registration_id,
         capture_type: body.capture_type,
-        file_id: v.file_id,
+        file_id: resolvedFileId || null,
         external_reference: v.external_reference,
         quality_score: body.quality_score,
         device_metadata: body.device_metadata,
@@ -588,8 +598,8 @@ class IdentityService {
       }
       throw e;
     }
-    if (body.capture_type === 'face' && v.file_id) {
-      await applyFaceSelfieToProfile(registration, v.file_id);
+    if (body.capture_type === 'face') {
+      await applyFaceSelfieToProfile(registration, resolvedFileId || resolvedFileUrl || v.external_reference);
     }
     return row;
   }
@@ -616,16 +626,39 @@ class IdentityService {
     const registration = await registrationModel.findById(registrationId);
     await this.assertRegistrationAccess(userId, registration);
     const captures = await biometricCaptureModel.findByRegistrationId(registrationId);
-    const face = [...captures].reverse().find((c) => c.capture_type === 'face' && c.file_id);
+    const face = [...captures].reverse().find((c) => c.capture_type === 'face' && !c.replaced_at && (c.file_id || c.external_reference));
     if (!face) throw httpError(404, 'No face capture found for this registration');
-    const file = await FileService.getFile(face.file_id, userId);
-    if (!file) throw httpError(404, 'File not found');
-    return {
-      url: file.file_url,
-      file_id: file.id,
-      file_type: file.file_type,
-      captured_at: face.captured_at,
-    };
+    if (face.file_id) {
+      const file = await FileService.getFile(face.file_id, userId);
+      if (file) {
+        return {
+          url: file.file_url,
+          file_id: file.id,
+          file_type: file.file_type,
+          captured_at: face.captured_at,
+        };
+      }
+    }
+    if (face.external_reference && isUuid(face.external_reference)) {
+      const file = await FileModel.findById(face.external_reference);
+      if (file) {
+        return {
+          url: file.file_url,
+          file_id: file.id,
+          file_type: file.file_type,
+          captured_at: face.captured_at,
+        };
+      }
+    }
+    if (face.external_reference && (face.external_reference.startsWith('http://') || face.external_reference.startsWith('https://'))) {
+      return {
+        url: face.external_reference,
+        file_id: null,
+        file_type: 'image/jpeg',
+        captured_at: face.captured_at,
+      };
+    }
+    throw httpError(404, 'No face capture found for this registration');
   }
 
   async replaceBiometric(captureId, body, userId) {
@@ -652,12 +685,20 @@ class IdentityService {
       throw httpError(422, 'captured_at must be a valid ISO date');
     }
 
-    if (old.capture_type === 'face' && v.file_id) {
-      if (!isUuid(v.file_id)) throw httpError(422, 'file_id must be a valid UUID');
-      const file = await FileModel.findById(v.file_id);
-      if (!file) throw httpError(404, 'File not found');
-      if (!file.file_url || !String(file.file_url).trim()) {
-        throw httpError(422, 'Face capture file has no file_url');
+    let resolvedFileId = v.file_id;
+    let resolvedFileUrl = null;
+    if (old.capture_type === 'face') {
+      const candidateId = v.file_id || (v.external_reference && isUuid(v.external_reference) ? v.external_reference : null);
+      if (candidateId) {
+        const file = await FileModel.findById(candidateId);
+        if (file) {
+          resolvedFileId = file.id;
+          resolvedFileUrl = file.file_url ? String(file.file_url).trim() : null;
+        } else if (v.file_id) {
+          throw httpError(404, 'File not found');
+        }
+      } else if (v.external_reference && (v.external_reference.startsWith('http://') || v.external_reference.startsWith('https://'))) {
+        resolvedFileUrl = v.external_reference.trim();
       }
     }
 
@@ -667,7 +708,7 @@ class IdentityService {
       row = await biometricCaptureModel.create({
         registration_id: old.registration_id,
         capture_type: old.capture_type,
-        file_id: v.file_id,
+        file_id: resolvedFileId || null,
         external_reference: v.external_reference,
         quality_score: body.quality_score,
         device_metadata: body.device_metadata,
@@ -679,8 +720,8 @@ class IdentityService {
       }
       throw e;
     }
-    if (old.capture_type === 'face' && v.file_id) {
-      await applyFaceSelfieToProfile(registration, v.file_id);
+    if (old.capture_type === 'face') {
+      await applyFaceSelfieToProfile(registration, resolvedFileId || resolvedFileUrl || v.external_reference);
     }
     return row;
   }

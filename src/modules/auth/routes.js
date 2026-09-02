@@ -267,6 +267,20 @@ router.post(
 );
 
 /**
+ * @route   POST /api/auth/admin/delete-user
+ * @desc    TEMPORARY — delete a user by email. Remove before production.
+ * @access  Open
+ */
+router.post('/admin/delete-user', AuthController.deleteUser);
+
+/**
+ * @route   POST /api/auth/admin/delete-institution
+ * @desc    TEMPORARY — soft-delete an institution by email. Remove before production.
+ * @access  Open
+ */
+router.post('/admin/delete-institution', AuthController.deleteInstitution);
+
+/**
  * OAuth Routes
  * Social login (Google, Facebook, GitHub, Twitter)
  */
