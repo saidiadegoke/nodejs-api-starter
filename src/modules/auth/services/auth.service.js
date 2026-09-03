@@ -229,8 +229,9 @@ class AuthService {
         registration_id: reg.id,
         full_name: fullName,
         provisional_candidate_code: reg.provisional_candidate_code,
-        photo_url: ninPayload.photo_url || null,
+        photo_url: facePhotoUrl || ninPayload.photo_url || null,
         face_photo_url: facePhotoUrl,
+        nin_photo_url: ninPayload.photo_url || null,
         status: reg.status,
       },
       basic_information: {
@@ -436,9 +437,9 @@ class AuthService {
         || (ninResponse.address && String(ninResponse.address).trim())
         || null;
 
-      // Extract the selfie upload file ID (mobile app might send id or file_id)
-      const fileId = body.file_id || body.id;
-      let facePhotoUrl = null;
+      // Extract the selfie upload (mobile app might send file_id, id, photo_url, image_url, etc.)
+      const fileId = body.file_id || (body.id && isUuid(body.id) ? body.id : null);
+      let facePhotoUrl = body.photo_url || body.image_url || body.profile_photo_url || body.face_photo_url || null;
       if (fileId) {
         const fileRow = await client.query(`SELECT file_url FROM files WHERE id = $1`, [fileId]);
         if (fileRow.rows.length) {
@@ -468,6 +469,9 @@ class AuthService {
         `INSERT INTO profiles (user_id, first_name, last_name, display_name, residential_address, profile_photo_url)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id) DO UPDATE SET 
+           first_name = COALESCE(EXCLUDED.first_name, profiles.first_name),
+           last_name = COALESCE(EXCLUDED.last_name, profiles.last_name),
+           display_name = COALESCE(EXCLUDED.display_name, profiles.display_name),
            profile_photo_url = COALESCE(EXCLUDED.profile_photo_url, profiles.profile_photo_url),
            residential_address = COALESCE(EXCLUDED.residential_address, profiles.residential_address),
            updated_at = NOW()`,

@@ -11,8 +11,14 @@
 
 const WAEC_LIKE_MAP = {
   A1: 'A',
+  A2: 'A',
+  A3: 'A',
+  B1: 'B',
   B2: 'B',
   B3: 'B',
+  C1: 'C',
+  C2: 'C',
+  C3: 'C',
   C4: 'C',
   C5: 'C',
   C6: 'C',
