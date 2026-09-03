@@ -166,8 +166,65 @@ async function provisionInstitutionAdmin({
   }
 }
 
+const bcrypt = require('bcryptjs');
+
+/**
+ * Resend welcome credentials email to an institution admin.
+ * Generates a fresh temporary password, updates the user's password_hash,
+ * and sends the credentials template.
+ */
+async function resendInstitutionAdminCredentials(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw httpError(422, 'email is required');
+  }
+
+  const query = `
+    SELECT u.id, u.email, p.first_name, p.last_name, p.jupeb_university_id,
+           COALESCE(uni.name, uni_by_email.name) AS university_name
+      FROM users u
+      LEFT JOIN profiles p ON p.user_id = u.id
+      LEFT JOIN user_universities uu ON uu.user_id = u.id AND uu.deleted_at IS NULL
+      LEFT JOIN jupeb_universities uni ON uni.id = uu.university_id OR uni.id = p.jupeb_university_id
+      LEFT JOIN jupeb_universities uni_by_email ON LOWER(uni_by_email.email) = LOWER(u.email)
+     WHERE LOWER(u.email) = $1 AND u.deleted_at IS NULL
+     LIMIT 1
+  `;
+  const result = await pool.query(query, [normalizedEmail]);
+  if (!result.rows.length) {
+    throw httpError(404, 'Institution admin user not found with this email');
+  }
+
+  const user = result.rows[0];
+  const passwordPlaintext = generatePassword(12);
+  const passwordHash = await bcrypt.hash(passwordPlaintext, 10);
+
+  await pool.query(
+    `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+    [passwordHash, user.id]
+  );
+
+  const firstName = user.first_name || 'Admin';
+  const universityName = user.university_name || 'your institution';
+
+  await jupebMailer.sendInstitutionAdminCredentials({
+    email: user.email,
+    password: passwordPlaintext,
+    firstName,
+    universityName,
+  });
+
+  return {
+    user_id: user.id,
+    email: user.email,
+    first_name: firstName,
+    university_name: universityName,
+  };
+}
+
 module.exports = {
   provisionInstitutionAdmin,
   provisionInstitutionAdminOnUniversityCreate,
+  resendInstitutionAdminCredentials,
   generatePassword,
 };

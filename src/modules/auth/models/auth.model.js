@@ -100,98 +100,23 @@ class AuthModel {
     const value = String(identifier).trim();
 
     try {
-      // Single query — finds the user via any of the supported shapes,
-      // then enforces the matric-lockdown rule via has_matric.
-      //
-      // has_matric: true ⇔ the user has ANY registration with a non-null
-      // jupeb_candidate_number. When true, the WHERE clause demands the
-      // supplied identifier matches one of the user's matric numbers —
-      // unless `in_progress_no_matric` is also true, in which case the
-      // user is mid-re-registration and the lockdown is released.
       const result = await pool.query(
-        `WITH candidates AS (
-           SELECT u.id AS user_id,
-                  -- Matric-only lockdown applies to candidates (student /
-                  -- user roles). Admins, registrars, program directors and
-                  -- institution admins must always be reachable by email /
-                  -- phone even if a test or admin tool incidentally
-                  -- attached them to a registration.
-                  EXISTS (
-                    SELECT 1 FROM user_roles ur
-                      JOIN roles ro ON ro.id = ur.role_id
-                     WHERE ur.user_id = u.id
-                       AND ro.owner_jupeb_university_id IS NULL
-                       AND ro.name NOT IN ('student', 'user')
-                  ) AS has_admin_role,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rm
-                     WHERE rm.user_id = u.id
-                       AND rm.jupeb_candidate_number IS NOT NULL
-                  ) AS has_matric,
-                  -- Re-entry signal: user has an in-progress registration
-                  -- (non-terminal, no matric yet). When present alongside
-                  -- has_matric, the user is starting a fresh registration
-                  -- in a new session and needs email/phone/code login.
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rip
-                     WHERE rip.user_id = u.id
-                       AND rip.jupeb_candidate_number IS NULL
-                       AND rip.status NOT IN ('approved', 'rejected', 'withdrawn')
-                  ) AS in_progress_no_matric,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rmx
-                     WHERE rmx.user_id = u.id
-                       AND rmx.jupeb_candidate_number IS NOT NULL
-                       AND UPPER(rmx.jupeb_candidate_number) = UPPER($1)
-                  ) AS matric_match,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rp
-                     WHERE rp.user_id = u.id
-                       AND UPPER(rp.provisional_candidate_code) = UPPER($1)
-                  ) AS provisional_match
-             FROM users u
-            WHERE u.deleted_at IS NULL
-              AND (
-                    LOWER(u.email) = LOWER($1)
-                 OR u.phone = $1
-                 OR EXISTS (
-                      SELECT 1 FROM jupeb_registrations rr
-                       WHERE rr.user_id = u.id
-                         AND (
-                               UPPER(rr.provisional_candidate_code) = UPPER($1)
-                            OR UPPER(rr.jupeb_candidate_number)    = UPPER($1)
-                         )
-                    )
-              )
-         )
-         SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
-           FROM candidates c
-           JOIN users u ON u.id = c.user_id
+        `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
+           FROM users u
            LEFT JOIN profiles p ON u.id = p.user_id
-          WHERE
-              -- Admins / registrars / institution admins: any identifier
-              -- resolves (no lockdown).
-              c.has_admin_role = TRUE
-           OR
-              -- Candidate with matric AND a fresh in-progress registration:
-              -- treat like a candidate without matric — any identifier works.
-              (c.has_matric = TRUE AND c.in_progress_no_matric = TRUE AND (
-                    LOWER(u.email) = LOWER($1)
-                 OR u.phone = $1
-                 OR c.provisional_match = TRUE
-                 OR c.matric_match = TRUE
-              ))
-           OR
-              -- Candidate with matric and no in-progress registration:
-              -- ONLY matric resolves (post-finalization lockdown).
-              (c.has_matric = TRUE AND c.in_progress_no_matric = FALSE AND c.matric_match = TRUE)
-           OR
-              -- Candidate without matric yet: email / phone / reg-code.
-              (c.has_matric = FALSE AND (
-                    LOWER(u.email) = LOWER($1)
-                 OR u.phone = $1
-                 OR c.provisional_match = TRUE
-              ))
+          WHERE u.deleted_at IS NULL
+            AND (
+                  LOWER(u.email) = LOWER($1)
+               OR u.phone = $1
+               OR EXISTS (
+                    SELECT 1 FROM jupeb_registrations rr
+                     WHERE rr.user_id = u.id
+                       AND (
+                             UPPER(rr.provisional_candidate_code) = UPPER($1)
+                          OR UPPER(rr.jupeb_candidate_number)    = UPPER($1)
+                       )
+                  )
+            )
           LIMIT 1`,
         [value]
       );

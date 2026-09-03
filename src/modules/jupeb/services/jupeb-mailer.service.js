@@ -268,7 +268,7 @@ async function sendMatricAssigned(registrationId) {
  */
 async function sendInstitutionAdminCredentials({ email, password, firstName, universityName }) {
   if (!email || !password) return;
-  const loginUrl = `${frontendUrl()}/auth/login`;
+  const loginUrl = `${process.env.INSTITUTION_FRONTEND_URL}`;
   return fireAndForget(
     sendEmail({
       to: email,

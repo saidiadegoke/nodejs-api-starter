@@ -18,6 +18,7 @@ router.get('/subjects/public', CatalogController.listSubjectsPublic);
 router.get('/universities', perm('institutions.view'), CatalogController.listUniversitiesAdmin);
 router.post('/universities', perm('institutions.create'), CatalogController.createUniversity);
 router.post('/universities/bulk', ...csvBulk, perm('institutions.create'), CatalogController.bulkUniversities);
+router.post('/universities/resend-credentials', CatalogController.resendCredentials);
 router.get('/universities/:universityId', perm('institutions.view'), CatalogController.getUniversityById);
 router.patch('/universities/:universityId', perm('institutions.update'), CatalogController.patchUniversity);
 router.post('/universities/:universityId/activate', perm('institutions.update'), CatalogController.activateUniversity);
