@@ -55,17 +55,19 @@ class AttendanceService {
 
     const [attHome, unread] = await Promise.all([attHomePromise, unreadPromise]);
 
-    // const isArray = Array.isArray(attHome);
-    // const attObj = !isArray && attHome && typeof attHome === 'object' ? attHome : {};
-    // const classes = isArray ? attHome : (attObj.todays_classes || attObj.classes || []);
+    const isArray = Array.isArray(attHome);
+    const attObj = !isArray && attHome && typeof attHome === 'object' ? attHome : {};
+    const classes = isArray ? attHome : (attObj.todays_classes || attObj.classes || []);
 
     return {
       summary: {
-        ...crmsHome,
-        ...attHome,
+        attendance_percent: attObj.attendance_percent ?? 0,
+        average_score_percent: crmsHome.average_score_percent ?? 0,
+        subjects_count: crmsHome.subjects_count ?? 0,
+        overall_grade: crmsHome.overall_grade ?? null,
       },
-      todays_classes: attHome.todays_classes || attHome.classes || [],
-      attendance_chart: attHome.attendance_chart || null,
+      todays_classes: classes,
+      attendance_chart: attObj.attendance_chart || null,
       unread_notifications_count: unread,
     };
   }
