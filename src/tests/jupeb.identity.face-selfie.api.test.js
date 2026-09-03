@@ -135,6 +135,40 @@ describe('face selfie → profile_photo_url', () => {
     await pool.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [regId]);
   });
 
+  it('POST face with external_reference set to uploaded file id resolves file_id and satisfies DB constraint', async () => {
+    if (!migrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const adminRow = await pool.query(`SELECT id FROM users WHERE email = 'admin@example.com' LIMIT 1`);
+    const userId = adminRow.rows[0].id;
+    const regId = await seedRegistrationForUser(userId);
+    if (!regId) return;
+
+    const file = await seedFile(userId, 'http://example.com/external-ref-selfie.jpg');
+    const create = await request(app)
+      .post('/identity/biometrics')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        registration_id: regId,
+        capture_type: 'face',
+        external_reference: file.id,
+        quality_score: 0.9,
+      });
+    expect(create.status).toBe(201);
+    expect(create.body.data.file_id).toBe(file.id);
+    expect(create.body.data.external_reference).toBeNull();
+
+    const profile = await pool.query(
+      `SELECT profile_photo_url FROM profiles WHERE user_id = $1`,
+      [userId]
+    );
+    expect(profile.rows[0].profile_photo_url).toBe('http://example.com/external-ref-selfie.jpg');
+
+    await pool.query(`DELETE FROM jupeb_biometric_captures WHERE registration_id = $1`, [regId]);
+    await pool.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [regId]);
+    await pool.query(`DELETE FROM files WHERE id = $1`, [file.id]);
+  });
+
   it('PUT face replace with file_id overwrites profiles.profile_photo_url', async () => {
     if (!migrated) return;
     const token = await getAdminToken();

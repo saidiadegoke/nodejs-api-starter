@@ -9,9 +9,15 @@ const {
 
 const SUBJECT_LINE_RE = /^([A-Z][A-Z .&\-/()0-9]{2,60}?)\s+([A-F][1-9]?)\s*$/;
 
-const WAEC_GRADES = ['A1', 'B2', 'B3', 'C4', 'C5', 'C6', 'D7', 'E8', 'F9'];
+const WAEC_GRADES = [
+  'A1', 'A2', 'A3',
+  'B1', 'B2', 'B3',
+  'C1', 'C2', 'C3', 'C4', 'C5', 'C6',
+  'D7', 'E8', 'F9'
+];
 function isWaecGrade(token) {
-  return WAEC_GRADES.includes((token || '').toUpperCase());
+  const t = (token || '').toUpperCase();
+  return WAEC_GRADES.includes(t) || /^[A-F][1-9]?$/.test(t);
 }
 
 function parseSubjects(lines) {
