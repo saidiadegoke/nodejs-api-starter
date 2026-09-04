@@ -127,6 +127,15 @@ class SubjectModel {
     );
     return result.rows[0];
   }
+
+  async softDelete(id) {
+    const result = await pool.query(
+      `UPDATE jupeb_subjects SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
 }
 
 module.exports = new SubjectModel();

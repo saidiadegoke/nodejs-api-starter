@@ -23,6 +23,7 @@ router.get('/universities/:universityId', perm('institutions.view'), CatalogCont
 router.patch('/universities/:universityId', perm('institutions.update'), CatalogController.patchUniversity);
 router.post('/universities/:universityId/activate', perm('institutions.update'), CatalogController.activateUniversity);
 router.post('/universities/:universityId/deactivate', perm('institutions.update'), CatalogController.deactivateUniversity);
+router.delete('/universities/:universityId', perm('institutions.delete'), CatalogController.deleteUniversity);
 
 /** Subject combinations */
 router.get('/subject-combinations', perm('subject_combinations.view'), CatalogController.listSubjectCombinationsAdmin);
@@ -40,6 +41,11 @@ router.post(
   perm('subject_combinations.update'),
   CatalogController.deactivateSubjectCombination
 );
+router.delete(
+  '/subject-combinations/:subjectCombinationId',
+  perm('subject_combinations.delete'),
+  CatalogController.deleteSubjectCombination
+);
 
 /** Subjects */
 router.get('/subjects', perm('subject.view'), CatalogController.listSubjectsAdmin);
@@ -49,5 +55,6 @@ router.get('/subjects/:subjectId', perm('subject.view'), CatalogController.getSu
 router.patch('/subjects/:subjectId', perm('subject.update'), CatalogController.patchSubject);
 router.post('/subjects/:subjectId/activate', perm('subject.update'), CatalogController.activateSubject);
 router.post('/subjects/:subjectId/deactivate', perm('subject.update'), CatalogController.deactivateSubject);
+router.delete('/subjects/:subjectId', perm('subject.delete'), CatalogController.deleteSubject);
 
 module.exports = router;

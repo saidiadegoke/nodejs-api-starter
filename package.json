@@ -21,6 +21,7 @@
     "test:watch": "NODE_ENV=test jest --watch",
     "test:verbose": "NODE_ENV=test jest --verbose --runInBand",
     "test:cleanup": "node src/tests/test-db-cleanup.js",
+    "db:clear": "node scripts/clear-db.js",
     "rbac": "node scripts/rbac.js",
     "rbac:setup": "node scripts/rbac.js setup-common",
     "rbac:create-role": "node scripts/create-role.js",

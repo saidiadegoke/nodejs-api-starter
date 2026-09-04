@@ -300,5 +300,83 @@ describe('JUPEB catalog API', () => {
         });
       expect(badEmail.status).toBe(422);
     });
+
+    it('DELETE /catalog/universities/:id soft-deletes the university', async () => {
+      if (!catalogMigrated) return;
+      const token = await getAdminAccessToken();
+      if (!token) return;
+      const created = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: nextJupebTestUniversityCode('DELU'),
+          name: 'Delete Uni Test',
+          jupeb_prefix: nextJupebTestPrefix(),
+          email: 'deluni@test.edu',
+        });
+      expect(created.status).toBe(201);
+      const uniId = created.body.data.id;
+
+      const del = await request(app)
+        .delete(`/catalog/universities/${uniId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(del.status).toBe(200);
+      expect(del.body.data.deleted_at).toBeDefined();
+
+      const getAgain = await request(app)
+        .get(`/catalog/universities/${uniId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(getAgain.status).toBe(404);
+    });
+
+    it('DELETE /catalog/subjects/:id and /catalog/subject-combinations/:id soft-delete records', async () => {
+      if (!catalogMigrated) return;
+      const token = await getAdminAccessToken();
+      if (!token) return;
+
+      // Subject delete
+      const subCode = `SD${Date.now().toString().slice(-4)}`;
+      const sub = await request(app)
+        .post('/catalog/subjects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: subCode, name: `Subject ${subCode}` });
+      expect(sub.status).toBe(201);
+      const subId = sub.body.data.id;
+
+      const delSub = await request(app)
+        .delete(`/catalog/subjects/${subId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(delSub.status).toBe(200);
+      expect(delSub.body.data.deleted_at).toBeDefined();
+
+      const getSubAgain = await request(app)
+        .get(`/catalog/subjects/${subId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(getSubAgain.status).toBe(404);
+
+      // Combination delete
+      const combo = await request(app)
+        .post('/catalog/subject-combinations')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `CMBD${Date.now().toString().slice(-4)}`,
+          title: 'Combo Delete Test',
+          subjects: ['MTH', 'PHY', 'CHM'],
+          is_global: true,
+        });
+      if (combo.status === 201) {
+        const comboId = combo.body.data.id;
+        const delCombo = await request(app)
+          .delete(`/catalog/subject-combinations/${comboId}`)
+          .set('Authorization', `Bearer ${token}`);
+        expect(delCombo.status).toBe(200);
+        expect(delCombo.body.data.deleted_at).toBeDefined();
+
+        const getComboAgain = await request(app)
+          .get(`/catalog/subject-combinations/${comboId}`)
+          .set('Authorization', `Bearer ${token}`);
+        expect(getComboAgain.status).toBe(404);
+      }
+    });
   });
 });

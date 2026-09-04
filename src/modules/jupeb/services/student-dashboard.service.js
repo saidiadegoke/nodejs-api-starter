@@ -12,7 +12,7 @@ class StudentDashboardService {
 
   static async getCourses(userId) {
     const ctx = await resolveStudentContext(userId);
-    return crmsProviders.get().getCourses(ctx);
+    return attendanceProviders.get().getCourses(ctx);
   }
 
   static async getResults(userId) {

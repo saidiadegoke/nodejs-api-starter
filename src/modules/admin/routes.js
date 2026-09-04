@@ -131,4 +131,26 @@ router.post(
   AdminUsersController.createUserWithUniversity
 );
 
+// ============================================================================
+// Database Cleanup & Reset (Protected by system.admin)
+// ============================================================================
+
+const AdminDbCleanerController = require('./controllers/adminDbCleaner.controller');
+
+/** GET /admin/system/clear-db/tables — list clearable tables configuration */
+router.get(
+  '/system/clear-db/tables',
+  requireAuth,
+  requirePermission('system.admin'),
+  AdminDbCleanerController.listTables
+);
+
+/** POST /admin/system/clear-db — clear database records (by session_id or all) */
+router.post(
+  '/system/clear-db',
+  requireAuth,
+  requirePermission('system.admin'),
+  AdminDbCleanerController.clearDb
+);
+
 module.exports = router;
