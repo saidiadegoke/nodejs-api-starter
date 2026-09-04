@@ -199,6 +199,14 @@ class CatalogService {
     return row;
   }
 
+  async deleteUniversity(id) {
+    if (!isUuid(id)) throw httpError(422, 'Invalid university id');
+    await this.getUniversityById(id);
+    const row = await universityModel.softDelete(id);
+    if (!row) throw httpError(404, 'University not found');
+    return row;
+  }
+
   async listSubjectCombinationsAdmin({ page, limit, status, university_id, q }) {
     if (university_id && !isUuid(university_id)) {
       throw httpError(422, 'university_id must be a valid UUID');
@@ -404,6 +412,14 @@ class CatalogService {
     return row;
   }
 
+  async deleteSubjectCombination(id) {
+    if (!isUuid(id)) throw httpError(422, 'Invalid subject combination id');
+    await this.getSubjectCombinationById(id);
+    const row = await subjectCombinationModel.softDelete(id);
+    if (!row) throw httpError(404, 'Subject combination not found');
+    return row;
+  }
+
   // ----- Subjects (first-class catalog) -----
   listSubjectsPublic() {
     return subjectModel.findPublicActive();
@@ -473,6 +489,14 @@ class CatalogService {
     }
     await this.getSubjectById(id);
     const row = await subjectModel.setStatus(id, status);
+    if (!row) throw httpError(404, 'Subject not found');
+    return row;
+  }
+
+  async deleteSubject(id) {
+    if (!isUuid(id)) throw httpError(422, 'Invalid subject id');
+    await this.getSubjectById(id);
+    const row = await subjectModel.softDelete(id);
     if (!row) throw httpError(404, 'Subject not found');
     return row;
   }

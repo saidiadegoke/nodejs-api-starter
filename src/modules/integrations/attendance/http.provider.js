@@ -208,6 +208,13 @@ async function getCourseSessions(studentContext, courseCode, filters = {}) {
   });
 }
 
+async function getCourses(studentContext, filters = {}) {
+  return request('GET', `/api/students/me/courses`, {
+    studentContext,
+    params: filters,
+  });
+}
+
 async function getTimetable(studentContext, filters = {}) {
   return request('GET', '/api/students/me/timetable', { studentContext, params: filters });
 }
@@ -277,6 +284,7 @@ module.exports = {
   getClasses,
   getHistory,
   getCourseSessions,
+  getCourses,
   getTimetable,
   checkIn,
   checkOut,

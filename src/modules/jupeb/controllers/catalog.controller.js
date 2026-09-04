@@ -100,6 +100,16 @@ class CatalogController {
     }
   }
 
+  static async deleteUniversity(req, res) {
+    try {
+      const row = await catalogService.deleteUniversity(req.params.universityId);
+      return sendSuccess(res, row, 'University deleted');
+    } catch (err) {
+      const status = err.status || NOT_FOUND;
+      return sendError(res, err.message, status);
+    }
+  }
+
   static async listSubjectCombinationsAdmin(req, res) {
     try {
       const { rows, page, limit, total } = await catalogService.listSubjectCombinationsAdmin({
@@ -173,6 +183,18 @@ class CatalogController {
     }
   }
 
+  static async deleteSubjectCombination(req, res) {
+    try {
+      const row = await catalogService.deleteSubjectCombination(
+        req.params.subjectCombinationId
+      );
+      return sendSuccess(res, row, 'Subject combination deleted');
+    } catch (err) {
+      const status = err.status || NOT_FOUND;
+      return sendError(res, err.message, status);
+    }
+  }
+
   // ----- Subjects -----
   static async listSubjectsPublic(req, res) {
     try {
@@ -239,6 +261,15 @@ class CatalogController {
     try {
       const row = await catalogService.setSubjectStatus(req.params.subjectId, 'inactive');
       return sendSuccess(res, row, 'Subject deactivated');
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async deleteSubject(req, res) {
+    try {
+      const row = await catalogService.deleteSubject(req.params.subjectId);
+      return sendSuccess(res, row, 'Subject deleted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }
