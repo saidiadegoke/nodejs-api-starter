@@ -57,6 +57,30 @@ class RegistrationModel {
     return result.rowCount > 0;
   }
 
+  /**
+   * Batch version of hasBlockingRegistrationForNinHash.
+   * Returns a Set of nin_hashes that currently have a blocking registration.
+   */
+  async findBlockingRegistrationsByNinHashes(hashes, { sessionId } = {}) {
+    if (!Array.isArray(hashes) || !hashes.length) return new Set();
+    const values = [hashes];
+    let sessionClause = '';
+    if (sessionId) {
+      values.push(sessionId);
+      sessionClause = ` AND r.session_id = $${values.length}`;
+    }
+    const result = await pool.query(
+      `SELECT DISTINCT nv.nin_hash
+         FROM jupeb_registrations r
+         INNER JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+        WHERE nv.nin_hash = ANY($1::text[])
+          AND r.status NOT IN ('rejected', 'withdrawn')
+          ${sessionClause}`,
+      values
+    );
+    return new Set(result.rows.map((r) => r.nin_hash));
+  }
+
   async findByInstitutionCode(code) {
     const result = await pool.query(
       `SELECT * FROM jupeb_registrations WHERE institution_issued_code = $1`,
@@ -347,12 +371,12 @@ class RegistrationModel {
     const sql = `
       SELECT uni.id   AS university_id,
              uni.name AS university_name,
-             uni.short_name AS short_name,
+             COALESCE(uni.short_name, uni.code) AS short_name,
              COUNT(r.id)::int AS registered_count
       FROM jupeb_registrations r
       JOIN jupeb_universities uni ON uni.id = r.university_id
       WHERE ${where.join(' AND ')}
-      GROUP BY uni.id, uni.name, uni.short_name
+      GROUP BY uni.id, uni.name, uni.short_name, uni.code
       ORDER BY registered_count DESC, uni.name ASC
       LIMIT $${idx}`;
     const result = await pool.query(sql, values);
