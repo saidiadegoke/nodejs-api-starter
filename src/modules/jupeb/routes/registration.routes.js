@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
+const { spreadsheetUpload } = require('../../../shared/middleware/spreadsheet-upload.middleware');
 const RegistrationController = require('../controllers/registration.controller');
 const NextOfKinController = require('../controllers/next-of-kin.controller');
 
@@ -13,6 +14,12 @@ const jupebStudent = jupebStudentMiddleware();
 
 router.get('/sessions/:sessionId/numbering-preview', finalizeRole, RegistrationController.numberingPreview);
 
+router.post(
+  '/institution/registrations/bulk-upload',
+  candidateCreate,
+  spreadsheetUpload,
+  RegistrationController.institutionBulkUpload
+);
 router.post('/institution/registrations', candidateCreate, RegistrationController.institutionCreate);
 router.patch('/institution/registrations/:registrationId', candidateUpdate, RegistrationController.institutionPatch);
 router.patch('/institution/registrations/:registrationId/candidate', candidateUpdate, RegistrationController.institutionPatchCandidate);
