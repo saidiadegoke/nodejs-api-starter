@@ -661,6 +661,24 @@ class RegistrationService {
       await assertNinAvailableForNewRegistration({ session_id, nin_verification_id });
     }
 
+    return this.createRegistrationRecord({
+      session_id,
+      university_id,
+      subject_combination_id,
+      nin_verification_id,
+      university,
+      userId,
+    });
+  }
+
+  async createRegistrationRecord({
+    session_id,
+    university_id,
+    subject_combination_id,
+    nin_verification_id,
+    university,
+    userId,
+  }) {
     const institution_issued_code = await generateUniqueInstitutionCode();
     const provisional_serial = await registrationModel.nextProvisionalSerial(session_id, university_id);
     const provisional_candidate_code = buildProvisionalCandidateCode(

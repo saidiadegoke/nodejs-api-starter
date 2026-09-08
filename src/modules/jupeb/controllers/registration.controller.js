@@ -1,8 +1,43 @@
 const registrationService = require('../services/registration.service');
+const bulkRegistrationService = require('../services/bulk-registration.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
 
 class RegistrationController {
+  static async institutionBulkUpload(req, res) {
+    try {
+      const buffer = req.uploadedFileBuffer;
+      if (!buffer) {
+        return sendError(res, 'No spreadsheet file provided. Upload a .csv or .xlsx file.', 422);
+      }
+      const session_id = req.body.session_id || req.query.session_id;
+      const university_id = req.body.university_id || req.query.university_id;
+      const provider = req.body.provider || req.query.provider;
+
+      const result = await bulkRegistrationService.process({
+        buffer,
+        session_id,
+        university_id,
+        userId: req.user.user_id,
+        provider,
+      });
+
+      if (result.succeeded_count > 0 && (result.failed_count > 0 || result.skipped_count > 0)) {
+        return sendSuccess(res, result, 'Bulk upload completed with partial success', 207);
+      }
+      if (result.succeeded_count > 0) {
+        return sendSuccess(res, result, 'Bulk upload completed successfully', 200);
+      }
+      return res.status(422).json({
+        success: false,
+        message: 'All rows in bulk upload failed or were skipped',
+        data: result,
+      });
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
+    }
+  }
+
   static async institutionCreate(req, res) {
     try {
       const row = await registrationService.institutionCreate(req.body, req.user.user_id);

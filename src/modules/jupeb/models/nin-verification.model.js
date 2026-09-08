@@ -186,6 +186,19 @@ class NinVerificationModel {
     return result.rows[0] || null;
   }
 
+  async findActiveCacheByNinHashBatch(hashes) {
+    if (!Array.isArray(hashes) || !hashes.length) return [];
+    const result = await pool.query(
+      `SELECT DISTINCT ON (nin_hash) * FROM jupeb_nin_verifications
+       WHERE nin_hash = ANY($1::text[])
+         AND status = 'verified'
+         AND cleared_at IS NULL
+       ORDER BY nin_hash, created_at DESC`,
+      [hashes]
+    );
+    return result.rows;
+  }
+
   // PII purge + cache invalidation. After this runs, the row is kept for
   // audit (status, verified_at, nin_last4, provider_reference) but the
   // sensitive profile data is gone and subsequent cache lookups will miss.

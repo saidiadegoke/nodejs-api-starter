@@ -23,6 +23,7 @@
     "test:verbose": "NODE_ENV=test jest --verbose --runInBand",
     "test:cleanup": "node src/tests/test-db-cleanup.js",
     "db:clear": "node scripts/clear-db.js",
+    "universities:clear": "node scripts/clear-universities.js",
     "rbac": "node scripts/rbac.js",
     "rbac:setup": "node scripts/rbac.js setup-common",
     "rbac:create-role": "node scripts/create-role.js",
@@ -93,7 +94,8 @@
     "tesseract.js": "^5.1.1",
     "uuid": "^9.0.1",
     "winston": "^3.19.0",
-    "winston-daily-rotate-file": "^5.0.0"
+    "winston-daily-rotate-file": "^5.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "jest": "^29.7.0",

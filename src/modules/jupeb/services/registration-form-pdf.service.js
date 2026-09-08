@@ -65,21 +65,37 @@ function renderCandidate(doc, preview) {
 
 function renderTwoColumn(doc, title, pairs) {
   section(doc, title);
-  const startY = doc.y;
   const colWidth = (doc.page.width - doc.page.margins.left - doc.page.margins.right) / 2 - 6;
   const left = doc.page.margins.left;
   const right = left + colWidth + 12;
-  let y = startY;
 
   for (let i = 0; i < pairs.length; i += 2) {
     const a = pairs[i];
     const b = pairs[i + 1];
-    const lineY = y;
-    drawPair(doc, left, lineY, colWidth, a[0], safe(a[1]));
-    if (b) drawPair(doc, right, lineY, colWidth, b[0], safe(b[1]));
-    y += 32;
+
+    const rowStartY = doc.y;
+
+    // Draw left column
+    doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica')
+      .text(a[0].toUpperCase(), left, rowStartY, { width: colWidth });
+    doc.fillColor(COLORS.text).fontSize(11).font('Helvetica-Bold')
+      .text(safe(a[1]), left, rowStartY + 11, { width: colWidth });
+
+    const leftEndY = doc.y;
+
+    // Draw right column at the same starting Y
+    if (b) {
+      doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica')
+        .text(b[0].toUpperCase(), right, rowStartY, { width: colWidth });
+      doc.fillColor(COLORS.text).fontSize(11).font('Helvetica-Bold')
+        .text(safe(b[1]), right, rowStartY + 11, { width: colWidth });
+    }
+
+    const rightEndY = doc.y;
+
+    // Advance past the taller column + a small gap
+    doc.y = Math.max(leftEndY, rightEndY) + 6;
   }
-  doc.y = y;
   doc.moveDown(0.4);
 }
 
@@ -123,6 +139,9 @@ function renderContact(doc, preview) {
 
 function renderNok(doc, preview) {
   const n = preview.next_of_kin || {};
+  const hasData = [n.name, n.relationship, n.phone, n.email, n.address]
+    .some((v) => v !== null && v !== undefined && v !== '');
+  if (!hasData) return;
   renderTwoColumn(doc, 'Next of kin', [
     ['Name', safe(n.name)],
     ['Relationship', safe(n.relationship)],
@@ -180,9 +199,10 @@ function renderAcademic(doc, preview) {
 }
 
 function renderBiometricStatus(doc, preview) {
-  section(doc, 'Biometric capture');
   const status = preview.biometric_status || 'none';
   const types = (preview.biometrics || []).map((b) => b.capture_type);
+  doc.moveDown(0.3);
+  doc.fillColor(COLORS.accent).fontSize(11).font('Helvetica-Bold').text('BIOMETRIC CAPTURE', { continued: false });
   doc.fillColor(COLORS.text).fontSize(10).font('Helvetica')
     .text(`Status: ${status}`)
     .text(`Captured: ${types.length ? types.join(', ') : 'none'}`);
