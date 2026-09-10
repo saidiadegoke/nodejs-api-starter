@@ -12,8 +12,8 @@ describe('Mobile dashboard + attendance API', () => {
   let registrationMigrated = false;
 
   beforeAll(async () => {
-    process.env.ATTENDANCE_PROVIDER = 'mock';
-    process.env.CRMS_PROVIDER = 'mock';
+    process.env.ATTENDANCE_PROVIDER = 'http';
+    process.env.CRMS_PROVIDER = 'http';
     try {
       await pool.query('SELECT 1 FROM jupeb_registrations LIMIT 1');
       registrationMigrated = true;

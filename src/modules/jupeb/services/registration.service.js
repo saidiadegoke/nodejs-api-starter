@@ -27,6 +27,7 @@ const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
 const attendanceProviders = require('../../integrations/attendance');
+const crmsProviders = require('../../integrations/crms');
 
 function httpError(status, message, details = null) {
   const err = new Error(message);
@@ -1887,10 +1888,21 @@ class RegistrationService {
         const approvedIds = approvedIdsRes.rows.map(r => r.id);
         if (approvedIds.length > 0) {
           console.log(`[AttendanceSync] Found ${approvedIds.length} approved candidates to sync for session ${sessionId}`);
-          await this._syncStudentsToAttendance(approvedIds);
+          try {
+            await this._syncStudentsToAttendance(approvedIds);
+          } catch (attErr) {
+            console.error('[AttendanceSync] Background sync failed:', attErr);
+          }
+
+          console.log(`[CrmsSync] Found ${approvedIds.length} approved candidates to sync for session ${sessionId}`);
+          try {
+            await this._syncStudentsToCrms(approvedIds, session);
+          } catch (crmsErr) {
+            console.error('[CrmsSync] Background sync failed:', crmsErr);
+          }
         }
       } catch (err) {
-        console.error('[AttendanceSync] Background sync failed:', err);
+        console.error('[AttendanceSync/CrmsSync] Background query failed:', err);
       }
     });
 
@@ -2257,6 +2269,35 @@ class RegistrationService {
       }
     } catch (err) {
       console.error('[AttendanceSync] Failed to sync students:', err);
+    }
+  }
+
+  async _syncStudentsToCrms(registrationIds, session = null) {
+    if (!registrationIds || registrationIds.length === 0) return;
+    try {
+      const crmsProvider = crmsProviders.get();
+      if (!crmsProvider.syncCandidates) return;
+
+      const chunkSize = 100;
+      for (let i = 0; i < registrationIds.length; i += chunkSize) {
+        const chunk = registrationIds.slice(i, i + chunkSize);
+        const payloads = await registrationModel.getCrmsCandidateSyncPayloads(chunk, session);
+        if (payloads.length === 0) continue;
+
+        try {
+          const response = await crmsProvider.syncCandidates(payloads);
+          console.log(`[CrmsSync] Chunk synced successfully. Response:`, JSON.stringify(response, null, 2));
+        } catch (syncErr) {
+          console.error(`[CrmsSync] Error syncing chunk:`, syncErr.message || syncErr);
+          if (syncErr.details) {
+            console.error(`[CrmsSync] Provider response error details:`, JSON.stringify(syncErr.details, null, 2));
+          } else if (syncErr.response && syncErr.response.data) {
+            console.error(`[CrmsSync] Provider response error body:`, JSON.stringify(syncErr.response.data, null, 2));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[CrmsSync] Failed to sync candidates:', err);
     }
   }
 }

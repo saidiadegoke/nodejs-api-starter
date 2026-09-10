@@ -16,6 +16,14 @@ class CrmsService {
     const ctx = await resolveStudentContext(userId);
     return crmsProviders.get().getResults(ctx);
   }
+
+  static async syncCandidates(candidates) {
+    return crmsProviders.get().syncCandidates(candidates);
+  }
+
+  static async syncInstitutions(institutions) {
+    return crmsProviders.get().syncInstitutions(institutions);
+  }
 }
 
 module.exports = CrmsService;

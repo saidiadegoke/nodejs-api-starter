@@ -9,6 +9,31 @@ const subjectModel = require('../models/subject.model');
 const { validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
+const crmsProviders = require('../../integrations/crms');
+
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Abuja', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+  'Taraba', 'Yobe', 'Zamfara',
+];
+
+function extractState(body = {}, university = {}) {
+  if (body.state) return String(body.state).trim();
+  if (body.metadata && body.metadata.state) return String(body.metadata.state).trim();
+  if (university.metadata && university.metadata.state) return String(university.metadata.state).trim();
+  const addr = body.address || university.address;
+  if (addr && typeof addr === 'string') {
+    for (const st of NIGERIAN_STATES) {
+      const regex = new RegExp(`\\b${st}\\b`, 'i');
+      if (regex.test(addr)) {
+        return st === 'Abuja' ? 'FCT' : st;
+      }
+    }
+  }
+  return null;
+}
 
 function isUuid(value) {
   return (
@@ -143,6 +168,11 @@ class CatalogService {
         universityName: university.name,
         createdBy,
       });
+
+      setImmediate(() => {
+        this._syncInstitutionToCrms(university, body);
+      });
+
       return { ...university, institution_admin: admin.institution_admin };
     } catch (err) {
       await pool
@@ -514,7 +544,45 @@ class CatalogService {
       phone: row.phone || undefined,
       expected_candidate_count: row.expected_candidate_count || undefined,
       description: row.description || undefined,
+      state: row.state || undefined,
+      category: row.category || undefined,
     }));
+  }
+
+  async _syncInstitutionToCrms(university, body = {}) {
+    try {
+      const crmsProvider = crmsProviders.get();
+      if (!crmsProvider.syncInstitutions) return;
+
+      const code = university.jupeb_prefix || university.code || body.code;
+      const name = university.name || body.name;
+      const shortCode = university.short_name || body.short_name || body.shortCode || university.code;
+      const rawCategory = body.category || university.university_type;
+      const category = rawCategory
+        ? rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase()
+        : null;
+      const state = extractState(body, university);
+
+      const payload = [
+        {
+          code,
+          name,
+          shortCode,
+          category,
+          state,
+        },
+      ];
+
+      const response = await crmsProvider.syncInstitutions(payload);
+      console.log(`[CrmsSync] Institution ${code} synced successfully. Response:`, JSON.stringify(response, null, 2));
+    } catch (err) {
+      console.error(`[CrmsSync] Failed to sync institution ${university?.code || university?.id}:`, err.message || err);
+      if (err.details) {
+        console.error(`[CrmsSync] Provider response error details:`, JSON.stringify(err.details, null, 2));
+      } else if (err.response && err.response.data) {
+        console.error(`[CrmsSync] Provider response error body:`, JSON.stringify(err.response.data, null, 2));
+      }
+    }
   }
 
   async bulkCreateSubjects(csvText) {
