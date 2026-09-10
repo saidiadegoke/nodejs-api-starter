@@ -118,6 +118,14 @@ class AttendanceService {
     const ctx = await resolveAttendanceContext(userId);
     return attendanceProviders.get().checkOut(ctx, classId || payload.lecture_id, payload);
   }
+
+  static async syncStudents(payload) {
+    return attendanceProviders.get().syncStudents(payload);
+  }
+
+  static async syncInstitutions(payload) {
+    return attendanceProviders.get().syncInstitutions(payload);
+  }
 }
 
 module.exports = AttendanceService;

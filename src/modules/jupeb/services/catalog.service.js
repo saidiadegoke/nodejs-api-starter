@@ -10,6 +10,7 @@ const { validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-val
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
 const crmsProviders = require('../../integrations/crms');
+const attendanceProviders = require('../../integrations/attendance');
 
 const NIGERIAN_STATES = [
   'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
@@ -171,6 +172,7 @@ class CatalogService {
 
       setImmediate(() => {
         this._syncInstitutionToCrms(university, body);
+        this._syncInstitutionToAttendance(university, body);
       });
 
       return { ...university, institution_admin: admin.institution_admin };
@@ -581,6 +583,65 @@ class CatalogService {
         console.error(`[CrmsSync] Provider response error details:`, JSON.stringify(err.details, null, 2));
       } else if (err.response && err.response.data) {
         console.error(`[CrmsSync] Provider response error body:`, JSON.stringify(err.response.data, null, 2));
+      }
+    }
+  }
+
+  async _syncInstitutionToAttendance(university, body = {}) {
+    try {
+      const attendanceProvider = attendanceProviders.get();
+      if (!attendanceProvider.syncInstitutions) return;
+
+      const institutionCode = university.jupeb_prefix || university.code || body.jupeb_prefix || body.code;
+      const institutionName = university.name || body.name;
+      const address = (body.address || university.address || extractState(body, university) || 'Nigeria').trim();
+
+      const lat = Number(
+        body.coordinates?.latitude ??
+        body.latitude ??
+        university.metadata?.coordinates?.latitude ??
+        university.metadata?.latitude ??
+        6.4518847
+      );
+      const lng = Number(
+        body.coordinates?.longitude ??
+        body.longitude ??
+        university.metadata?.coordinates?.longitude ??
+        university.metadata?.longitude ??
+        3.33262
+      );
+      const coordinates = {
+        latitude: Number.isFinite(lat) ? lat : 6.4518847,
+        longitude: Number.isFinite(lng) ? lng : 3.33262,
+      };
+
+      const rawRadius =
+        body.lectureRadius ??
+        body.lecture_radius ??
+        university.metadata?.lectureRadius ??
+        university.metadata?.lecture_radius;
+      const lectureRadius = Number(rawRadius) > 0 ? Number(rawRadius) : 100;
+
+      const payload = {
+        institutions: [
+          {
+            institutionCode,
+            institutionName,
+            address,
+            coordinates,
+            lectureRadius,
+          },
+        ],
+      };
+
+      const response = await attendanceProvider.syncInstitutions(payload);
+      console.log(`[AttendanceSync] Institution ${institutionCode} synced successfully. Response:`, JSON.stringify(response, null, 2));
+    } catch (err) {
+      console.error(`[AttendanceSync] Failed to sync institution ${university?.code || university?.id}:`, err.message || err);
+      if (err.details) {
+        console.error(`[AttendanceSync] Provider response error details:`, JSON.stringify(err.details, null, 2));
+      } else if (err.response && err.response.data) {
+        console.error(`[AttendanceSync] Provider response error body:`, JSON.stringify(err.response.data, null, 2));
       }
     }
   }

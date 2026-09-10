@@ -18,9 +18,6 @@ const cleanupTestDatabase = async () => {
       'UNILAG', 'OAU', 'UI', 'FUTMINNA', 'FUTA', 'UNILORIN',
       'OOU', 'CU', 'FUNAAB', 'ABU', 'UNN', 'UNIZIK',
     ];
-    const SEEDED_COMBOS = [
-      'JUPEB SC-001', 'JUPEB SC-002', 'JUPEB SC-003', 'JUPEB SC-004',
-    ];
     const PROTECTED_ROLES = [
       'super_admin', 'admin', 'system_admin', 'institution_admin', 'registrar',
     ];
@@ -90,14 +87,17 @@ const cleanupTestDatabase = async () => {
       if (u.rowCount > 0) console.log(`✓ Soft-deleted ${u.rowCount} test universities`);
     }
 
-    // 4. Soft-delete test subject combinations
-    const c = await pool.query(
-      `UPDATE jupeb_subject_combinations
-          SET deleted_at = NOW()
-        WHERE deleted_at IS NULL AND code <> ALL($1::text[])`,
-      [SEEDED_COMBOS]
+    // 4. Delete test dummy subject combinations (those not matching the JUPEB SC-NNN pattern)
+    // Deleting combinations cascades to jupeb_subject_combination_items
+    const delCombos = await pool.query(
+      `DELETE FROM jupeb_subject_combinations
+        WHERE code !~ '^JUPEB[ -]SC-[0-9]+$'
+        RETURNING code`
     );
-    if (c.rowCount > 0) console.log(`✓ Soft-deleted ${c.rowCount} test subject combinations`);
+    if (delCombos.rowCount > 0) {
+      console.log(`✓ Deleted ${delCombos.rowCount} test subject combinations:`);
+      delCombos.rows.forEach((r) => console.log(`    - ${r.code}`));
+    }
 
     // 5. Identify test users to delete (strictly preserving admins and seeded accounts)
     const testUsersRes = await pool.query(
