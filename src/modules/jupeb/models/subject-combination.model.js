@@ -119,7 +119,7 @@ class SubjectCombinationModel {
          FROM jupeb_subject_combinations
          WHERE deleted_at IS NULL AND status = 'active'
            AND (is_global = true OR university_id = $1)
-         ORDER BY title ASC`,
+         ORDER BY code ASC, title ASC`,
         [universityId]
       );
       return result.rows;
@@ -128,7 +128,7 @@ class SubjectCombinationModel {
       `SELECT id, code, title, status, is_global, university_id, created_at, updated_at
        FROM jupeb_subject_combinations
        WHERE deleted_at IS NULL AND status = 'active' AND is_global = true
-       ORDER BY title ASC`
+       ORDER BY code ASC, title ASC`
     );
     return result.rows;
   }
@@ -157,11 +157,20 @@ class SubjectCombinationModel {
     return { whereSql: where.join(' AND '), values, nextIdx: idx };
   }
 
-  async findAllAdmin({ limit, offset, status, university_id, q }) {
+  async findAllAdmin({ limit, offset, status, university_id, q, sortBy = 'code', sortOrder = 'ASC' }) {
     const { whereSql, values, nextIdx } = this._whereAdmin({ status, university_id, q });
     values.push(limit, offset);
+    const orderDir = String(sortOrder).toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+    let orderBySql = 'code ASC, title ASC';
+    if (sortBy === 'title') {
+      orderBySql = `title ${orderDir}, code ASC`;
+    } else if (sortBy === 'created_at') {
+      orderBySql = `created_at ${orderDir}`;
+    } else {
+      orderBySql = `code ${orderDir}, title ASC`;
+    }
     const sql = `SELECT * FROM jupeb_subject_combinations WHERE ${whereSql}
-                 ORDER BY title ASC LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
+                 ORDER BY ${orderBySql} LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`;
     const result = await pool.query(sql, values);
     return result.rows;
   }

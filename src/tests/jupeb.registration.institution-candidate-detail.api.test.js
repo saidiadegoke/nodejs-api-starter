@@ -219,4 +219,79 @@ describe('GET /registration/institution/registrations/:id — documents & result
       expect(d.biometrics[0]).toHaveProperty('preview_url');
     }
   });
+
+  it('candidate profile_photo_url uses candidate uploaded face image over NIN photo', async () => {
+    if (!registrationMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    // Create a university, session, registration
+    const sessRow = await pool.query('SELECT id FROM jupeb_registration_sessions LIMIT 1');
+    const uniRow = await pool.query('SELECT id FROM jupeb_universities LIMIT 1');
+    if (!sessRow.rows[0] || !uniRow.rows[0]) return;
+
+    // Create a test user with a NIN photo in profile
+    const rand = Math.floor(Math.random() * 100000);
+    const userRes = await pool.query(
+      `INSERT INTO users (email, password_hash, first_name, last_name)
+       VALUES ($1, 'hash', 'Test', 'User') RETURNING id`,
+      [`nin-photo-test-${rand}@example.com`]
+    );
+    const userId = userRes.rows[0].id;
+
+    const ninPhotoUrl = 'https://nin.example.gov.ng/expiring-nin-photo.jpg';
+    await pool.query(
+      `INSERT INTO profiles (user_id, first_name, last_name, profile_photo_url)
+       VALUES ($1, 'Test', 'User', $2)
+       ON CONFLICT (user_id) DO UPDATE SET profile_photo_url = EXCLUDED.profile_photo_url`,
+      [userId, ninPhotoUrl]
+    );
+
+    // Create a registration claimed by this user
+    const regRes = await pool.query(
+      `INSERT INTO jupeb_registrations (session_id, university_id, user_id, status, created_by, provisional_serial)
+       VALUES ($1, $2, $3, 'claimed', $3, 1) RETURNING id`,
+      [sessRow.rows[0].id, uniRow.rows[0].id, userId]
+    );
+    const regId = regRes.rows[0].id;
+
+    // Create uploaded file for candidate face photo
+    const uploadedFaceUrl = 'http://example.com/candidate-uploaded-face.jpg';
+    const fileRes = await pool.query(
+      `INSERT INTO files (file_url, file_type, file_size, uploaded_by, context, is_public)
+       VALUES ($1, 'image/jpeg', 54321, $2, 'jupeb_biometric', true) RETURNING id`,
+      [uploadedFaceUrl, userId]
+    );
+    const fileId = fileRes.rows[0].id;
+
+    // Insert biometric capture for face
+    await pool.query(
+      `INSERT INTO jupeb_biometric_captures (registration_id, capture_type, file_id, captured_at)
+       VALUES ($1, 'face', $2, NOW())`,
+      [regId, fileId]
+    );
+
+    // Call GET /registration/institution/registrations/:id
+    const res = await request(app)
+      .get(`/registration/institution/registrations/${regId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    const cand = res.body.data.candidate;
+    expect(cand).toBeDefined();
+    expect(cand.profile_photo_url).toBe(uploadedFaceUrl);
+    expect(cand.profile_photo_url).not.toBe(ninPhotoUrl);
+
+    // Verify DB profile was also updated to the durable uploaded photo
+    const profCheck = await pool.query(`SELECT profile_photo_url FROM profiles WHERE user_id = $1`, [userId]);
+    expect(profCheck.rows[0].profile_photo_url).toBe(uploadedFaceUrl);
+
+    // Cleanup
+    await pool.query(`DELETE FROM jupeb_biometric_captures WHERE registration_id = $1`, [regId]);
+    await pool.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [regId]);
+    await pool.query(`DELETE FROM profiles WHERE user_id = $1`, [userId]);
+    await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
+    await pool.query(`DELETE FROM files WHERE id = $1`, [fileId]);
+  });
 });
+

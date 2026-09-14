@@ -21,25 +21,32 @@ function client() {
     timeout: timeoutMs,
     headers: {
       Authorization: `Bearer ${apiKey}`,
+      'x-api-key': apiKey,
       Accept: 'application/json',
       'Content-Type': 'application/json',
     },
   });
 }
 
-async function request(method, path, { params, studentContext } = {}) {
+async function request(method, path, { params, data, studentContext } = {}) {
   try {
     const http = client();
-    const res = await http.request({
+    const config = {
       method,
       url: path,
-      params: {
+      data,
+    };
+    if (studentContext) {
+      config.params = {
         ...params,
         student_id: studentContext.user_id,
         registration_id: studentContext.registration_id,
         candidate_code: studentContext.candidate_code,
-      },
-    });
+      };
+    } else if (params) {
+      config.params = params;
+    }
+    const res = await http.request(config);
     return res.data?.data !== undefined ? res.data.data : res.data;
   } catch (err) {
     if (err.details?.error_code === 'provider_not_configured') throw err;
@@ -59,9 +66,19 @@ async function getHomeSummary(studentContext) {
   return request('GET', '/v1/students/me/home-summary', { studentContext });
 }
 
+async function syncCandidates(payload) {
+  return request('POST', '/api/candidates/sync', { data: payload });
+}
+
+async function syncInstitutions(payload) {
+  return request('POST', '/api/institutions/sync', { data: payload });
+}
+
 module.exports = {
   name,
   getCourses,
   getResults,
   getHomeSummary,
+  syncCandidates,
+  syncInstitutions,
 };

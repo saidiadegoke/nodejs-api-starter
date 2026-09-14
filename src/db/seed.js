@@ -46,7 +46,7 @@ async function runSeeds() {
  */
 async function main() {
   try {
-    // await runSeeds();
+    await runSeeds();
     console.log('✅ Seeding complete');
     process.exit(0);
   } catch (error) {

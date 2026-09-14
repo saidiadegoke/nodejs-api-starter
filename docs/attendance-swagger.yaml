@@ -1,0 +1,161 @@
+openapi: '3.0.0'
+info:
+  title: Attendance API
+  version: '1.0.0'
+  description: Candidate mobile attendance tracking, class timetable, and session check-in/check-out.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+tags:
+  - name: Attendance
+    description: Student biometric & QR attendance endpoints
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+paths:
+  /attendance/home:
+    get:
+      summary: Student attendance home dashboard
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Attendance dashboard summary and today's schedule
+
+  /attendance/summary:
+    get:
+      summary: Overall attendance summary metrics
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Attendance summary percentages
+
+  /attendance/classes:
+    get:
+      summary: List candidate's enrolled classes
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of classes
+
+  /attendance/history:
+    get:
+      summary: Get attendance history log
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Log of past attendance events
+
+  /attendance/classes/{courseCode}/sessions:
+    get:
+      summary: Get session history for a course
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: courseCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Course sessions
+
+  /attendance/timetable:
+    get:
+      summary: Candidate weekly timetable
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Weekly timetable
+
+  /attendance/check-in:
+    post:
+      summary: Check in to a class session
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                class_id:
+                  type: string
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+      responses:
+        '200':
+          description: Checked in successfully
+
+  /attendance/classes/{classId}/check-in:
+    post:
+      summary: Check in to a specific class ID
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: classId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Checked in successfully
+
+  /attendance/check-out:
+    post:
+      summary: Check out of a class session
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                class_id:
+                  type: string
+      responses:
+        '200':
+          description: Checked out successfully
+
+  /attendance/classes/{classId}/check-out:
+    post:
+      summary: Check out of a specific class ID
+      tags: [Attendance]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: classId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Checked out successfully

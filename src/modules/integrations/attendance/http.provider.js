@@ -277,6 +277,20 @@ async function syncStudents(payload) {
   }
 }
 
+async function syncInstitutions(payload) {
+  try {
+    const data = Array.isArray(payload) ? { institutions: payload } : payload;
+    console.info('[AttendanceSync] syncInstitutions payload', data);
+    return request('POST', '/api/auth/sync-institutions', { data });
+  } catch (error) {
+    console.error('[AttendanceSync] Error syncing institutions:', error.message || error);
+    if (error.response && error.response.data) {
+      console.error('[AttendanceSync] Provider response error body:', error.response.data);
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   name,
   getHomeSummary,
@@ -289,8 +303,10 @@ module.exports = {
   checkIn,
   checkOut,
   syncStudents,
+  syncInstitutions,
   // Test helpers
   _clearTokenCache: clearTokenCache,
   _getTokenCache: () => tokenCache,
   _buildUpstreamIdentity: buildUpstreamIdentity,
 };
+
