@@ -21,6 +21,7 @@ const jupebRoutes = require('../modules/jupeb/routes');
 const ocrRoutes = require('../modules/ocr/routes');
 const attendanceRoutes = require('../modules/attendance/routes');
 const crmsRoutes = require('../modules/crms/routes');
+const supportRoutes = require('../modules/support/routes/support.routes');
 const ssoRoutes = require('../modules/auth/routes/sso.routes');
 const wellKnownRoutes = require('../modules/auth/routes/well-known.routes');
 const testRoutes = require('./test-routes');
@@ -96,6 +97,7 @@ router.get('/', (req, res) => {
       academic: '/academic',
       dashboard: '/dashboard',
       attendance: '/attendance',
+      support: '/support',
       sso: '/sso',
       jwks: '/.well-known/jwks.json',
       health: '/health'
@@ -135,6 +137,7 @@ router.use('/webhooks', webhooksRoutes);
 router.use('/payments', paymentsRoutes);
 router.use('/posts', postsRoutes);
 router.use('/ocr', ocrRoutes);
+router.use('/support', supportRoutes);
 
 /**
  * Swagger API Documentation
@@ -183,8 +186,13 @@ const swaggerDocs = {
   'jupeb-009-institution-scope': YAML.load(
     fs.readFileSync(path.join(docsDir, 'jupeb-009-institution-scope-swagger.yaml'), 'utf8')
   ),
+  ocr: YAML.load(fs.readFileSync(path.join(docsDir, 'ocr-swagger.yaml'), 'utf8')),
+  support: YAML.load(fs.readFileSync(path.join(docsDir, 'support-swagger.yaml'), 'utf8')),
+  attendance: YAML.load(fs.readFileSync(path.join(docsDir, 'attendance-swagger.yaml'), 'utf8')),
+  crms: YAML.load(fs.readFileSync(path.join(docsDir, 'crms-swagger.yaml'), 'utf8')),
 };
 
+// Mount each modular swagger spec
 Object.keys(swaggerDocs).forEach((key) => {
   router.use(
     `/docs/${key}`,
@@ -195,6 +203,36 @@ Object.keys(swaggerDocs).forEach((key) => {
     })
   );
   router.get(`/docs/${key}.json`, (req, res) => res.json(swaggerDocs[key]));
+});
+
+// Unified OpenAPI endpoints for Postman and Swagger
+const unifiedJsonPath = path.join(docsDir, 'openapi.json');
+const unifiedYamlPath = path.join(docsDir, 'openapi.yaml');
+
+if (fs.existsSync(unifiedJsonPath)) {
+  const unifiedSpec = JSON.parse(fs.readFileSync(unifiedJsonPath, 'utf8'));
+  router.use(
+    '/docs/all',
+    swaggerUi.serveFiles(unifiedSpec, {}),
+    swaggerUi.setup(unifiedSpec, {
+      customSiteTitle: 'API — Complete Unified Specification (Postman Ready)',
+      customCss: '.swagger-ui .topbar { display: none }'
+    })
+  );
+}
+
+router.get('/docs/openapi.json', (req, res) => {
+  if (fs.existsSync(unifiedJsonPath)) {
+    return res.sendFile(unifiedJsonPath);
+  }
+  return res.status(404).json({ error: 'Unified OpenAPI specification not yet generated' });
+});
+
+router.get('/docs/openapi.yaml', (req, res) => {
+  if (fs.existsSync(unifiedYamlPath)) {
+    return res.sendFile(unifiedYamlPath);
+  }
+  return res.status(404).send('Unified OpenAPI specification not yet generated');
 });
 
 router.get('/docs', (req, res) => {
@@ -212,25 +250,48 @@ router.get('/docs', (req, res) => {
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background: #f0f2f5; }
-    .container { max-width: 860px; margin: 0 auto; padding: 48px 24px; }
+    .container { max-width: 900px; margin: 0 auto; padding: 48px 24px; }
     h1 { color: #1a1a2e; margin-bottom: 4px; }
-    .subtitle { color: #666; margin-bottom: 36px; font-size: 15px; }
+    .subtitle { color: #666; margin-bottom: 30px; font-size: 15px; }
+    .hero-card { background: linear-gradient(135deg, #1e293b, #0f172a); border-radius: 12px; padding: 28px; margin-bottom: 28px; color: white; box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+    .hero-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .hero-desc { color: #cbd5e1; font-size: 14px; line-height: 1.6; margin-bottom: 20px; }
     .api-card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 24px; margin-bottom: 16px; transition: box-shadow 0.15s; }
     .api-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
     .api-title { font-size: 17px; font-weight: 600; color: #1a1a2e; margin-bottom: 6px; }
     .api-desc { color: #555; font-size: 14px; line-height: 1.6; margin-bottom: 16px; white-space: pre-line; }
-    .api-links { display: flex; gap: 10px; }
-    .btn { padding: 8px 18px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 500; transition: opacity 0.15s; }
+    .api-links { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { padding: 8px 18px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 500; transition: opacity 0.15s; display: inline-flex; align-items: center; }
     .btn:hover { opacity: 0.85; }
     .btn-primary { background: #2563eb; color: white; }
     .btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+    .btn-hero { background: #3b82f6; color: white; font-weight: 600; }
+    .btn-hero-alt { background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.25); }
     .footer { margin-top: 40px; text-align: center; color: #94a3b8; font-size: 13px; }
+    .badge { background: #10b981; color: white; font-size: 11px; padding: 2px 8px; border-radius: 9999px; text-transform: uppercase; font-weight: 700; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>API Documentation</h1>
-    <p class="subtitle">Select a module to explore its endpoints and schemas.</p>
+    <p class="subtitle">Complete technical reference for the JUPEB Registration & Administration Portal.</p>
+
+    <div class="hero-card">
+      <div class="hero-title">
+        <span>Unified OpenAPI 3.0 Specification</span>
+        <span class="badge">Postman Ready</span>
+      </div>
+      <div class="hero-desc">
+        Import the complete API catalog directly into Postman or Insomnia. Contains all 255+ endpoints across 49 categories with authentication, schemas, parameters, and examples.
+      </div>
+      <div class="api-links">
+        <a href="/docs/all" class="btn btn-hero">Explore All Endpoints</a>
+        <a href="/docs/openapi.json" download="openapi.json" class="btn btn-hero-alt">Download openapi.json (Postman)</a>
+        <a href="/docs/openapi.yaml" download="openapi.yaml" class="btn btn-hero-alt">Download openapi.yaml</a>
+      </div>
+    </div>
+
+    <h2 style="font-size: 18px; color: #334155; margin-bottom: 16px;">Individual Modules</h2>
     ${apiList
       .map(
         (api) => `
@@ -244,7 +305,7 @@ router.get('/docs', (req, res) => {
     </div>`
       )
       .join('')}
-    <div class="footer">API v1.0.0 &nbsp;|&nbsp; Swagger UI</div>
+    <div class="footer">JUPEB Portal API v1.0.0 &nbsp;|&nbsp; OpenAPI 3.0 &nbsp;|&nbsp; Swagger UI</div>
   </div>
 </body>
 </html>`);

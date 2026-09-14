@@ -1,0 +1,779 @@
+openapi: '3.0.0'
+info:
+  title: Support Tickets API
+  version: '1.0.0'
+  description: |
+    Comprehensive Support Ticket system for students, institution staff, and administrators.
+    Allows candidates to report issues, tracks conversation threads, enables institution staff
+    to resolve tickets within their institution, and provides central oversight for administrators.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+tags:
+  - name: Support - Public
+    description: Public support endpoints (dropdown options)
+  - name: Support - Student
+    description: Student-facing support ticket submissions and conversation threads
+  - name: Support - Institution
+    description: Institution staff ticket management scoped to their university
+  - name: Support - Admin
+    description: Central administrative support management across all institutions
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SupportCategory:
+      type: string
+      enum:
+        - Registration
+        - Account & Profile
+        - Email Address
+        - Subject combinations
+        - Result issue
+        - Attendance issue
+        - Something else
+      example: Subject combinations
+
+    SupportStatus:
+      type: string
+      enum: [open, in_progress, resolved, closed]
+      example: open
+
+    SupportPriority:
+      type: string
+      enum: [low, normal, high, urgent]
+      example: normal
+
+    SupportSenderRole:
+      type: string
+      enum: [student, institution, admin]
+      example: student
+
+    SupportMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticket_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+          format: uuid
+        sender_role:
+          $ref: '#/components/schemas/SupportSenderRole'
+        sender_name:
+          type: string
+          example: John Doe
+        sender_email:
+          type: string
+          format: email
+          example: student@example.com
+        message:
+          type: string
+          example: I need assistance updating my combination.
+        attachments:
+          type: array
+          items:
+            type: object
+        created_at:
+          type: string
+          format: date-time
+
+    SupportTicket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticket_number:
+          type: string
+          example: TKT-202609-A1B2C3
+        user_id:
+          type: string
+          format: uuid
+        university_id:
+          type: string
+          format: uuid
+          nullable: true
+        university_name:
+          type: string
+          nullable: true
+        registration_id:
+          type: string
+          format: uuid
+          nullable: true
+        category:
+          $ref: '#/components/schemas/SupportCategory'
+        subject:
+          type: string
+          example: Issue changing chemistry to biology
+        message:
+          type: string
+          example: Initial message content describing the issue
+        status:
+          $ref: '#/components/schemas/SupportStatus'
+        priority:
+          $ref: '#/components/schemas/SupportPriority'
+        assigned_to:
+          type: string
+          format: uuid
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          type: string
+          format: uuid
+          nullable: true
+        resolution_notes:
+          type: string
+          nullable: true
+        user_first_name:
+          type: string
+        user_last_name:
+          type: string
+        user_email:
+          type: string
+          format: email
+        user_phone:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SupportTicketDetail:
+      allOf:
+        - $ref: '#/components/schemas/SupportTicket'
+        - type: object
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupportMessage'
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 45
+        totalPages:
+          type: integer
+          example: 3
+
+paths:
+  /support/categories:
+    get:
+      summary: Get allowed support categories
+      description: Returns dropdown options for support categories matching the Figma UI spec.
+      tags: [Support - Public]
+      responses:
+        '200':
+          description: List of support categories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupportCategory'
+
+  /support/tickets:
+    post:
+      summary: Submit a support ticket (Student)
+      description: Student creates a new support ticket. Automatically attaches candidate's registered university and registration ID if available.
+      tags: [Support - Student]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, subject, message]
+              properties:
+                category:
+                  $ref: '#/components/schemas/SupportCategory'
+                subject:
+                  type: string
+                  example: Error during subject selection
+                message:
+                  type: string
+                  example: I cannot submit my subjects for the current session.
+                attachments:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '201':
+          description: Ticket created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Support ticket submitted successfully
+                  data:
+                    $ref: '#/components/schemas/SupportTicket'
+        '401':
+          description: Unauthorized
+        '422':
+          description: Validation error
+
+  /support/my-tickets:
+    get:
+      summary: List student's own tickets
+      description: Retrieves paginated support tickets submitted by the authenticated student.
+      tags: [Support - Student]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportStatus'
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportCategory'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of tickets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupportTicket'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+  /support/tickets/{ticketId}:
+    get:
+      summary: Get student ticket detail and conversation thread
+      description: Returns full ticket information and all messages. Strictly restricted to the ticket owner.
+      tags: [Support - Student]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Ticket details with message thread
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportTicketDetail'
+        '404':
+          description: Ticket not found
+
+  /support/tickets/{ticketId}/messages:
+    post:
+      summary: Add student reply to ticket thread
+      description: Student adds a follow-up reply to their existing support ticket.
+      tags: [Support - Student]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  example: Following up on this issue.
+                attachments:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '201':
+          description: Reply posted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/SupportMessage'
+
+  /support/institution/tickets:
+    get:
+      summary: List institution support tickets
+      description: Lists tickets submitted by students enrolled in the institution staff's university.
+      tags: [Support - Institution]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportStatus'
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportCategory'
+        - name: search
+          in: query
+          description: Search term matching ticket number, candidate name, or subject
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated institution tickets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupportTicket'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+  /support/institution/stats:
+    get:
+      summary: Get institution support stats
+      description: Returns overview metrics of open, in_progress, and resolved tickets for the university.
+      tags: [Support - Institution]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Institution ticket statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      open:
+                        type: integer
+                      in_progress:
+                        type: integer
+                      resolved:
+                        type: integer
+                      closed:
+                        type: integer
+                      by_category:
+                        type: array
+                        items:
+                          type: object
+
+  /support/institution/tickets/{ticketId}:
+    get:
+      summary: Get ticket detail for institution staff
+      description: Returns ticket information, candidate profile details, and conversation thread. Must belong to the staff's university.
+      tags: [Support - Institution]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Ticket detail with conversation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportTicketDetail'
+        '403':
+          description: Forbidden - ticket belongs to another university
+        '404':
+          description: Ticket not found
+
+  /support/institution/tickets/{ticketId}/reply:
+    post:
+      summary: Reply to ticket as institution staff
+      description: Staff posts a response into the conversation thread. Sends email notification to the candidate and transitions open tickets to in_progress.
+      tags: [Support - Institution]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  example: We have updated your records.
+                attachments:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '201':
+          description: Reply posted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportMessage'
+
+  /support/institution/tickets/{ticketId}/status:
+    patch:
+      summary: Update ticket status as institution staff
+      description: Staff updates ticket status (in_progress, resolved, closed) and supplies resolution notes.
+      tags: [Support - Institution]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [in_progress, resolved, closed]
+                resolution_notes:
+                  type: string
+                  example: Combination rectified in database.
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportTicket'
+
+  /support/admin/tickets:
+    get:
+      summary: Global tickets list (Admin)
+      description: Lists support tickets across all universities with filtering by university, category, and status.
+      tags: [Support - Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: university_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportStatus'
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportCategory'
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated tickets list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupportTicket'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+  /support/admin/stats:
+    get:
+      summary: Global support statistics (Admin)
+      description: High-level support metrics broken down by status, university, and category.
+      tags: [Support - Admin]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Global metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      open:
+                        type: integer
+                      in_progress:
+                        type: integer
+                      resolved:
+                        type: integer
+                      closed:
+                        type: integer
+                      by_university:
+                        type: array
+                        items:
+                          type: object
+                      by_category:
+                        type: array
+                        items:
+                          type: object
+
+  /support/admin/tickets/{ticketId}:
+    get:
+      summary: Get any ticket detail (Admin)
+      description: Retrieve complete ticket detail and message thread across any university.
+      tags: [Support - Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportTicketDetail'
+    patch:
+      summary: Update ticket priority and status (Admin)
+      description: Central admin updates status, priority, resolution notes, or assigns ticket to a user.
+      tags: [Support - Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  $ref: '#/components/schemas/SupportStatus'
+                priority:
+                  $ref: '#/components/schemas/SupportPriority'
+                assigned_to:
+                  type: string
+                  format: uuid
+                  nullable: true
+                resolution_notes:
+                  type: string
+      responses:
+        '200':
+          description: Ticket updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportTicket'
+
+  /support/admin/tickets/{ticketId}/reply:
+    post:
+      summary: Reply to ticket as Admin
+      description: Administrator posts an authoritative response to a support ticket and notifies candidate.
+      tags: [Support - Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  example: National secretariat has reviewed this case.
+                attachments:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '201':
+          description: Admin message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SupportMessage'

@@ -449,6 +449,55 @@ class RegistrationModel {
     return result.rows;
   }
 
+  async getCrmsCandidateSyncPayloads(registrationIds, session = null) {
+    if (!registrationIds || !registrationIds.length) return [];
+    const query = `
+      SELECT
+        r.id AS "registration_id",
+        r.jupeb_candidate_number AS "candidateNumber",
+        p.first_name AS "firstName",
+        p.last_name AS "lastName",
+        uni.jupeb_prefix AS "institutionCode",
+        s.academic_year AS "sessionAcademicYear",
+        s.year_short AS "sessionYearShort",
+        (
+          SELECT array_agg(si.code ORDER BY sci.position ASC)
+          FROM jupeb_subject_combination_items sci
+          JOIN jupeb_subjects si ON si.id = sci.subject_id
+          WHERE sci.combination_id = r.subject_combination_id
+        ) AS "subjects"
+      FROM jupeb_registrations r
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN profiles p ON p.user_id = u.id
+      JOIN jupeb_universities uni ON uni.id = r.university_id
+      LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
+      WHERE r.id = ANY($1::uuid[])
+        AND r.jupeb_candidate_number IS NOT NULL
+    `;
+    const result = await pool.query(query, [registrationIds]);
+
+    return result.rows.map((row) => {
+      let academicYear = '';
+      const rawYear = row.sessionAcademicYear || session?.academic_year;
+      if (rawYear) {
+        academicYear = String(rawYear).split('/')[0].trim();
+      } else if (row.sessionYearShort || session?.year_short) {
+        academicYear = `20${row.sessionYearShort || session.year_short}`;
+      } else if (row.candidateNumber && /^\d{2}/.test(row.candidateNumber)) {
+        academicYear = `20${row.candidateNumber.slice(0, 2)}`;
+      }
+
+      return {
+        candidateNumber: row.candidateNumber,
+        firstName: row.firstName || '',
+        lastName: row.lastName || '',
+        institutionCode: row.institutionCode || '',
+        academicYear,
+        subjects: Array.isArray(row.subjects) ? row.subjects : [],
+      };
+    });
+  }
+
   async updateAttendanceSync(registrationId, { registrationCode, studentId }) {
     const result = await pool.query(
       `UPDATE jupeb_registrations

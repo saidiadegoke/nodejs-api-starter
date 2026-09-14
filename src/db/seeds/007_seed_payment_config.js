@@ -26,49 +26,49 @@ const GATEWAYS = [
 
 async function run(pool) {
   // Gateways — activate from env credentials when present.
-  for (const g of GATEWAYS) {
-    const publicKey = (process.env[g.publicEnv] || '').trim();
-    const secretKey = (process.env[g.secretEnv] || '').trim();
-    if (!publicKey || !secretKey) {
-      console.log(`[seed:payment] ${g.code} — no credentials in .env, left untouched`);
-      continue;
-    }
-    const baseUrl = g.baseUrlEnv ? (process.env[g.baseUrlEnv] || '').trim() || null : null;
-    // eslint-disable-next-line no-await-in-loop
-    await pool.query(
-      `UPDATE payment_methods
-          SET api_public_key = $1,
-              api_secret_key = $2,
-              base_url = COALESCE($3, base_url),
-              is_active = true,
-              updated_at = NOW()
-        WHERE code = $4`,
-      [publicKey, secretKey, baseUrl, g.code]
-    );
-    console.log(`[seed:payment] ${g.code} — activated from .env`);
-  }
+  // for (const g of GATEWAYS) {
+  //   const publicKey = (process.env[g.publicEnv] || '').trim();
+  //   const secretKey = (process.env[g.secretEnv] || '').trim();
+  //   if (!publicKey || !secretKey) {
+  //     console.log(`[seed:payment] ${g.code} — no credentials in .env, left untouched`);
+  //     continue;
+  //   }
+  //   const baseUrl = g.baseUrlEnv ? (process.env[g.baseUrlEnv] || '').trim() || null : null;
+  //   // eslint-disable-next-line no-await-in-loop
+  //   await pool.query(
+  //     `UPDATE payment_methods
+  //         SET api_public_key = $1,
+  //             api_secret_key = $2,
+  //             base_url = COALESCE($3, base_url),
+  //             is_active = true,
+  //             updated_at = NOW()
+  //       WHERE code = $4`,
+  //     [publicKey, secretKey, baseUrl, g.code]
+  //   );
+  //   console.log(`[seed:payment] ${g.code} — activated from .env`);
+  // }
 
-  // Direct transfer — keyless manual method; always available.
-  await pool.query(
-    `UPDATE payment_methods SET is_active = true, updated_at = NOW()
-      WHERE code = 'direct_transfer'`
-  );
-  await pool.query(
-    `INSERT INTO bank_accounts (bank_name, account_number, account_name, is_active)
-     VALUES ('Demo Bank', '0123456789', 'JUPEB Foundation (Demo)', true)
-     ON CONFLICT (account_number) DO NOTHING`
-  );
+  // // Direct transfer — keyless manual method; always available.
+  // await pool.query(
+  //   `UPDATE payment_methods SET is_active = true, updated_at = NOW()
+  //     WHERE code = 'direct_transfer'`
+  // );
+  // await pool.query(
+  //   `INSERT INTO bank_accounts (bank_name, account_number, account_name, is_active)
+  //    VALUES ('Demo Bank', '0123456789', 'JUPEB Foundation (Demo)', true)
+  //    ON CONFLICT (account_number) DO NOTHING`
+  // );
 
-  // Payment catalog — re-assert the known items / structures are active
-  // (the rows themselves are seeded by migration 017).
-  await pool.query(
-    `UPDATE payment_items SET is_active = true, updated_at = NOW()
-      WHERE code IN ('affiliation_fee', 'examination_fee')`
-  );
-  await pool.query(
-    `UPDATE payment_structures SET is_active = true, updated_at = NOW()
-      WHERE code IN ('full', 'partial')`
-  );
+  // // Payment catalog — re-assert the known items / structures are active
+  // // (the rows themselves are seeded by migration 017).
+  // await pool.query(
+  //   `UPDATE payment_items SET is_active = true, updated_at = NOW()
+  //     WHERE code IN ('affiliation_fee', 'examination_fee')`
+  // );
+  // await pool.query(
+  //   `UPDATE payment_structures SET is_active = true, updated_at = NOW()
+  //     WHERE code IN ('full', 'partial')`
+  // );
 }
 
 module.exports = { run };

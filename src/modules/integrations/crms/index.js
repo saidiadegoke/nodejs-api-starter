@@ -1,15 +1,13 @@
 // CRMS provider registry.
-// Set CRMS_PROVIDER=mock|http (default: mock).
+// Set CRMS_PROVIDER=http (default: http).
 
-const mock = require('./mock.provider');
 const http = require('./http.provider');
 
 const PROVIDERS = {
-  [mock.name]: mock,
   [http.name]: http,
 };
 
-const DEFAULT_PROVIDER = 'mock';
+const DEFAULT_PROVIDER = 'http';
 
 function list() {
   return Object.keys(PROVIDERS);

@@ -9,6 +9,7 @@ const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationDocumentModel = require('../models/registration-document.model');
 const resultEntriesModel = require('../models/result-entries.model');
 const FileService = require('../../files/services/file.service');
+const FileModel = require('../../files/models/file.model');
 const { canTransition } = require('./registration-state.service');
 const { resolveCandidateDisplayName } = require('../utils/candidate-name');
 const {
@@ -27,6 +28,7 @@ const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
 const attendanceProviders = require('../../integrations/attendance');
+const crmsProviders = require('../../integrations/crms');
 
 function httpError(status, message, details = null) {
   const err = new Error(message);
@@ -381,7 +383,7 @@ async function loadNinVerificationForInstitutionDetail(reg) {
  * Same field precedence as `getMeProfile` so institution GET matches
  * `GET /registration/me/submission-preview` for NIN-backed demographics.
  */
-function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninStatus = null) {
+function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninStatus = null, facePhotoUrl = null) {
   if (!candidateRow) return null;
   const u = candidateRow;
   const n = ninPayload || {};
@@ -398,6 +400,8 @@ function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninS
     profile: u,
     ninStatus,
   });
+  // Prefer candidate-uploaded face selfie (facePhotoUrl) over expiring NIN photo_url or stale profile_photo_url.
+  const resolvedPhoto = facePhotoUrl || u.profile_photo_url || n.photo_url || null;
   return {
     id: u.id,
     email: u.email || i.email || null,
@@ -410,8 +414,10 @@ function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninS
     display_name,
     date_of_birth: n.date_of_birth || u.date_of_birth || null,
     gender: n.gender || u.gender || null,
-    // Prefer durable selfie (profiles.profile_photo_url) over expiring NIN photo_url.
-    profile_photo_url: u.profile_photo_url || n.photo_url || null,
+    profile_photo_url: resolvedPhoto,
+    photo_url: resolvedPhoto,
+    face_photo_url: facePhotoUrl || null,
+    nin_photo_url: n.photo_url || null,
     residential_address: u.residential_address || n.address || null,
     state_of_origin: u.state_of_origin || n.state_of_origin || null,
     lga: u.lga || n.lga || null,
@@ -836,13 +842,23 @@ class RegistrationService {
     const biometricsOut = await Promise.all(
       (biometrics || []).map(async (b) => {
         let preview_url = null;
-        if (b.file_id && fileOwnerId) {
+        if (b.file_id) {
           try {
-            const file = await FileService.getFile(b.file_id, fileOwnerId);
+            const file = fileOwnerId
+              ? await FileService.getFile(b.file_id, fileOwnerId)
+              : await FileModel.findById(b.file_id);
             preview_url = file ? file.file_url : null;
           } catch {
-            preview_url = null;
+            try {
+              const file = await FileModel.findById(b.file_id);
+              preview_url = file ? file.file_url : null;
+            } catch {
+              preview_url = null;
+            }
           }
+        }
+        if (!preview_url && b.external_reference && (b.external_reference.startsWith('http://') || b.external_reference.startsWith('https://'))) {
+          preview_url = b.external_reference;
         }
         return {
           id: b.id,
@@ -856,12 +872,35 @@ class RegistrationService {
       })
     );
 
+    // Resolve uploaded face photo url (from biometric capture)
+    const faceBio = [...(biometricsOut || [])].reverse().find(
+      (b) => b.capture_type === 'face'
+    );
+    let facePhotoUrl = (faceBio && faceBio.preview_url) || null;
+    if (!facePhotoUrl && faceBio && faceBio.file_id) {
+      try {
+        const fileRow = await pool.query(`SELECT file_url FROM files WHERE id = $1 LIMIT 1`, [faceBio.file_id]);
+        if (fileRow.rows[0] && fileRow.rows[0].file_url) {
+          facePhotoUrl = fileRow.rows[0].file_url;
+        }
+      } catch (_) {}
+    }
+
+    // Keep profiles.profile_photo_url in sync with the candidate-uploaded face image
+    if (facePhotoUrl && reg.user_id) {
+      pool.query(
+        `UPDATE profiles SET profile_photo_url = $2, updated_at = NOW() WHERE user_id = $1 AND (profile_photo_url IS NULL OR profile_photo_url != $2)`,
+        [reg.user_id, facePhotoUrl]
+      ).catch(() => {});
+    }
+
     const { nin_verification, ninPayload, intake } = ninBundle;
     const mergedCandidate = mergeInstitutionCandidateFromNin(
       candidate,
       ninPayload,
       intake,
-      nin_verification && nin_verification.status
+      nin_verification && nin_verification.status,
+      facePhotoUrl
     );
     let next_of_kin_response = null;
     if (next_of_kin) {
@@ -1482,6 +1521,34 @@ class RegistrationService {
          VALUES ($1, $2, $3, $4, $5)`,
         [row.id, from, 'claimed', null, userId]
       );
+
+      // If a face biometric already exists on this registration, sync it to the claiming user's profile
+      try {
+        const faceRes = await client.query(
+          `SELECT b.file_id, b.external_reference, f.file_url
+             FROM jupeb_biometric_captures b
+             LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+            WHERE b.registration_id = $1
+              AND b.capture_type = 'face'
+              AND b.replaced_at IS NULL
+            ORDER BY b.created_at DESC
+            LIMIT 1`,
+          [reg.id]
+        );
+        if (faceRes.rows[0]) {
+          const faceRow = faceRes.rows[0];
+          const facePhotoUrl = faceRow.file_url
+            || (faceRow.external_reference && (faceRow.external_reference.startsWith('http://') || faceRow.external_reference.startsWith('https://')) ? faceRow.external_reference : null);
+          if (facePhotoUrl) {
+            await client.query(
+              `INSERT INTO profiles (user_id, profile_photo_url) VALUES ($1, $2)
+               ON CONFLICT (user_id) DO UPDATE SET profile_photo_url = EXCLUDED.profile_photo_url, updated_at = NOW()`,
+              [userId, facePhotoUrl]
+            );
+          }
+        }
+      } catch (_) { /* non-fatal */ }
+
       await client.query('COMMIT');
       return row;
     } catch (e) {
@@ -1662,33 +1729,46 @@ class RegistrationService {
       nokRow = null;
     }
 
-    // Resolve face_photo_url (prefer profiles.profile_photo_url; fall back to biometric captures)
-    let facePhotoUrl = u.profile_photo_url || null;
-    if (!facePhotoUrl) {
-      try {
-        const faceRes = await pool.query(
-          `SELECT b.file_id, b.external_reference, f.file_url
-             FROM jupeb_biometric_captures b
-             LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
-            WHERE b.registration_id = $1
-              AND b.capture_type = 'face'
-              AND b.replaced_at IS NULL
-            ORDER BY b.created_at DESC
-            LIMIT 1`,
-          [reg.id]
-        );
-        if (faceRes.rows[0]) {
-          const row = faceRes.rows[0];
-          facePhotoUrl = row.file_url
-            || (row.external_reference && (row.external_reference.startsWith('http://') || row.external_reference.startsWith('https://')) ? row.external_reference : null);
-          if (facePhotoUrl && userId) {
-            pool.query(
-              `UPDATE profiles SET profile_photo_url = $2, updated_at = NOW() WHERE user_id = $1 AND profile_photo_url IS NULL`,
-              [userId, facePhotoUrl]
-            ).catch(() => {});
+    // Resolve face_photo_url (prefer biometric captures; fall back to profiles.profile_photo_url)
+    let facePhotoUrl = null;
+    try {
+      const faceRes = await pool.query(
+        `SELECT b.file_id, b.external_reference, f.file_url
+           FROM jupeb_biometric_captures b
+           LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+          WHERE b.registration_id = $1
+            AND b.capture_type = 'face'
+            AND b.replaced_at IS NULL
+          ORDER BY b.created_at DESC
+          LIMIT 1`,
+        [reg.id]
+      );
+      if (faceRes.rows[0]) {
+        const row = faceRes.rows[0];
+        facePhotoUrl = row.file_url
+          || (row.external_reference && (row.external_reference.startsWith('http://') || row.external_reference.startsWith('https://')) ? row.external_reference : null);
+        if (!facePhotoUrl && row.file_id) {
+          try {
+            const file = await FileService.getFile(row.file_id, userId);
+            facePhotoUrl = file ? file.file_url : null;
+          } catch (_) {
+            try {
+              const file = await FileModel.findById(row.file_id);
+              facePhotoUrl = file ? file.file_url : null;
+            } catch (_) {}
           }
         }
-      } catch (_) { /* non-fatal */ }
+        if (facePhotoUrl && userId) {
+          pool.query(
+            `UPDATE profiles SET profile_photo_url = $2, updated_at = NOW() WHERE user_id = $1 AND (profile_photo_url IS NULL OR profile_photo_url != $2)`,
+            [userId, facePhotoUrl]
+          ).catch(() => {});
+        }
+      }
+    } catch (_) { /* non-fatal */ }
+
+    if (!facePhotoUrl) {
+      facePhotoUrl = u.profile_photo_url || null;
     }
 
     return {
@@ -1702,6 +1782,7 @@ class RegistrationService {
         photo_url: facePhotoUrl || ninPayload.photo_url || null,
         face_photo_url: facePhotoUrl,
         nin_photo_url: ninPayload.photo_url || null,
+        profile_photo_url: facePhotoUrl || ninPayload.photo_url || null,
       },
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
@@ -1887,10 +1968,21 @@ class RegistrationService {
         const approvedIds = approvedIdsRes.rows.map(r => r.id);
         if (approvedIds.length > 0) {
           console.log(`[AttendanceSync] Found ${approvedIds.length} approved candidates to sync for session ${sessionId}`);
-          await this._syncStudentsToAttendance(approvedIds);
+          try {
+            await this._syncStudentsToAttendance(approvedIds);
+          } catch (attErr) {
+            console.error('[AttendanceSync] Background sync failed:', attErr);
+          }
+
+          console.log(`[CrmsSync] Found ${approvedIds.length} approved candidates to sync for session ${sessionId}`);
+          try {
+            await this._syncStudentsToCrms(approvedIds, session);
+          } catch (crmsErr) {
+            console.error('[CrmsSync] Background sync failed:', crmsErr);
+          }
         }
       } catch (err) {
-        console.error('[AttendanceSync] Background sync failed:', err);
+        console.error('[AttendanceSync/CrmsSync] Background query failed:', err);
       }
     });
 
@@ -2257,6 +2349,35 @@ class RegistrationService {
       }
     } catch (err) {
       console.error('[AttendanceSync] Failed to sync students:', err);
+    }
+  }
+
+  async _syncStudentsToCrms(registrationIds, session = null) {
+    if (!registrationIds || registrationIds.length === 0) return;
+    try {
+      const crmsProvider = crmsProviders.get();
+      if (!crmsProvider.syncCandidates) return;
+
+      const chunkSize = 100;
+      for (let i = 0; i < registrationIds.length; i += chunkSize) {
+        const chunk = registrationIds.slice(i, i + chunkSize);
+        const payloads = await registrationModel.getCrmsCandidateSyncPayloads(chunk, session);
+        if (payloads.length === 0) continue;
+
+        try {
+          const response = await crmsProvider.syncCandidates(payloads);
+          console.log(`[CrmsSync] Chunk synced successfully. Response:`, JSON.stringify(response, null, 2));
+        } catch (syncErr) {
+          console.error(`[CrmsSync] Error syncing chunk:`, syncErr.message || syncErr);
+          if (syncErr.details) {
+            console.error(`[CrmsSync] Provider response error details:`, JSON.stringify(syncErr.details, null, 2));
+          } else if (syncErr.response && syncErr.response.data) {
+            console.error(`[CrmsSync] Provider response error body:`, JSON.stringify(syncErr.response.data, null, 2));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[CrmsSync] Failed to sync candidates:', err);
     }
   }
 }

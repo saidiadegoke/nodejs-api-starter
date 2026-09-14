@@ -118,6 +118,8 @@ class CatalogController {
         status: req.query.status,
         university_id: req.query.university_id,
         q: req.query.q,
+        sortBy: req.query.sort_by || req.query.sortBy,
+        sortOrder: req.query.sort_order || req.query.sortOrder,
       });
       return sendPaginated(res, rows, page, limit, total);
     } catch (err) {

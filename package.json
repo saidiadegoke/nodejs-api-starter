@@ -35,7 +35,8 @@
     "rbac:list-user-roles": "node scripts/list-user-roles.js",
     "rbac:list-role-permissions": "node scripts/list-role-permissions.js",
     "rbac:set-user-password": "node scripts/set-user-password.js",
-    "sso:generate-keys": "node scripts/generate-sso-keys.js"
+    "sso:generate-keys": "node scripts/generate-sso-keys.js",
+    "openapi:generate": "node scripts/generate-openapi.js"
   },
   "repository": {
     "type": "git",

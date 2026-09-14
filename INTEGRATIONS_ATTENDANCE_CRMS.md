@@ -84,7 +84,7 @@ Code locations:
 | `ATTENDANCE_ADMIN_SECRET` | — | Sent as `x-admin-secret` for generate/refresh token |
 | `ATTENDANCE_APPLICATION_NAME` | — | App id for token body and `x-app-name` on data calls |
 | `ATTENDANCE_SERVICE_TIMEOUT_MS` | `15000` | Axios timeout |
-| `CRMS_PROVIDER` | `mock` | `mock` \| `http` |
+| `CRMS_PROVIDER` | `http` | `http` |
 | `CRMS_SERVICE_BASE_URL` | — | Required when `http` |
 | `CRMS_SERVICE_API_KEY` | — | Bearer token sent to CRMS |
 | `CRMS_SERVICE_TIMEOUT_MS` | `15000` | Axios timeout |
