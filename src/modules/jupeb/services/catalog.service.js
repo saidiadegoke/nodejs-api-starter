@@ -239,7 +239,7 @@ class CatalogService {
     return row;
   }
 
-  async listSubjectCombinationsAdmin({ page, limit, status, university_id, q }) {
+  async listSubjectCombinationsAdmin({ page, limit, status, university_id, q, sortBy, sortOrder }) {
     if (university_id && !isUuid(university_id)) {
       throw httpError(422, 'university_id must be a valid UUID');
     }
@@ -252,6 +252,8 @@ class CatalogService {
       status,
       university_id: university_id || null,
       q,
+      sortBy,
+      sortOrder,
     });
     const total = await subjectCombinationModel.countAdmin({
       status,

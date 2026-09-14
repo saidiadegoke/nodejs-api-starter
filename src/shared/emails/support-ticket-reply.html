@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Reply on Support Ticket</title>
+</head>
+<body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f8fafc; line-height: 1.6;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+    <tr>
+      <td style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color: #ffffff; padding: 36px 30px; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px; font-weight: 700;">New Support Reply</h1>
+        <p style="margin: 8px 0 0 0; font-size: 14px; opacity: 0.9;">Ticket #{{ticketNumber}}</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding: 32px 28px; color: #1e293b; font-size: 16px;">
+        <p style="margin: 0 0 16px 0;">Hello {{firstName}},</p>
+        <p style="margin: 0 0 16px 0;">
+          {{responderName}} from <strong>{{institutionName}}</strong> has replied to your support request regarding <strong>{{subject}}</strong>:
+        </p>
+        <table cellpadding="14" cellspacing="0" style="width: 100%; background: #f0f9ff; border-left: 4px solid #0284c7; border-radius: 6px; margin: 16px 0;">
+          <tr>
+            <td>
+              <p style="margin: 0; font-size: 15px; color: #0f172a; white-space: pre-wrap;">{{replyMessage}}</p>
+            </td>
+          </tr>
+        </table>
+        <p style="margin: 20px 0 0 0; font-size: 14px; color: #64748b;">
+          If you have additional details to share, you can reply directly in your mobile application under Support.
+        </p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding: 18px 28px; background: #f8fafc; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0;">
+        <p style="margin: 0;">This email was sent to {{email}} regarding ticket {{ticketNumber}}.</p>
+        <p style="margin: 8px 0 0 0;">&copy; {{year}} {{appName}}</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

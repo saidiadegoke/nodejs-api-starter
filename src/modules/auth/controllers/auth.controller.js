@@ -287,9 +287,9 @@ class AuthController {
     } catch (error) {
       console.error('Login error:', error.message);
       if (error.message.includes('credentials') || error.message.includes('not active')) {
-        return sendError(res, 'Invalid username or password' || error.message, UNAUTHORIZED);
+        return sendError(res, 'Invalid username or password', UNAUTHORIZED);
       }
-      sendError(res, 'Invalid username or password' || error.message, BAD_REQUEST);
+      sendError(res, error.message || 'Login failed', BAD_REQUEST);
     }
   }
 

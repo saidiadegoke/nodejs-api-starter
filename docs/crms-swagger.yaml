@@ -1,0 +1,51 @@
+openapi: '3.0.0'
+info:
+  title: CRMS API
+  version: '1.0.0'
+  description: Candidate Result Management System (CRMS) student portal endpoints.
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+
+tags:
+  - name: CRMS
+    description: Candidate academic results and course records
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+paths:
+  /crms/home:
+    get:
+      summary: CRMS candidate dashboard summary
+      tags: [CRMS]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Summary of enrolled courses and published results
+
+  /crms/courses:
+    get:
+      summary: List student's enrolled courses and syllabus
+      tags: [CRMS]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of candidate courses
+
+  /crms/results:
+    get:
+      summary: Candidate examination results and transcripts
+      tags: [CRMS]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Candidate results breakdown

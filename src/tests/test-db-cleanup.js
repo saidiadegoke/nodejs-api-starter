@@ -18,6 +18,10 @@ const cleanupTestDatabase = async () => {
       'UNILAG', 'OAU', 'UI', 'FUTMINNA', 'FUTA', 'UNILORIN',
       'OOU', 'CU', 'FUNAAB', 'ABU', 'UNN', 'UNIZIK',
     ];
+    const SEEDED_SUBJECTS = [
+      'ACC', 'AGR', 'ART', 'BIO', 'BUS', 'CHM', 'CRS', 'ECO', 'FRE', 'GEO',
+      'GOV', 'HIS', 'IGB', 'ISS', 'LIT', 'MTH', 'MUS', 'PHY', 'YOR',
+    ];
     const PROTECTED_ROLES = [
       'super_admin', 'admin', 'system_admin', 'institution_admin', 'registrar',
     ];
@@ -91,12 +95,34 @@ const cleanupTestDatabase = async () => {
     // Deleting combinations cascades to jupeb_subject_combination_items
     const delCombos = await pool.query(
       `DELETE FROM jupeb_subject_combinations
-        WHERE code !~ '^JUPEB[ -]SC-[0-9]+$'
+        WHERE code !~ '^JUPEB[ -]SC-[0-9]+[a-zA-Z]?$'
         RETURNING code`
     );
     if (delCombos.rowCount > 0) {
       console.log(`✓ Deleted ${delCombos.rowCount} test subject combinations:`);
       delCombos.rows.forEach((r) => console.log(`    - ${r.code}`));
+    }
+
+    // 5. Delete test subjects (those not matching the official JUPEB catalog)
+    // First remove any join items referencing test subjects
+    await pool.query(
+      `DELETE FROM jupeb_subject_combination_items
+        WHERE subject_id IN (
+          SELECT id FROM jupeb_subjects
+          WHERE UPPER(code) <> ALL($1::text[])
+        )`,
+      [SEEDED_SUBJECTS]
+    );
+
+    const delSubjects = await pool.query(
+      `DELETE FROM jupeb_subjects
+        WHERE UPPER(code) <> ALL($1::text[])
+        RETURNING code, name`,
+      [SEEDED_SUBJECTS]
+    );
+    if (delSubjects.rowCount > 0) {
+      console.log(`✓ Deleted ${delSubjects.rowCount} test subjects:`);
+      delSubjects.rows.forEach((s) => console.log(`    - ${s.code} (${s.name})`));
     }
 
     // 5. Identify test users to delete (strictly preserving admins and seeded accounts)
