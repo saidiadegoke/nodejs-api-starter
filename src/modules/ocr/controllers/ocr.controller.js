@@ -1,6 +1,7 @@
 const OcrService = require('../services/ocr.service');
 const OcrResultModel = require('../models/ocr-result.model');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
+const { OLEVEL_SUBJECTS } = require('../constants/olevel-subjects');
 
 function serializeJob(job, result, viewerIsStaff) {
   if (!job) return null;
@@ -219,6 +220,62 @@ class OcrController {
       });
       sendSuccess(res, serializeJob(job, result, viewerIsStaff));
     });
+  }
+
+  static async createManualEntry(req, res) {
+    return handle(res, async () => {
+      const { exam_type, subjects, metadata: rawMeta, context } = req.body || {};
+
+      if (!exam_type) {
+        return sendError(res, 'exam_type is required', 400, { code: 'OCR_INPUT_REQUIRED' });
+      }
+      if (!Array.isArray(subjects) || subjects.length === 0) {
+        return sendError(res, 'subjects must be a non-empty array', 400, { code: 'OCR_INPUT_REQUIRED' });
+      }
+
+      let metadata = {};
+      if (rawMeta) {
+        if (typeof rawMeta === 'string') {
+          try { metadata = JSON.parse(rawMeta); } catch { metadata = {}; }
+        } else if (typeof rawMeta === 'object') {
+          metadata = rawMeta;
+        }
+      }
+
+      const { job, result } = await OcrService.createManualEntry({
+        userId: req.user.user_id,
+        examType: exam_type,
+        subjects,
+        metadata,
+        context: context || null
+      });
+
+      sendSuccess(res, serializeJob(job, result, false), 'Manual entry recorded', 201);
+    });
+  }
+
+  /**
+   * GET /ocr/subjects?board=waec
+   * Returns the full O-level subject list, optionally filtered by exam board.
+   */
+  static getSubjects(req, res) {
+    const board = (req.query.board || '').toLowerCase().trim();
+    const VALID_BOARDS = ['waec', 'neco', 'nabteb', 'gce'];
+
+    if (board && !VALID_BOARDS.includes(board)) {
+      return sendError(
+        res,
+        `Invalid board '${board}'. Must be one of: ${VALID_BOARDS.join(', ')}`,
+        400,
+        { code: 'OCR_INVALID_BOARD' }
+      );
+    }
+
+    const subjects = board
+      ? OLEVEL_SUBJECTS.filter((s) => s.boards.includes(board))
+      : OLEVEL_SUBJECTS;
+
+    return sendSuccess(res, { subjects, total: subjects.length });
   }
 }
 
