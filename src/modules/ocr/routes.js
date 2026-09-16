@@ -26,4 +26,10 @@ router.post('/jobs/:jobId/retry', requireAuth, OcrController.retryJob);
 router.post('/jobs/:jobId/bind-requirement', requireAuth, OcrController.bindRequirement);
 router.get('/files/:fileId/latest', requireAuth, OcrController.getLatestForFile);
 
+// Manual result entry — student submits grades without uploading a document
+router.post('/manual-entry', requireAuth, OcrController.createManualEntry);
+
+// Static reference list — no auth required (needed before login on registration flow)
+router.get('/subjects', OcrController.getSubjects);
+
 module.exports = router;
