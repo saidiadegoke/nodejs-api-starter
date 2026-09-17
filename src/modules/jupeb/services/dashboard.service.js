@@ -12,6 +12,7 @@ const {
   getActiveSession,
   resolveEffectiveSession,
   getSessionContext,
+  toSessionSummary,
 } = require('./session-context.service');
 
 function httpError(status, message) {
@@ -128,14 +129,9 @@ class DashboardService {
       );
       university = r.rows[0] || null;
     }
-    const effective = session
-      ? {
-          id: session.id,
-          label: session.academic_year,
-          status: session.status,
-          registration_locked: Boolean(session.registration_locked),
-        }
-      : context.effective_session;
+    // Same shape as `getSessionContext` so the portal reads cut-off state from
+    // one place regardless of which dashboard endpoint it called.
+    const effective = session ? toSessionSummary(session) : context.effective_session;
     return {
       university,
       session: effective,
