@@ -43,7 +43,7 @@ class RegistrationController {
       const row = await registrationService.institutionCreate(req.body, req.user.user_id);
       return sendSuccess(res, row, 'Registration created', CREATED);
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -56,7 +56,7 @@ class RegistrationController {
       );
       return sendSuccess(res, row, 'Registration updated');
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
@@ -246,7 +246,7 @@ class RegistrationController {
       const data = await registrationService.updateAcademicIntake(req.user.user_id, req.body);
       return sendSuccess(res, data, 'Academic intake updated');
     } catch (err) {
-      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }
   }
 
