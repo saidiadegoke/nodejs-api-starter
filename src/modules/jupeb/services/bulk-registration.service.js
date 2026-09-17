@@ -8,6 +8,7 @@ const registrationService = require('./registration.service');
 const ninAdapter = require('./nin-adapter.service');
 const { normalizeNin, hashNin, ninLast4 } = require('../utils/identity-crypto');
 const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
+const { describeSessionWindowFailure } = require('../utils/session-validation');
 const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
 
 function httpError(status, message, details) {
@@ -126,6 +127,16 @@ class BulkRegistrationService {
     }
     if (session.registration_locked) {
       throw httpError(423, 'Registration is locked for this session');
+    }
+    // Session window + candidate-info cutoff, checked up front so a passed
+    // cutoff fails the whole upload before any row is written.
+    const windowFailure = describeSessionWindowFailure(session, 'session_window');
+    if (windowFailure) {
+      throw httpError(windowFailure.status, windowFailure.message, windowFailure.details);
+    }
+    const cutoffFailure = describeSessionWindowFailure(session, 'candidate_info');
+    if (cutoffFailure) {
+      throw httpError(cutoffFailure.status, cutoffFailure.message, cutoffFailure.details);
     }
 
     const university = await universityModel.findById(university_id);

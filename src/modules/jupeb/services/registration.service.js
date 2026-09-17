@@ -23,6 +23,7 @@ const {
   effectiveInstitutionListUniversityId,
 } = require('../utils/institution-scope');
 const { emitRegistrationApproved } = require('./registration-events.service');
+const { describeSessionWindowFailure } = require('../utils/session-validation');
 const jupebMailer = require('./jupeb-mailer.service');
 const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
@@ -382,18 +383,26 @@ async function loadNinVerificationForInstitutionDetail(reg) {
 /**
  * Same field precedence as `getMeProfile` so institution GET matches
  * `GET /registration/me/submission-preview` for NIN-backed demographics.
+ *
+ * `candidateRow` is null for registrations whose institution code has not been
+ * claimed yet (`jupeb_registrations.user_id IS NULL`) — the normal state right
+ * after an institution creates one, and the *only* state a bulk upload produces.
+ * Demographics then come from the NIN verification: `intake_payload` carries
+ * what the institution supplied (name, email, phone) and `response_payload`
+ * carries the provider result (DOB, address, state, LGA, place of birth, NoK).
+ * Returning null here is what made the candidate detail page render blank for
+ * every unclaimed row, so fall back rather than short-circuit.
  */
 function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninStatus = null, facePhotoUrl = null) {
-  if (!candidateRow) return null;
-  const u = candidateRow;
+  const u = candidateRow || {};
   const n = ninPayload || {};
   const i = intake || {};
   const first_name = (ninStatus === 'verified' && n.first_name)
     ? String(n.first_name).trim()
-    : (u.first_name || n.first_name || null);
+    : (u.first_name || i.first_name || n.first_name || null);
   const last_name = (ninStatus === 'verified' && n.last_name)
     ? String(n.last_name).trim()
-    : (u.last_name || n.last_name || null);
+    : (u.last_name || i.last_name || n.last_name || null);
   const display_name = resolveCandidateDisplayName({
     ninPayload: n,
     intake: i,
@@ -403,7 +412,7 @@ function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninS
   // Prefer candidate-uploaded face selfie (facePhotoUrl) over expiring NIN photo_url or stale profile_photo_url.
   const resolvedPhoto = facePhotoUrl || u.profile_photo_url || n.photo_url || null;
   return {
-    id: u.id,
+    id: u.id || null,
     email: u.email || i.email || null,
     phone: u.phone || i.phone || n.phone || null,
     email_verified: u.email_verified,
@@ -418,7 +427,8 @@ function mergeInstitutionCandidateFromNin(candidateRow, ninPayload, intake, ninS
     photo_url: resolvedPhoto,
     face_photo_url: facePhotoUrl || null,
     nin_photo_url: n.photo_url || null,
-    residential_address: u.residential_address || n.address || null,
+    residential_address:
+      u.residential_address || i.residential_address || i.address || n.address || null,
     state_of_origin: u.state_of_origin || n.state_of_origin || null,
     lga: u.lga || n.lga || null,
     place_of_birth: u.place_of_birth || n.place_of_birth || null,
@@ -635,6 +645,27 @@ async function transitionStatus(reg, toStatus, { userId, reason, extraFields }) 
   return updated;
 }
 
+/**
+ * Enforce the session registration window and/or one cutoff before a write.
+ *
+ * `kind` is `'session_window'` for the opens_at/closes_at window, or a key of
+ * `SESSION_WINDOWS` in `utils/session-validation` for a cutoff/deadline. A null
+ * bound means the session has no such restriction configured, so the write
+ * proceeds — sessions created before the cutoff columns existed stay writable.
+ *
+ * Pass `session` when the caller already loaded it; otherwise `sessionId` is
+ * looked up. Returns the session row so callers can reuse it.
+ *
+ * @throws 404 when the session is missing, 423 when the window is passed.
+ */
+async function assertSessionWriteAllowed({ session = null, sessionId = null, kind }) {
+  const row = session || (sessionId ? await sessionModel.findById(sessionId) : null);
+  if (!row) throw httpError(404, 'Session not found');
+  const failure = describeSessionWindowFailure(row, kind);
+  if (failure) throw httpError(failure.status, failure.message, failure.details);
+  return row;
+}
+
 class RegistrationService {
   async institutionCreate(body, userId) {
     await assertInstitutionRegistration(userId);
@@ -656,6 +687,11 @@ class RegistrationService {
     if (session.registration_locked) {
       throw httpError(423, 'Registration is locked for this session');
     }
+    // Session window + the candidate-info cutoff. All candidate creation is
+    // gated on candidate_info_cutoff_at, which is the earliest cutoff in the
+    // enforced ordering (closes_at <= candidate_info <= profile_update <= ca).
+    await assertSessionWriteAllowed({ session, kind: 'session_window' });
+    await assertSessionWriteAllowed({ session, kind: 'candidate_info' });
     const university = await universityModel.findById(university_id);
     if (!university || university.status !== 'active') {
       throw httpError(404, 'University not found or inactive');
@@ -975,6 +1011,8 @@ class RegistrationService {
     }
     if (!isUuid(body.subject_combination_id)) throw httpError(422, 'subject_combination_id must be a valid UUID');
     await assertComboForUniversity(body.subject_combination_id, reg.university_id);
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'session_window' });
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'profile_update' });
     const updated = await registrationModel.updateRegistration(registrationId, {
       subject_combination_id: body.subject_combination_id,
     });
@@ -1006,6 +1044,8 @@ class RegistrationService {
     if (!editableStatuses.has(reg.status)) {
       throw httpError(422, 'Candidate profile cannot be edited in the current registration status');
     }
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'session_window' });
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'profile_update' });
 
     let ninPayload = {};
     if (reg.nin_verification_id) {
@@ -1572,6 +1612,8 @@ class RegistrationService {
   async updateAcademicIntake(userId, body) {
     const reg = await registrationModel.findLatestForUser(userId);
     if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'session_window' });
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'profile_update' });
     const sittings = Number(body && body.sittings_count);
     if (![1, 2].includes(sittings)) {
       throw httpError(422, 'sittings_count must be 1 or 2');
@@ -1819,6 +1861,8 @@ class RegistrationService {
   async updateMeProfile(userId, body) {
     const reg = await registrationModel.findLatestForUser(userId);
     if (!reg || reg.user_id !== userId) throw httpError(404, 'No registration found for current user');
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'session_window' });
+    await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'profile_update' });
 
     let ninPayload = {};
     if (reg.nin_verification_id) {

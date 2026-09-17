@@ -1,5 +1,6 @@
 const pool = require('../../../db/pool');
 const { resolveRegistrationSession } = require('./registration-kpi.service');
+const { evaluateSessionWindows } = require('../utils/session-validation');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -16,6 +17,7 @@ function isUuid(value) {
 
 function toSessionSummary(row) {
   if (!row) return null;
+  const windows = evaluateSessionWindows(row);
   return {
     id: row.id,
     label: row.academic_year,
@@ -23,6 +25,16 @@ function toSessionSummary(row) {
     registration_locked: Boolean(row.registration_locked),
     opens_at: row.opens_at || null,
     closes_at: row.closes_at || null,
+    // Cutoff state so the portal can grey out actions before the request
+    // fails. `*_closed` is true once the bound is reached; a session with no
+    // bound configured reports false (no restriction).
+    candidate_info_cutoff_at: windows.cutoffs.candidate_info.at,
+    profile_update_cutoff_at: windows.cutoffs.profile_update.at,
+    ca_cutoff_at: windows.cutoffs.ca.at,
+    window_open: windows.within_window,
+    candidate_info_closed: windows.cutoffs.candidate_info.passed,
+    profile_update_closed: windows.cutoffs.profile_update.passed,
+    ca_closed: windows.cutoffs.ca.passed,
   };
 }
 
