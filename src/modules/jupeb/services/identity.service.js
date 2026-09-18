@@ -581,6 +581,15 @@ class IdentityService {
       }
     }
 
+    // If an active capture of this type already exists, replace it rather than failing with 409
+    const existingCaptures = await biometricCaptureModel.findByRegistrationId(body.registration_id);
+    const existingActive = existingCaptures.filter(
+      (c) => c.capture_type === body.capture_type && !c.replaced_at
+    );
+    for (const ex of existingActive) {
+      await biometricCaptureModel.markReplaced(ex.id);
+    }
+
     let row;
     try {
       row = await biometricCaptureModel.create({
@@ -594,9 +603,22 @@ class IdentityService {
       });
     } catch (e) {
       if (e.code === '23505') {
-        throw httpError(409, 'A biometric capture of this type already exists for this registration');
+        const captures = await biometricCaptureModel.findByRegistrationId(body.registration_id);
+        for (const ex of captures.filter((c) => c.capture_type === body.capture_type && !c.replaced_at)) {
+          await biometricCaptureModel.markReplaced(ex.id);
+        }
+        row = await biometricCaptureModel.create({
+          registration_id: body.registration_id,
+          capture_type: body.capture_type,
+          file_id: resolvedFileId || null,
+          external_reference: resolvedFileId ? null : v.external_reference,
+          quality_score: body.quality_score,
+          device_metadata: body.device_metadata,
+          captured_at: capturedAt.toISOString(),
+        });
+      } else {
+        throw e;
       }
-      throw e;
     }
     if (body.capture_type === 'face') {
       await applyFaceSelfieToProfile(registration, resolvedFileId || resolvedFileUrl || v.external_reference);
@@ -716,9 +738,22 @@ class IdentityService {
       });
     } catch (e) {
       if (e.code === '23505') {
-        throw httpError(409, 'A biometric capture of this type already exists for this registration');
+        const captures = await biometricCaptureModel.findByRegistrationId(old.registration_id);
+        for (const ex of captures.filter((c) => c.capture_type === old.capture_type && !c.replaced_at)) {
+          await biometricCaptureModel.markReplaced(ex.id);
+        }
+        row = await biometricCaptureModel.create({
+          registration_id: old.registration_id,
+          capture_type: old.capture_type,
+          file_id: resolvedFileId || null,
+          external_reference: resolvedFileId ? null : v.external_reference,
+          quality_score: body.quality_score,
+          device_metadata: body.device_metadata,
+          captured_at: capturedAt.toISOString(),
+        });
+      } else {
+        throw e;
       }
-      throw e;
     }
     if (old.capture_type === 'face') {
       await applyFaceSelfieToProfile(registration, resolvedFileId || resolvedFileUrl || v.external_reference);

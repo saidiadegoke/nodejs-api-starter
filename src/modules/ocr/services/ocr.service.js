@@ -319,6 +319,62 @@ class OcrService {
       );
       const result = resultRow.rows[0];
 
+      // Write-through to jupeb_result_entries
+      let registrationId = metadata && metadata.registration_id;
+      if (!registrationId && userId) {
+        const regRes = await client.query(
+          `SELECT id FROM jupeb_registrations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [userId]
+        );
+        if (regRes.rows[0]) {
+          registrationId = regRes.rows[0].id;
+        }
+      }
+
+      const SUPPORTED_RESULT_SOURCES = new Set(['waec', 'neco', 'nabteb', 'gce', 'jamb']);
+      if (registrationId && SUPPORTED_RESULT_SOURCES.has(examType.toLowerCase())) {
+        const sitting = Number(metadata && metadata.sitting) || 1;
+        const normalizeGrade = (raw) => {
+          if (!raw) return null;
+          const g = String(raw).trim().toUpperCase();
+          const m = {
+            A1: 'A',
+            B2: 'B', B3: 'B',
+            C4: 'C', C5: 'C', C6: 'C',
+            D7: 'D',
+            E8: 'E',
+            F9: 'F',
+            A: 'A', B: 'B', C: 'C', D: 'D', E: 'E', F: 'F',
+            U: 'F'
+          };
+          return m[g] || null;
+        };
+
+        const rows = normalisedSubjects.map((s, idx) => ({
+          registration_id: registrationId,
+          source: examType.toLowerCase(),
+          sitting,
+          serial: idx,
+          subject: String(s.name || '').trim().toUpperCase(),
+          grade: String(s.grade || '').trim().toUpperCase(),
+          grade_normalized: normalizeGrade(s.grade),
+          score: typeof s.score === 'number' ? Math.max(0, Math.min(100, Math.round(s.score))) : null,
+          origin: 'manual',
+          ocr_job_id: job.id,
+          created_by: userId || null
+        }));
+
+        // Clean up any extra rows beyond the new serial length for this key
+        await client.query(
+          `DELETE FROM jupeb_result_entries
+           WHERE registration_id = $1 AND source = $2 AND sitting = $3 AND serial >= $4`,
+          [registrationId, examType.toLowerCase(), sitting, rows.length]
+        );
+
+        const resultEntriesModel = require('../../jupeb/models/result-entries.model');
+        await resultEntriesModel.bulkUpsert(rows, client);
+      }
+
       await client.query('COMMIT');
       return { job, result };
     } catch (err) {
