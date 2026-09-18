@@ -38,6 +38,7 @@ describe('GET /registration/me/submission-preview', () => {
           code: nextJupebTestUniversityCode(tag),
           name: `${tag} Sub Uni`,
           jupeb_prefix: nextJupebTestPrefix(),
+          email: `${tag.toLowerCase()}-${Date.now()}@example.com`,
         });
       if (uniRes.status === 201) break;
     }
