@@ -9,21 +9,16 @@ const cleanupTestDatabase = async () => {
   console.log('🗑️  Cleaning up test database...\n');
 
   try {
-    const SEEDED_EMAILS = [
+    const PROTECTED_EMAILS = [
       'admin@example.com',
-      'student@example.com',
-      'unilag-admin@example.com',
     ];
     const SEEDED_UNIS = [
       'UNILAG', 'OAU', 'UI', 'FUTMINNA', 'FUTA', 'UNILORIN',
-      'OOU', 'CU', 'FUNAAB', 'ABU', 'UNN', 'UNIZIK',
+      'OOU', 'CU', 'FUNAAB', 'ABU', 'UNN', 'UNIZIK', 'BUC',
     ];
     const SEEDED_SUBJECTS = [
       'ACC', 'AGR', 'ART', 'BIO', 'BUS', 'CHM', 'CRS', 'ECO', 'FRE', 'GEO',
       'GOV', 'HIS', 'IGB', 'ISS', 'LIT', 'MTH', 'MUS', 'PHY', 'YOR',
-    ];
-    const PROTECTED_ROLES = [
-      'super_admin', 'admin', 'system_admin', 'institution_admin', 'registrar',
     ];
 
     // 1. Delete test subjects associated with test sessions (if jupeb_subjects.session_id exists)
@@ -125,14 +120,21 @@ const cleanupTestDatabase = async () => {
       delSubjects.rows.forEach((s) => console.log(`    - ${s.code} (${s.name})`));
     }
 
-    // 5. Identify test users to delete (strictly preserving admins and seeded accounts)
+    // 6. Identify test users and seeded test users to delete (strictly preserving admin@example.com and real staff)
     const testUsersRes = await pool.query(
       `SELECT id, email, phone FROM users
-        WHERE (
-          email LIKE 'test%@example.com'
+        WHERE email <> ALL($1::text[])
+        AND (
+          email LIKE '%@example.com'
           OR email LIKE '%@test.com'
-          OR email LIKE 'test_%'
-          OR email LIKE 'test-%'
+          OR email LIKE '%@release-test.edu.ng'
+          OR email LIKE '%@yopmail.com'
+          OR email LIKE 'catalog-%'
+          OR email LIKE 'rsc-%'
+          OR email LIKE 'idet-%'
+          OR email LIKE 'rr-%'
+          OR email LIKE 'sub-%'
+          OR email LIKE 'test%'
           OR email LIKE 'delete-me-%'
           OR email LIKE 'nok-%'
           OR email LIKE 'pdf-%'
@@ -146,14 +148,8 @@ const cleanupTestDatabase = async () => {
           OR email LIKE 'postmedia_%'
           OR email LIKE 'otp-%'
           OR email LIKE 'batch-%'
-        )
-        AND email <> ALL($1::text[])
-        AND id NOT IN (
-          SELECT ur.user_id FROM user_roles ur
-          JOIN roles r ON r.id = ur.role_id
-          WHERE r.name = ANY($2::text[])
         )`,
-      [SEEDED_EMAILS, PROTECTED_ROLES]
+      [PROTECTED_EMAILS]
     );
 
     const testUserIds = testUsersRes.rows.map((u) => u.id);
@@ -182,6 +178,48 @@ const cleanupTestDatabase = async () => {
         `DELETE FROM ocr_jobs WHERE requested_by = ANY($1::uuid[]) OR requested_for = ANY($1::uuid[])`,
         [testUserIds]
       );
+
+      // Release workflow tables (migration 035)
+      const checkIsr = await pool.query(
+        `SELECT 1 FROM information_schema.tables WHERE table_name = 'jupeb_institution_session_results'`
+      );
+      if (checkIsr.rows.length > 0) {
+        await pool.query(
+          `UPDATE jupeb_institution_session_results SET released_by = NULL WHERE released_by = ANY($1::uuid[])`,
+          [testUserIds]
+        );
+      }
+
+      await pool.query(
+        `UPDATE jupeb_registration_sessions SET results_released_by = NULL WHERE results_released_by = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `UPDATE jupeb_registrations SET created_by = NULL, approved_by = NULL, result_released_by = NULL 
+          WHERE created_by = ANY($1::uuid[]) OR approved_by = ANY($1::uuid[]) OR result_released_by = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+
+      // Support tickets
+      const checkSt = await pool.query(
+        `SELECT 1 FROM information_schema.tables WHERE table_name = 'support_tickets'`
+      );
+      if (checkSt.rows.length > 0) {
+        await pool.query(
+          `DELETE FROM support_ticket_messages WHERE sender_id = ANY($1::uuid[])`,
+          [testUserIds]
+        );
+        await pool.query(
+          `DELETE FROM support_tickets WHERE user_id = ANY($1::uuid[])`,
+          [testUserIds]
+        );
+        await pool.query(
+          `UPDATE support_tickets SET assigned_to = NULL, resolved_by = NULL 
+            WHERE assigned_to = ANY($1::uuid[]) OR resolved_by = ANY($1::uuid[])`,
+          [testUserIds]
+        );
+      }
+
       await pool.query(
         `DELETE FROM jupeb_registrations WHERE user_id = ANY($1::uuid[])`,
         [testUserIds]
@@ -202,13 +240,64 @@ const cleanupTestDatabase = async () => {
         `UPDATE user_permissions SET granted_by = NULL WHERE granted_by = ANY($1::uuid[])`,
         [testUserIds]
       );
+      await pool.query(
+        `DELETE FROM user_roles WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM user_permissions WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+
+      const checkUu = await pool.query(
+        `SELECT 1 FROM information_schema.tables WHERE table_name = 'user_universities'`
+      );
+      if (checkUu.rows.length > 0) {
+        await pool.query(
+          `UPDATE user_universities SET created_by = NULL WHERE created_by = ANY($1::uuid[])`,
+          [testUserIds]
+        );
+        await pool.query(
+          `DELETE FROM user_universities WHERE user_id = ANY($1::uuid[])`,
+          [testUserIds]
+        );
+      }
+
+      await pool.query(
+        `DELETE FROM notifications WHERE user_id = ANY($1::uuid[]) OR actor_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM profiles WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM user_sessions WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM user_preferences WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM verification_tokens WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM password_resets WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
+      await pool.query(
+        `DELETE FROM otp_codes WHERE user_id = ANY($1::uuid[])`,
+        [testUserIds]
+      );
 
       // Now safe to delete test users
       const deleteUsers = await pool.query(
         `DELETE FROM users WHERE id = ANY($1::uuid[]) RETURNING id, email, phone`,
         [testUserIds]
       );
-      console.log(`✓ Deleted ${deleteUsers.rowCount} test users`);
+      console.log(`✓ Deleted ${deleteUsers.rowCount} test and seeded users`);
       deleteUsers.rows.forEach((user) => {
         console.log(`    - ${user.email || user.phone} (${user.id})`);
       });

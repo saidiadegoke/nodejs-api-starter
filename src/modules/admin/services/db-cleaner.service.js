@@ -127,7 +127,7 @@ class DbCleanerService {
    */
   static getAdminUserIdsSubquery() {
     const rolesList = PROTECTED_ADMIN_ROLES.map((r) => `'${r}'`).join(', ');
-    return `SELECT DISTINCT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE r.name IN (${rolesList})`;
+    return `SELECT DISTINCT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id JOIN users u ON u.id = ur.user_id WHERE r.name IN (${rolesList}) AND (u.email = 'admin@example.com' OR (u.email NOT LIKE '%@example.com' AND u.email NOT LIKE '%@test.com' AND u.email NOT LIKE '%@release-test.edu.ng' AND u.email NOT LIKE '%@yopmail.com'))`;
   }
 
   /**
@@ -298,11 +298,6 @@ class DbCleanerService {
         );
 
         // Payments
-        await this.safeQuery(
-          client,
-          `DELETE FROM payment_items WHERE payment_id IN (SELECT id FROM payments WHERE user_id = ANY($1::uuid[]))`,
-          [candidateUserIds]
-        );
         const delPay = await this.safeQuery(
           client,
           `DELETE FROM payments WHERE user_id = ANY($1::uuid[])`,
