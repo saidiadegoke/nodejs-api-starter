@@ -53,6 +53,11 @@ beforeAll(async () => {
 
 // Global afterAll
 afterAll(async () => {
+  try {
+    const pool = require('../db/pool');
+    const { cleanupTestCatalogArtifacts } = require('./jupeb-session-test-helpers');
+    await cleanupTestCatalogArtifacts(pool);
+  } catch { /* ignore */ }
   originalConsole.info('\n✅ Test suite completed.');
 });
 

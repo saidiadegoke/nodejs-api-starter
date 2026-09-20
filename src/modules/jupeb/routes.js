@@ -8,8 +8,10 @@ const registrationRoutes = require('./routes/registration.routes');
 const financeRoutes = require('./routes/finance.routes');
 const academicRoutes = require('./routes/academic.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
+const resultsReleaseRoutes = require('./routes/results-release.routes');
 
 router.use('/', institutionScopeRoutes);
+router.use('/', resultsReleaseRoutes);
 router.use('/catalog', catalogRoutes);
 router.use('/sessions', sessionRoutes);
 router.use('/identity', identityRoutes);

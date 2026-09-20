@@ -124,6 +124,158 @@ function buildCatalogUniversityPayload(tag = 'U', overrides = {}) {
   };
 }
 
+/**
+ * Obtains valid fixtures (sessionId, universityId, subjectCombinationId)
+ * for registration testing by reusing existing seeded rows.
+ * This prevents polluting the database with dummy sessions, fake universities,
+ * dummy subject combinations, and fake subjects during testing.
+ */
+async function ensureTestRegistrationFixtures(pool, token, tag = 'TEST') {
+  let sessionId;
+  let universityId;
+  let subjectCombinationId;
+
+  if (pool) {
+    // 1. Session: Re-use active open session (e.g. 2026/2027)
+    try {
+      const sessRes = await pool.query(
+        `SELECT id FROM jupeb_registration_sessions WHERE status = 'open' ORDER BY academic_year DESC LIMIT 1`
+      );
+      if (sessRes.rows[0]) {
+        sessionId = sessRes.rows[0].id;
+      } else {
+        // Re-open standard 20xx/20xx session if one exists
+        const standardSess = await pool.query(
+          `SELECT id FROM jupeb_registration_sessions WHERE academic_year ~ '^20[0-9]{2}/20[0-9]{2}$' ORDER BY academic_year DESC LIMIT 1`
+        );
+        if (standardSess.rows[0]) {
+          await pool.query(`UPDATE jupeb_registration_sessions SET status = 'open' WHERE id = $1`, [standardSess.rows[0].id]);
+          sessionId = standardSess.rows[0].id;
+        }
+      }
+    } catch { /* ignore */ }
+
+    // 2. University: Re-use existing live university (UNILAG, FUTA, etc.)
+    try {
+      const uniRes = await pool.query(
+        `SELECT id FROM jupeb_universities WHERE deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`
+      );
+      if (uniRes.rows[0]) {
+        universityId = uniRes.rows[0].id;
+      }
+    } catch { /* ignore */ }
+
+    // 3. Subject Combination: Re-use existing live subject combination
+    try {
+      const scRes = await pool.query(
+        `SELECT id FROM jupeb_subject_combinations WHERE deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`
+      );
+      if (scRes.rows[0]) {
+        subjectCombinationId = scRes.rows[0].id;
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Fallback creation ONLY if DB was unseeded
+  if (!universityId && token) {
+    const uniRes = await request(app)
+      .post('/catalog/universities')
+      .set('Authorization', `Bearer ${token}`)
+      .send(buildCatalogUniversityPayload(tag, { name: `${tag} University` }));
+    if (uniRes.status === 201) universityId = uniRes.body.data?.id;
+  }
+
+  if (!subjectCombinationId && token) {
+    // ALWAYS use standard JUPEB subjects ('MTH', 'PHY', 'CHM') — NEVER fake 'A', 'B', 'C'
+    const scRes = await request(app)
+      .post('/catalog/subject-combinations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: nextJupebTestUniversityCode(`${tag}SC`),
+        title: `${tag} Combo`,
+        subjects: ['MTH', 'PHY', 'CHM'],
+        is_global: true,
+      });
+    if (scRes.status === 201) subjectCombinationId = scRes.body.data?.id;
+  }
+
+  if (!sessionId && token) {
+    const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+    const sessRes = await request(app)
+      .post('/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        academic_year: academicYear,
+        year_short: yearShort,
+        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
+        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+      });
+    if (sessRes.status === 201) {
+      sessionId = sessRes.body.data?.id;
+      await request(app).post(`/sessions/${sessionId}/open`).set('Authorization', `Bearer ${token}`);
+    }
+  }
+
+  return { sessionId, universityId, subjectCombinationId };
+}
+
+/**
+ * Restores the default open JUPEB session (20xx/20xx) and removes temporary test sessions.
+ */
+async function restoreDefaultJupebSession(pool) {
+  if (!pool) return;
+  try {
+    await pool.query(
+      `DELETE FROM jupeb_registration_sessions WHERE academic_year !~ '^20[0-9]{2}/20[0-9]{2}$'`
+    );
+    const openRes = await pool.query(
+      `SELECT id FROM jupeb_registration_sessions WHERE status = 'open' AND academic_year ~ '^20[0-9]{2}/20[0-9]{2}$' LIMIT 1`
+    );
+    if (openRes.rowCount === 0) {
+      await pool.query(
+        `UPDATE jupeb_registration_sessions 
+         SET status = 'open' 
+         WHERE id = (
+           SELECT id FROM jupeb_registration_sessions 
+           WHERE academic_year ~ '^20[0-9]{2}/20[0-9]{2}$' 
+           ORDER BY academic_year DESC LIMIT 1
+         )`
+      );
+    }
+  } catch { /* ignore */ }
+}
+
+/**
+ * Cleans up temporary test subjects, test combinations, and test sessions.
+ */
+async function cleanupTestCatalogArtifacts(pool) {
+  if (!pool) return;
+  try {
+    await restoreDefaultJupebSession(pool);
+    const SEEDED_SUBJECTS = [
+      'ACC', 'AGR', 'ART', 'BIO', 'BUS', 'CHM', 'CRS', 'ECO', 'FRE', 'GEO',
+      'GOV', 'HIS', 'IGB', 'ISS', 'LIT', 'MTH', 'MUS', 'PHY', 'YOR',
+    ];
+    await pool.query(
+      `DELETE FROM jupeb_subject_combination_items
+       WHERE subject_id IN (
+         SELECT id FROM jupeb_subjects
+         WHERE UPPER(code) <> ALL($1::text[])
+       )`,
+      [SEEDED_SUBJECTS]
+    );
+    await pool.query(
+      `DELETE FROM jupeb_subjects
+       WHERE UPPER(code) <> ALL($1::text[])`,
+      [SEEDED_SUBJECTS]
+    );
+    await pool.query(
+      `DELETE FROM jupeb_subject_combinations
+       WHERE code !~ '^JUPEB[ -]SC-[0-9]+[a-zA-Z]?$'`
+    );
+  } catch { /* ignore */ }
+}
+
 module.exports = {
   closeAllOpenJupebSessions,
   nextJupebTestPrefix,
@@ -131,4 +283,7 @@ module.exports = {
   nextJupebAcademicSession,
   warmJupebPrefixCache,
   buildCatalogUniversityPayload,
+  ensureTestRegistrationFixtures,
+  restoreDefaultJupebSession,
+  cleanupTestCatalogArtifacts,
 };

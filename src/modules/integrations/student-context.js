@@ -25,11 +25,14 @@ async function resolveStudentContext(userId) {
   }
 
   return {
+    registration_id: reg.id,
     user_id: userId,
     session_id: reg.session_id,
+    university_id: reg.university_id,
     candidate_code: reg.jupeb_candidate_number || reg.provisional_candidate_code || null,
     attendance_registration_code: reg.attendance_registration_code || null,
     student_id: reg.attendance_student_id || null,
+    is_result_released: Boolean(reg.is_result_released),
   };
 }
 

@@ -5,9 +5,11 @@ const AdminAuditController = require('./controllers/adminAudit.controller');
 const RbacController = require('./controllers/rbac.controller');
 const AdminUsersController = require('./controllers/adminUsers.controller');
 const UserController = require('../users/controllers/user.controller');
+const ResultsReleaseController = require('../jupeb/controllers/results-release.controller');
 const {
   requireAuth,
   requirePermission,
+  requireRole,
 } = require('../../shared/middleware/rbac.middleware');
 
 // ============================================================================
@@ -151,6 +153,14 @@ router.post(
   requireAuth,
   requirePermission('system.admin'),
   AdminDbCleanerController.clearDb
+);
+
+/** POST /admin/results/release-to-institutions — release results to institutions */
+router.post(
+  '/results/release-to-institutions',
+  requireAuth,
+  requireRole('registrar', 'super_admin', 'admin'),
+  ResultsReleaseController.releaseToInstitutions
 );
 
 module.exports = router;

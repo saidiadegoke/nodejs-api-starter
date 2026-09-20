@@ -1,6 +1,7 @@
 const attendanceProviders = require('../../integrations/attendance');
 const crmsProviders = require('../../integrations/crms');
 const { resolveStudentContext } = require('../../integrations/student-context');
+const resultsReleaseService = require('./results-release.service');
 
 class StudentDashboardService {
   static async getHome(userId, query = {}) {
@@ -17,6 +18,7 @@ class StudentDashboardService {
 
   static async getResults(userId) {
     const ctx = await resolveStudentContext(userId);
+    await resultsReleaseService.checkStudentReleaseAccess(ctx);
     return crmsProviders.get().getResults(ctx);
   }
 

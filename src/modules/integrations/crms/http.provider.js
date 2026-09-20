@@ -47,6 +47,7 @@ async function request(method, path, { params, data, studentContext } = {}) {
       config.params = params;
     }
     const res = await http.request(config);
+    if (!res || !res.data) return null;
     return res.data?.data !== undefined ? res.data.data : res.data;
   } catch (err) {
     if (err.details?.error_code === 'provider_not_configured') throw err;
@@ -59,7 +60,21 @@ async function getCourses(studentContext) {
 }
 
 async function getResults(studentContext) {
-  return request('GET', '/v1/students/me/results', { studentContext });
+  try {
+    return await request('GET', '/v1/students/me/results', { studentContext });
+  } catch (err) {
+    if (err?.details?.upstream_status === 404 || err?.statusCode === 404 || err?.status === 404) {
+      try {
+        return await request('GET', '/api/students/me/results', { studentContext });
+      } catch (fallbackErr) {
+        if (fallbackErr?.details?.upstream_status === 404 || fallbackErr?.statusCode === 404 || fallbackErr?.status === 404) {
+          return await request('GET', '/students/me/results', { studentContext });
+        }
+        throw fallbackErr;
+      }
+    }
+    throw err;
+  }
 }
 
 async function getHomeSummary(studentContext) {
