@@ -410,10 +410,22 @@ class CatalogService {
     return this._embedSubjectItems(row);
   }
 
-  async _embedSubjectItems(row) {
+  async _embedSubjectItems(row, { withEnrolled = false, sessionId = null, universityId = null } = {}) {
     if (!row || !row.id) return row;
     const items = await subjectCombinationModel.listItems(row.id);
-    return { ...row, subject_items: items };
+    let enrolled_count;
+    if (withEnrolled) {
+      const countsMap = await subjectCombinationModel.enrolledCountsForCombinations([row.id], {
+        sessionId,
+        universityId,
+      });
+      enrolled_count = countsMap.get(row.id) || 0;
+    }
+    return {
+      ...row,
+      subject_items: items,
+      ...(withEnrolled ? { enrolled_count } : {}),
+    };
   }
 
   /**
@@ -422,12 +434,12 @@ class CatalogService {
    * enrolled_count — the non-withdrawn registration count per
    * combination (the "NUMBER OF CANDIDATE ENROLLED" column).
    */
-  async _embedSubjectItemsBatch(rows, { withEnrolled = false } = {}) {
+  async _embedSubjectItemsBatch(rows, { withEnrolled = false, sessionId = null, universityId = null } = {}) {
     if (!rows || !rows.length) return rows || [];
     const ids = rows.map((r) => r.id);
     const itemsMap = await subjectCombinationModel.listItemsForCombinations(ids);
     const enrolledMap = withEnrolled
-      ? await subjectCombinationModel.enrolledCountsForCombinations(ids)
+      ? await subjectCombinationModel.enrolledCountsForCombinations(ids, { sessionId, universityId })
       : null;
     return rows.map((row) => ({
       ...row,

@@ -76,18 +76,60 @@ class SubjectCombinationModel {
   /**
    * Non-withdrawn registration counts ("candidates enrolled") for many
    * combinations in one query. Returns a Map<combinationId, count>.
+   *
+   * Counts candidates offering the exact subjects (e.g. standard three subjects)
+   * in that subject combination, properly matching across combinations that share
+   * the same set of subjects.
    */
-  async enrolledCountsForCombinations(combinationIds) {
+  async enrolledCountsForCombinations(combinationIds, { sessionId = null, universityId = null } = {}) {
     const map = new Map();
     if (!combinationIds || !combinationIds.length) return map;
-    const r = await pool.query(
-      `SELECT subject_combination_id, COUNT(*)::int AS c
-       FROM jupeb_registrations
-       WHERE subject_combination_id = ANY($1::uuid[]) AND status <> 'withdrawn'
-       GROUP BY subject_combination_id`,
-      [combinationIds]
-    );
-    for (const row of r.rows) map.set(row.subject_combination_id, row.c);
+    const uniqueIds = Array.from(new Set(combinationIds));
+    for (const id of uniqueIds) map.set(id, 0);
+
+    const conditions = ["r.status <> 'withdrawn'"];
+    const params = [uniqueIds];
+    let pIdx = 2;
+    if (sessionId) {
+      conditions.push(`r.session_id = $${pIdx++}`);
+      params.push(sessionId);
+    }
+    if (universityId) {
+      conditions.push(`r.university_id = $${pIdx++}`);
+      params.push(universityId);
+    }
+
+    const query = `
+      WITH combo_subjects AS (
+        SELECT
+          combination_id,
+          ARRAY_AGG(subject_id ORDER BY subject_id) AS subject_ids,
+          COUNT(subject_id)::int AS subject_count
+        FROM jupeb_subject_combination_items
+        GROUP BY combination_id
+      ),
+      reg_combo_counts AS (
+        SELECT
+          cs.subject_ids,
+          COUNT(DISTINCT r.id)::int AS candidate_count
+        FROM jupeb_registrations r
+        JOIN combo_subjects cs ON cs.combination_id = r.subject_combination_id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY cs.subject_ids
+      )
+      SELECT
+        target_ids.id AS combination_id,
+        COALESCE(rcc.candidate_count, 0)::int AS enrolled_count
+      FROM UNNEST($1::uuid[]) AS target_ids(id)
+      LEFT JOIN combo_subjects cs ON cs.combination_id = target_ids.id
+      LEFT JOIN reg_combo_counts rcc
+        ON cs.subject_ids = rcc.subject_ids AND cs.subject_ids IS NOT NULL
+    `;
+
+    const r = await pool.query(query, params);
+    for (const row of r.rows) {
+      map.set(row.combination_id, row.enrolled_count);
+    }
     return map;
   }
 
