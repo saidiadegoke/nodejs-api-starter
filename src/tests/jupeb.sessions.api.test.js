@@ -430,4 +430,9 @@ describe('JUPEB sessions API', () => {
       .set('Authorization', `Bearer ${token}`);
     expect(finRes.status).toBe(422);
   });
+
+  afterAll(async () => {
+    const { cleanupTestCatalogArtifacts } = require('./jupeb-session-test-helpers');
+    await cleanupTestCatalogArtifacts(pool);
+  });
 });

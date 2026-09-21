@@ -18,6 +18,7 @@
  * whatever feels natural. Memory storage; 10MB cap.
  */
 const multer = require('multer');
+const XLSX = require('xlsx');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -51,8 +52,27 @@ function csvUpload(req, res, next) {
           || mime === 'application/vnd.ms-excel'
           || name.endsWith('.csv');
       }) || files[0]; // fall back to the first file regardless of type
+
       if (csvFile && csvFile.buffer) {
-        req.csvText = csvFile.buffer.toString('utf8');
+        const name = String(csvFile.originalname || '').toLowerCase();
+        const mime = String(csvFile.mimetype || '').toLowerCase();
+        const isExcel =
+          name.endsWith('.xlsx') ||
+          name.endsWith('.xls') ||
+          mime.includes('spreadsheet') ||
+          (mime.includes('ms-excel') && !name.endsWith('.csv')) ||
+          (csvFile.buffer.length >= 2 && csvFile.buffer[0] === 0x50 && csvFile.buffer[1] === 0x4b);
+        if (isExcel) {
+          try {
+            const wb = XLSX.read(csvFile.buffer, { type: 'buffer' });
+            const firstSheet = wb.SheetNames[0];
+            req.csvText = firstSheet ? XLSX.utils.sheet_to_csv(wb.Sheets[firstSheet]) : '';
+          } catch {
+            req.csvText = csvFile.buffer.toString('utf8');
+          }
+        } else {
+          req.csvText = csvFile.buffer.toString('utf8');
+        }
       } else if (req.body && typeof req.body.csv === 'string') {
         // Some clients send the CSV as a form text field rather than a file.
         req.csvText = req.body.csv;

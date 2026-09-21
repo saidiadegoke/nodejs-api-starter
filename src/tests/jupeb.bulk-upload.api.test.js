@@ -72,8 +72,8 @@ describe('JUPEB Bulk Candidate Upload API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     if (sessRes.status === 201) {
       sessionId = sessRes.body.data.id;
@@ -243,5 +243,93 @@ describe('JUPEB Bulk Candidate Upload API', () => {
     expect(res.body.data.succeeded_count).toBe(1);
     expect(res.body.data.failed_count).toBe(0);
     expect(res.body.data.succeeded).toBeUndefined();
+  });
+
+  it('strips empty rows in Excel upload so 1 candidate row with 15 empty rows counts as 1 row', async () => {
+    if (!registrationMigrated || !adminToken || !sessionId || !universityId || !subjectCombinationCode) return;
+
+    const suffix = Date.now().toString().slice(-4);
+    const excelNin = `32${suffix}12345`;
+
+    // 1 valid candidate + 15 completely empty rows (simulating formatted Excel blank rows)
+    const data = [
+      {
+        'first_name': 'Solo',
+        'last_name': 'Candidate',
+        'middle_name': 'Row',
+        'email': `solo_${suffix}@test.com`,
+        'phone': '08030000002',
+        'nin': excelNin,
+        'combination_code': subjectCombinationCode,
+      },
+    ];
+    for (let i = 0; i < 15; i++) {
+      data.push({
+        'first_name': '',
+        'last_name': '',
+        'middle_name': '',
+        'email': '',
+        'phone': '',
+        'nin': '',
+        'combination_code': '',
+      });
+    }
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Candidates');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+
+    const res = await request(app)
+      .post('/registration/institution/registrations/bulk-upload')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .field('session_id', sessionId)
+      .field('university_id', universityId)
+      .field('provider', 'mock')
+      .attach('file', excelBuffer, 'candidates_with_empty_rows.xlsx');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.total_rows).toBe(1); // Stripped 15 empty rows -> exactly 1
+    expect(res.body.data.succeeded_count).toBe(1);
+    expect(res.body.data.skipped_count).toBe(0);
+    expect(res.body.data.failed_count).toBe(0);
+  });
+
+  it('handles leading apostrophes in Excel text fields (e.g. jupeb_prefix, nin, combination_code)', async () => {
+    if (!registrationMigrated || !adminToken || !sessionId || !universityId || !subjectCombinationCode) return;
+
+    const suffix = Date.now().toString().slice(-4);
+    const excelNin = `'33${suffix}12345`; // leading apostrophe
+    const comboWithApostrophe = `'${subjectCombinationCode}`;
+
+    const data = [
+      {
+        'first_name': '\'Apostrophe',
+        'last_name': 'User',
+        'middle_name': '',
+        'email': `apos_${suffix}@test.com`,
+        'phone': '\'08030000003',
+        'nin': excelNin,
+        'combination_code': comboWithApostrophe,
+      },
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Candidates');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+
+    const res = await request(app)
+      .post('/registration/institution/registrations/bulk-upload')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .field('session_id', sessionId)
+      .field('university_id', universityId)
+      .field('provider', 'mock')
+      .attach('file', excelBuffer, 'candidates_apostrophe.xlsx');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.total_rows).toBe(1);
+    expect(res.body.data.succeeded_count).toBe(1);
+    expect(res.body.data.failed_count).toBe(0);
   });
 });

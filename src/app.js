@@ -88,6 +88,8 @@ app.use((req, res, next) => {
 
 // API routes
 app.use('/', routes);
+app.use('/api/v1', routes);
+app.use('/api', routes);
 
 // 404 handler
 app.use(notFoundHandler);

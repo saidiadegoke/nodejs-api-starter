@@ -103,9 +103,9 @@ describe('Catalog bulk CSV upload — accepts multipart, raw csv, JSON', () => {
     if (!token) return;
     const dup = uniqueCode('DU');
     // First row succeeds; second row collides on code with the first.
-    const csv = `code,name,jupeb_prefix
-${dup},First Probe,${nextJupebTestPrefix()}
-${dup},Dup Probe,${nextJupebTestPrefix()}`;
+    const csv = `code,name,jupeb_prefix,email
+${dup},First Probe,${nextJupebTestPrefix()},first-${dup}@example.com
+${dup},Dup Probe,${nextJupebTestPrefix()},dup-${dup}@example.com`;
     cleanupCodes.push(dup);
     const r = await request(app)
       .post('/catalog/universities/bulk')
@@ -117,5 +117,40 @@ ${dup},Dup Probe,${nextJupebTestPrefix()}`;
     expect(r.body.data.failed).toBe(1);
     expect(r.body.data.outcomes[1].ok).toBe(false);
     expect(r.body.data.outcomes[1].error_message).toMatch(/duplicate|conflict|already/i);
+  });
+
+  it('handles Excel (.xlsx) upload with leading apostrophe in jupeb_prefix and strips empty rows', async () => {
+    const XLSX = require('xlsx');
+    const token = await adminToken();
+    if (!token) return;
+    const code = uniqueCode('XU');
+    cleanupCodes.push(code);
+
+    const prefix = nextJupebTestPrefix();
+    const data = [
+      {
+        code,
+        name: `${code} Excel Univ`,
+        jupeb_prefix: `'${prefix}`, // leading apostrophe
+        email: `excel-${code}@example.com`,
+      },
+      // Empty rows
+      { code: '', name: '', jupeb_prefix: '', email: '' },
+      { code: '', name: '', jupeb_prefix: '', email: '' },
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Universities');
+    const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+
+    const r = await request(app)
+      .post('/catalog/universities/bulk')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('file', buffer, { filename: 'unis.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    expect(r.status).toBe(200);
+    expect(r.body.data.total).toBe(1); // Stripped empty rows
+    expect(r.body.data.succeeded).toBe(1);
   });
 });

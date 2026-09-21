@@ -6,7 +6,7 @@ const {
 } = require('./institution-admin-provision.service');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const subjectModel = require('../models/subject.model');
-const { validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
+const { cleanJupebPrefix, validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
 const crmsProviders = require('../../integrations/crms');
@@ -126,7 +126,8 @@ class CatalogService {
     if (!code || !name || !jupeb_prefix) {
       throw httpError(422, 'code, name, and jupeb_prefix are required');
     }
-    const p = validateJupebPrefix(String(jupeb_prefix).trim());
+    const cleanedPrefix = cleanJupebPrefix(jupeb_prefix);
+    const p = validateJupebPrefix(cleanedPrefix);
     if (!p.ok) throw httpError(422, p.error);
     if (university_type !== undefined && university_type !== null) {
       const allowed = new Set(['federal', 'state', 'private']);
@@ -142,7 +143,7 @@ class CatalogService {
         code,
         name,
         short_name,
-        jupeb_prefix: String(jupeb_prefix).trim(),
+        jupeb_prefix: cleanedPrefix,
         metadata: metadata && typeof metadata === 'object' ? metadata : {},
         university_type: university_type || null,
         email: body.email ? String(body.email).trim().toLowerCase() : null,
@@ -193,9 +194,10 @@ class CatalogService {
     if (body.metadata !== undefined) fields.metadata = body.metadata;
     if (body.code !== undefined) fields.code = body.code;
     if (body.jupeb_prefix !== undefined) {
-      const p = validateJupebPrefix(String(body.jupeb_prefix).trim());
+      const cleanedPrefix = cleanJupebPrefix(body.jupeb_prefix);
+      const p = validateJupebPrefix(cleanedPrefix);
       if (!p.ok) throw httpError(422, p.error);
-      fields.jupeb_prefix = String(body.jupeb_prefix).trim();
+      fields.jupeb_prefix = cleanedPrefix;
     }
     if (body.university_type !== undefined) {
       const allowed = new Set(['federal', 'state', 'private']);
@@ -218,6 +220,28 @@ class CatalogService {
     }
     const row = await universityModel.updateById(id, fields);
     if (!row) throw httpError(404, 'University not found');
+
+    if (row.email) {
+      try {
+        const { rows: admins } = await pool.query(
+          `SELECT uu.user_id FROM user_universities uu
+           JOIN users u ON u.id = uu.user_id
+           WHERE uu.university_id = $1 AND uu.role = 'institution_admin' AND u.deleted_at IS NULL
+           LIMIT 1`,
+          [id]
+        );
+        if (admins.length === 0) {
+          const { provisionInstitutionAdmin } = require('./institution-admin-provision.service');
+          await provisionInstitutionAdmin({
+            email: row.email,
+            university_id: id,
+          });
+        }
+      } catch {
+        // Silently ignore if already provisioned or conflict
+      }
+    }
+
     return row;
   }
 
@@ -410,10 +434,22 @@ class CatalogService {
     return this._embedSubjectItems(row);
   }
 
-  async _embedSubjectItems(row) {
+  async _embedSubjectItems(row, { withEnrolled = false, sessionId = null, universityId = null } = {}) {
     if (!row || !row.id) return row;
     const items = await subjectCombinationModel.listItems(row.id);
-    return { ...row, subject_items: items };
+    let enrolled_count;
+    if (withEnrolled) {
+      const countsMap = await subjectCombinationModel.enrolledCountsForCombinations([row.id], {
+        sessionId,
+        universityId,
+      });
+      enrolled_count = countsMap.get(row.id) || 0;
+    }
+    return {
+      ...row,
+      subject_items: items,
+      ...(withEnrolled ? { enrolled_count } : {}),
+    };
   }
 
   /**
@@ -422,12 +458,12 @@ class CatalogService {
    * enrolled_count — the non-withdrawn registration count per
    * combination (the "NUMBER OF CANDIDATE ENROLLED" column).
    */
-  async _embedSubjectItemsBatch(rows, { withEnrolled = false } = {}) {
+  async _embedSubjectItemsBatch(rows, { withEnrolled = false, sessionId = null, universityId = null } = {}) {
     if (!rows || !rows.length) return rows || [];
     const ids = rows.map((r) => r.id);
     const itemsMap = await subjectCombinationModel.listItemsForCombinations(ids);
     const enrolledMap = withEnrolled
-      ? await subjectCombinationModel.enrolledCountsForCombinations(ids)
+      ? await subjectCombinationModel.enrolledCountsForCombinations(ids, { sessionId, universityId })
       : null;
     return rows.map((row) => ({
       ...row,
@@ -541,7 +577,7 @@ class CatalogService {
       code: row.code,
       name: row.name,
       short_name: row.short_name || undefined,
-      jupeb_prefix: row.jupeb_prefix || row.prefix,
+      jupeb_prefix: cleanJupebPrefix(row.jupeb_prefix || row.prefix),
       university_type: row.university_type || undefined,
       email: row.email || undefined,
       address: row.address || undefined,

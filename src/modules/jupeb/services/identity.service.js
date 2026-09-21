@@ -270,7 +270,7 @@ function pickIntake(input) {
 }
 
 class IdentityService {
-  async verifyNin({ nin, idempotency_key, intake_payload, provider: providerOverride, force_fresh }, userId) {
+  async verifyNin({ nin, idempotency_key, intake_payload, session_id, provider: providerOverride, force_fresh }, userId) {
     const normalized = normalizeNin(nin);
     if (normalized.length !== 11) {
       throw httpError(422, 'NIN must be exactly 11 digits');
@@ -282,6 +282,32 @@ class IdentityService {
     const adapterOpts = {};
     if (providerOverride) adapterOpts.provider = String(providerOverride);
     if (force_fresh) adapterOpts.force_fresh = true;
+
+    // Early duplicate check: if NIN already has an active registration, reject early on the form page
+    const targetSessionId = session_id || (intake_payload && intake_payload.session_id) || null;
+    if (targetSessionId) {
+      const blockedInSession = await registrationModel.hasBlockingRegistrationForNinHash(ninHash, {
+        sessionId: targetSessionId,
+      });
+      if (blockedInSession) {
+        const err = httpError(
+          409,
+          'This NIN is already registered for this academic session. Duplicate NINs cannot be registered.'
+        );
+        err.details = { error_code: 'duplicate_nin_session', session_id: targetSessionId, nin_last4: last4 };
+        throw err;
+      }
+    }
+
+    const blockedGlobally = await registrationModel.hasBlockingRegistrationForNinHash(ninHash);
+    if (blockedGlobally) {
+      const err = httpError(
+        409,
+        'This NIN is already registered with an active candidate in the system. Duplicate NINs cannot be registered.'
+      );
+      err.details = { error_code: 'duplicate_nin', nin_last4: last4 };
+      throw err;
+    }
 
     if (idemKey) {
       const existing = await ninVerificationModel.findByIdempotencyKey(idemKey);
@@ -311,11 +337,6 @@ class IdentityService {
         if (updated) rowOut = updated;
       }
       return publicVerifyResponse(rowOut, userId);
-    }
-
-    const blocked = await registrationModel.hasBlockingRegistrationForNinHash(ninHash);
-    if (blocked) {
-      throw httpError(409, 'This NIN is already registered');
     }
 
     const adapterResult = await ninAdapter.verifyNin(normalized, adapterOpts);

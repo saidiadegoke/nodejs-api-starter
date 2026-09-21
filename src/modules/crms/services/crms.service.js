@@ -1,5 +1,6 @@
 const crmsProviders = require('../../integrations/crms');
 const { resolveStudentContext } = require('../../integrations/student-context');
+const resultsReleaseService = require('../../jupeb/services/results-release.service');
 
 class CrmsService {
   static async getHomeSummary(userId) {
@@ -14,6 +15,7 @@ class CrmsService {
 
   static async getResults(userId) {
     const ctx = await resolveStudentContext(userId);
+    await resultsReleaseService.checkStudentReleaseAccess(ctx);
     return crmsProviders.get().getResults(ctx);
   }
 

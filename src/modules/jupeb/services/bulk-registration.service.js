@@ -9,6 +9,7 @@ const ninAdapter = require('./nin-adapter.service');
 const { normalizeNin, hashNin, ninLast4 } = require('../utils/identity-crypto');
 const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
 const { describeSessionWindowFailure } = require('../utils/session-validation');
+const { cleanJupebPrefix } = require('../utils/catalog-validation');
 const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
 
 function httpError(status, message, details) {
@@ -56,11 +57,21 @@ async function mapConcurrent(items, limit, fn) {
   return results;
 }
 
+function isRowEmpty(rowObj) {
+  if (!rowObj || typeof rowObj !== 'object') return true;
+  const values = Object.values(rowObj);
+  if (values.length === 0) return true;
+  return values.every((val) => val == null || String(val).trim() === '');
+}
+
 function extractCandidate(rowObj) {
   const clean = {};
   for (const [key, val] of Object.entries(rowObj)) {
     const k = String(key || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-    clean[k] = typeof val === 'string' ? val.trim() : (val != null ? String(val).trim() : '');
+    let strVal = typeof val === 'string' ? val.trim() : (val != null ? String(val).trim() : '');
+    // Strip leading apostrophes or quotes (Excel text formatting prefix e.g. '006, '102, '080123...)
+    strVal = strVal.replace(/^['’`"]+/, '').trim();
+    clean[k] = strVal;
   }
 
   const firstName = clean.firstname || '';
@@ -70,6 +81,7 @@ function extractCandidate(rowObj) {
   const phone = clean.phone || '';
   const nin = clean.nin || '';
   const combinationCode = clean.combinationcode || '';
+  const jupebPrefix = cleanJupebPrefix(clean.jupebprefix || clean.prefix || '');
 
   const name = [firstName, middleName, lastName].filter(Boolean).join(' ');
 
@@ -82,6 +94,7 @@ function extractCandidate(rowObj) {
     phone,
     nin,
     combination_code: combinationCode,
+    jupeb_prefix: jupebPrefix,
     raw: rowObj,
   };
 }
@@ -102,17 +115,27 @@ class BulkRegistrationService {
       throw httpError(422, 'Spreadsheet contains no sheets');
     }
     const sheet = workbook.Sheets[sheetName];
-    const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+    const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false, blankrows: false });
     return rawRows;
   }
 
   async process({
     buffer,
     session_id,
-    university_id,
+    university_id: rawUniversityId,
+    jupeb_prefix: rawJupebPrefix,
     userId,
     provider: providerOverride,
   }) {
+    let university_id = rawUniversityId;
+    if (!university_id && rawJupebPrefix) {
+      const cleanPrefix = cleanJupebPrefix(rawJupebPrefix);
+      const uni = await universityModel.findByJupebPrefix(cleanPrefix);
+      if (uni) {
+        university_id = uni.id;
+      }
+    }
+
     if (!session_id || !university_id) {
       throw httpError(422, 'session_id and university_id are required');
     }
@@ -167,7 +190,18 @@ class BulkRegistrationService {
     };
 
     const rawRows = this.parseSpreadsheet(buffer);
-    if (!rawRows.length) {
+    // Filter out completely blank/empty rows (common in Excel exports where rows have empty formatting)
+    const activeRows = [];
+    for (let i = 0; i < rawRows.length; i++) {
+      if (!isRowEmpty(rawRows[i])) {
+        activeRows.push({
+          rowNumber: i + 2, // 1-indexed row number in the spreadsheet (row 1 is header)
+          data: rawRows[i],
+        });
+      }
+    }
+
+    if (!activeRows.length) {
       return {
         total_rows: 0,
         succeeded_count: 0,
@@ -185,9 +219,10 @@ class BulkRegistrationService {
     const seenNinsInBatch = new Set();
 
     // 1. Initial syntax/field validation of rows
-    for (let i = 0; i < rawRows.length; i++) {
-      const rowNum = i + 2; // Row 1 is header, first data row is 2
-      const candidate = extractCandidate(rawRows[i]);
+    for (let i = 0; i < activeRows.length; i++) {
+      const { rowNumber: rowNum, data: rowData } = activeRows[i];
+      const candidate = extractCandidate(rowData);
+      candidate.rowNumber = rowNum;
 
       if (!candidate.first_name || !candidate.last_name) {
         skipped.push({
@@ -356,6 +391,27 @@ class BulkRegistrationService {
         return;
       }
 
+      // Check if blocked globally across any active session
+      const isBlockedGlobally = await registrationModel.hasBlockingRegistrationForNinHash(
+        candidate.ninHash
+      );
+      if (isBlockedGlobally) {
+        failed.push({
+          row: candidate.rowNumber,
+          first_name: candidate.first_name,
+          last_name: candidate.last_name,
+          middle_name: candidate.middle_name,
+          name: candidate.name,
+          email: candidate.email,
+          phone: candidate.phone,
+          nin_last4: ninLast4(candidate.normalizedNin),
+          combination_code: comboRow.code,
+          error_code: 'already_registered',
+          error: 'This NIN is already registered with an active candidate in the system',
+        });
+        return;
+      }
+
       let ninVerificationId = null;
 
       // Check active cache first (free — avoids calling provider)
@@ -379,27 +435,6 @@ class BulkRegistrationService {
           // ignore non-fatal intake merge failure
         }
       } else {
-        // Not in active cache: check if blocked globally across any active session
-        const isBlockedGlobally = await registrationModel.hasBlockingRegistrationForNinHash(
-          candidate.ninHash
-        );
-        if (isBlockedGlobally) {
-          failed.push({
-            row: candidate.rowNumber,
-            first_name: candidate.first_name,
-            last_name: candidate.last_name,
-            middle_name: candidate.middle_name,
-            name: candidate.name,
-            email: candidate.email,
-            phone: candidate.phone,
-            nin_last4: ninLast4(candidate.normalizedNin),
-            combination_code: comboRow.code,
-            error_code: 'already_registered',
-            error: 'This NIN is already registered',
-          });
-          return;
-        }
-
         // Call NIN verification provider
         const adapterOpts = {};
         if (providerOverride) adapterOpts.provider = String(providerOverride);
@@ -569,6 +604,9 @@ class BulkRegistrationService {
         blockedHashesSet.add(candidate.ninHash);
         succeededCount++;
       } catch (regErr) {
+        const isDuplicate =
+          regErr.status === 409 ||
+          (regErr.message && /already registered|duplicate|already linked/i.test(regErr.message));
         failed.push({
           row: candidate.rowNumber,
           first_name: candidate.first_name,
@@ -579,8 +617,10 @@ class BulkRegistrationService {
           phone: candidate.phone,
           nin_last4: ninLast4(candidate.normalizedNin),
           combination_code: comboRow.code,
-          error_code: regErr.status === 409 ? 'already_registered' : 'registration_failed',
-          error: regErr.message || 'Registration creation failed',
+          error_code: isDuplicate ? 'already_registered' : 'registration_failed',
+          error: isDuplicate
+            ? 'This candidate cannot be registered because their NIN is already registered in the system'
+            : (regErr.message || 'Registration creation failed'),
         });
       }
     });
@@ -590,7 +630,7 @@ class BulkRegistrationService {
     skipped.sort((a, b) => a.row - b.row);
 
     return {
-      total_rows: rawRows.length,
+      total_rows: activeRows.length,
       succeeded_count: succeededCount,
       failed_count: failed.length,
       skipped_count: skipped.length,

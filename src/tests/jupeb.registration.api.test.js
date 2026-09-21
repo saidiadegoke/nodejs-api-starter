@@ -94,8 +94,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     const sessionId = sessRes.body.data.id;
@@ -227,8 +227,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
 
@@ -285,8 +285,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     const sessionId = sessRes.body.data.id;
@@ -371,8 +371,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     await closeAllOpenJupebSessions(token);
@@ -445,8 +445,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     await closeAllOpenJupebSessions(token);
@@ -504,8 +504,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     await closeAllOpenJupebSessions(token);
@@ -590,8 +590,8 @@ describe('JUPEB registration API', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     await closeAllOpenJupebSessions(token);
@@ -671,8 +671,8 @@ describe('JUPEB registration API', () => {
           .send({
             academic_year: academicYear,
             year_short: yearShort,
-            opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-            closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+            opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+            closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
           });
         if (sessRes.status === 201) break;
       }
@@ -910,13 +910,15 @@ describe('JUPEB registration API', () => {
         });
       expect(firstReg.status).toBe(201);
 
+      // Early validation on form page: NIN verification now throws 409 if NIN is already registered
       const cacheHit = await request(app)
         .post('/identity/nin/verify')
         .set('Authorization', `Bearer ${token}`)
         .send({ nin, provider: 'mock' });
-      expect(cacheHit.status).toBe(200);
-      expect(cacheHit.body.data.verification_id).toBe(ninVerificationId);
+      expect(cacheHit.status).toBe(409);
+      expect(cacheHit.body.message).toMatch(/already registered/i);
 
+      // Defense in depth: registration endpoint also rejects duplicate verification ID / NIN
       const secondReg = await request(app)
         .post('/registration/institution/registrations')
         .set('Authorization', `Bearer ${token}`)
@@ -927,7 +929,7 @@ describe('JUPEB registration API', () => {
           nin_verification_id: ninVerificationId,
         });
       expect(secondReg.status).toBe(409);
-      expect(secondReg.body.message).toMatch(/already linked/i);
+      expect(secondReg.body.message).toMatch(/already registered|already linked/i);
     });
   });
 });
@@ -987,8 +989,8 @@ describe('POST /registration/institution/registrations/:id/resend-code', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     expect(sessRes.status).toBe(201);
     await closeAllOpenJupebSessions(token);
@@ -1045,8 +1047,8 @@ describe('POST /registration/institution/registrations/:id/resend-code', () => {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     if (sessRes.status !== 201) return;
     await closeAllOpenJupebSessions(token);

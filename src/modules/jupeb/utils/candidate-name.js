@@ -45,9 +45,13 @@ function resolveCandidateDisplayName({
   const fromIntake = intakeDisplayName(intake);
   const fromProfile = profileDisplayName(profile);
 
-  if (ninStatus === 'verified' && fromNin) return fromNin;
-  if (ninStatus === 'pending') return fromIntake || fromProfile || fromNin || null;
-  return fromNin || fromIntake || fromProfile || null;
+  if (ninStatus === 'verified') {
+    return fromNin || fromProfile || fromIntake || null;
+  }
+  if (ninStatus === 'pending') {
+    return fromIntake || fromProfile || fromNin || null;
+  }
+  return fromNin || fromProfile || fromIntake || null;
 }
 
 module.exports = {
