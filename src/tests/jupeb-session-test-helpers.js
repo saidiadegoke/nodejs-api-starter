@@ -207,8 +207,8 @@ async function ensureTestRegistrationFixtures(pool, token, tag = 'TEST') {
       .send({
         academic_year: academicYear,
         year_short: yearShort,
-        opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-        closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+        opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
       });
     if (sessRes.status === 201) {
       sessionId = sessRes.body.data?.id;

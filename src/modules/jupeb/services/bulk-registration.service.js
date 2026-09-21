@@ -356,6 +356,27 @@ class BulkRegistrationService {
         return;
       }
 
+      // Check if blocked globally across any active session
+      const isBlockedGlobally = await registrationModel.hasBlockingRegistrationForNinHash(
+        candidate.ninHash
+      );
+      if (isBlockedGlobally) {
+        failed.push({
+          row: candidate.rowNumber,
+          first_name: candidate.first_name,
+          last_name: candidate.last_name,
+          middle_name: candidate.middle_name,
+          name: candidate.name,
+          email: candidate.email,
+          phone: candidate.phone,
+          nin_last4: ninLast4(candidate.normalizedNin),
+          combination_code: comboRow.code,
+          error_code: 'already_registered',
+          error: 'This NIN is already registered with an active candidate in the system',
+        });
+        return;
+      }
+
       let ninVerificationId = null;
 
       // Check active cache first (free — avoids calling provider)
@@ -379,27 +400,6 @@ class BulkRegistrationService {
           // ignore non-fatal intake merge failure
         }
       } else {
-        // Not in active cache: check if blocked globally across any active session
-        const isBlockedGlobally = await registrationModel.hasBlockingRegistrationForNinHash(
-          candidate.ninHash
-        );
-        if (isBlockedGlobally) {
-          failed.push({
-            row: candidate.rowNumber,
-            first_name: candidate.first_name,
-            last_name: candidate.last_name,
-            middle_name: candidate.middle_name,
-            name: candidate.name,
-            email: candidate.email,
-            phone: candidate.phone,
-            nin_last4: ninLast4(candidate.normalizedNin),
-            combination_code: comboRow.code,
-            error_code: 'already_registered',
-            error: 'This NIN is already registered',
-          });
-          return;
-        }
-
         // Call NIN verification provider
         const adapterOpts = {};
         if (providerOverride) adapterOpts.provider = String(providerOverride);
@@ -569,6 +569,9 @@ class BulkRegistrationService {
         blockedHashesSet.add(candidate.ninHash);
         succeededCount++;
       } catch (regErr) {
+        const isDuplicate =
+          regErr.status === 409 ||
+          (regErr.message && /already registered|duplicate|already linked/i.test(regErr.message));
         failed.push({
           row: candidate.rowNumber,
           first_name: candidate.first_name,
@@ -579,8 +582,10 @@ class BulkRegistrationService {
           phone: candidate.phone,
           nin_last4: ninLast4(candidate.normalizedNin),
           combination_code: comboRow.code,
-          error_code: regErr.status === 409 ? 'already_registered' : 'registration_failed',
-          error: regErr.message || 'Registration creation failed',
+          error_code: isDuplicate ? 'already_registered' : 'registration_failed',
+          error: isDuplicate
+            ? 'This candidate cannot be registered because their NIN is already registered in the system'
+            : (regErr.message || 'Registration creation failed'),
         });
       }
     });

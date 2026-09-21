@@ -533,10 +533,20 @@ async function assertNinAvailableForNewRegistration({ session_id, nin_verificati
   const ninRow = await ninVerificationModel.findById(nin_verification_id);
   if (!ninRow) throw httpError(404, 'NIN verification not found');
 
+  if (ninRow.status === 'failed') {
+    throw httpError(422, 'NIN verification failed. The provided NIN is invalid and cannot be registered.', {
+      error_code: 'nin_verification_failed',
+    });
+  }
+
   const linked = await registrationModel.findByNinVerificationId(nin_verification_id);
   for (const reg of linked) {
     if (!NIN_REGISTRATION_RETRY_STATUSES.has(reg.status)) {
-      throw httpError(409, 'This NIN verification is already linked to an active registration');
+      throw httpError(
+        409,
+        'This NIN is already registered with an active candidate in the system. Duplicate registrations are not allowed.',
+        { error_code: 'duplicate_nin', nin_verification_id }
+      );
     }
   }
 
@@ -545,7 +555,20 @@ async function assertNinAvailableForNewRegistration({ session_id, nin_verificati
     { sessionId: session_id }
   );
   if (blockedInSession) {
-    throw httpError(409, 'This NIN is already registered for this session');
+    throw httpError(
+      409,
+      'This NIN is already registered for this academic session. Duplicate registrations are not allowed.',
+      { error_code: 'duplicate_nin_session', session_id }
+    );
+  }
+
+  const blockedGlobally = await registrationModel.hasBlockingRegistrationForNinHash(ninRow.nin_hash);
+  if (blockedGlobally) {
+    throw httpError(
+      409,
+      'This NIN is already registered with an active candidate in the system. Duplicate registrations are not allowed.',
+      { error_code: 'duplicate_nin' }
+    );
   }
 }
 

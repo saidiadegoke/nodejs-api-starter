@@ -28,9 +28,18 @@ class RegistrationController {
       if (result.succeeded_count > 0) {
         return sendSuccess(res, result, 'Bulk upload completed successfully', 200);
       }
+      let failureMessage = 'All rows in bulk upload failed or were skipped';
+      const duplicateFailures = (result.failed || []).filter(
+        (f) => f.error_code === 'already_registered' || f.error_code === 'duplicate_in_file'
+      );
+      if (duplicateFailures.length > 0 && duplicateFailures.length === result.failed_count && (result.skipped_count === 0 || !result.skipped_count)) {
+        failureMessage = 'Bulk upload failed: All candidates have duplicate or already registered NINs';
+      } else if (duplicateFailures.length > 0) {
+        failureMessage = `Bulk upload failed: Duplicate or already registered NINs detected (${duplicateFailures.length} candidate${duplicateFailures.length > 1 ? 's' : ''})`;
+      }
       return res.status(422).json({
         success: false,
-        message: 'All rows in bulk upload failed or were skipped',
+        message: failureMessage,
         data: result,
       });
     } catch (err) {
