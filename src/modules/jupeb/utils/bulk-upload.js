@@ -48,16 +48,23 @@ function parseCsv(text) {
     rows.push(row);
   }
   // Drop trailing all-empty rows
-  while (rows.length && rows[rows.length - 1].every((v) => v === '')) rows.pop();
+  while (rows.length && rows[rows.length - 1].every((v) => !v || !String(v).trim())) rows.pop();
   if (!rows.length) return [];
   const headerRow = rows[0].map((h) => String(h).trim().toLowerCase());
-  return rows.slice(1).map((cells) => {
-    const obj = {};
-    for (let i = 0; i < headerRow.length; i += 1) {
-      obj[headerRow[i]] = cells[i] !== undefined ? cells[i] : '';
-    }
-    return obj;
-  });
+  return rows
+    .slice(1)
+    .map((cells) => {
+      const obj = {};
+      for (let i = 0; i < headerRow.length; i += 1) {
+        let val = cells[i] !== undefined ? cells[i] : '';
+        if (typeof val === 'string') {
+          val = val.trim().replace(/^['’`"]+/, '').trim();
+        }
+        obj[headerRow[i]] = val;
+      }
+      return obj;
+    })
+    .filter((obj) => Object.values(obj).some((v) => v != null && String(v).trim() !== ''));
 }
 
 /**

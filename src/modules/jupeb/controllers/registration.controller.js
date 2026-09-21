@@ -12,12 +12,14 @@ class RegistrationController {
       }
       const session_id = req.body.session_id || req.query.session_id;
       const university_id = req.body.university_id || req.query.university_id;
+      const jupeb_prefix = req.body.jupeb_prefix || req.query.jupeb_prefix || req.body.prefix || req.query.prefix;
       const provider = req.body.provider || req.query.provider;
 
       const result = await bulkRegistrationService.process({
         buffer,
         session_id,
         university_id,
+        jupeb_prefix,
         userId: req.user.user_id,
         provider,
       });

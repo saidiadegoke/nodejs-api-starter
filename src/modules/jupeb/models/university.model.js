@@ -46,6 +46,16 @@ class UniversityModel {
     return result.rows[0];
   }
 
+  async findByJupebPrefix(prefix) {
+    if (!prefix) return null;
+    const clean = String(prefix).trim().replace(/^['’`"]+/, '').trim();
+    const result = await pool.query(
+      `SELECT * FROM jupeb_universities WHERE jupeb_prefix = $1 AND deleted_at IS NULL LIMIT 1`,
+      [clean]
+    );
+    return result.rows[0] || null;
+  }
+
   /**
    * Resolve the university a user belongs to — the institution-scope
    * binding on profiles.jupeb_university_id, falling back to the

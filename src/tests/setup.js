@@ -1,9 +1,17 @@
 // Test setup and global configuration
 const path = require('path');
+const fs = require('fs');
 
-// Load environment variables from .env file (not .env.test since it doesn't exist)
-// Tests should use the same .env as development but can override via process.env
-require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+// Load environment variables: start with base .env then overlay with .env.test
+const defaultEnvPath = path.resolve(__dirname, '../../.env');
+const testEnvPath = path.resolve(__dirname, '../../.env.test');
+
+if (fs.existsSync(defaultEnvPath)) {
+  require('dotenv').config({ path: defaultEnvPath });
+}
+if (fs.existsSync(testEnvPath)) {
+  require('dotenv').config({ path: testEnvPath, override: true });
+}
 
 // Override with test-specific values
 process.env.NODE_ENV = 'test';

@@ -1,12 +1,28 @@
 /**
- * @param {string} prefix
- * @returns {{ ok: boolean, error?: string }}
+ * Cleans a jupeb_prefix by stripping leading apostrophes/quotes (common Excel text prefix e.g. '006 or '102)
+ * and padding 1-2 digit numbers to 3 digits.
+ * @param {string|number} prefix
+ * @returns {string}
+ */
+function cleanJupebPrefix(prefix) {
+  if (prefix == null) return '';
+  let str = String(prefix).trim().replace(/^['’`"]+/, '').trim();
+  if (/^\d{1,2}$/.test(str)) {
+    str = str.padStart(3, '0');
+  }
+  return str;
+}
+
+/**
+ * @param {string|number} prefix
+ * @returns {{ ok: boolean, error?: string, prefix?: string }}
  */
 function validateJupebPrefix(prefix) {
-  if (typeof prefix !== 'string' || !/^[0-9]{3}$/.test(prefix.trim())) {
+  const cleaned = cleanJupebPrefix(prefix);
+  if (!/^[0-9]{3}$/.test(cleaned)) {
     return { ok: false, error: 'jupeb_prefix must be exactly 3 numeric characters' };
   }
-  return { ok: true };
+  return { ok: true, prefix: cleaned };
 }
 
 /**
@@ -39,6 +55,7 @@ function normalizeSubjects(raw) {
 }
 
 module.exports = {
+  cleanJupebPrefix,
   validateJupebPrefix,
   normalizeSubjects,
 };
