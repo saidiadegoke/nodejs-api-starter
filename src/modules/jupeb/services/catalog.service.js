@@ -218,6 +218,28 @@ class CatalogService {
     }
     const row = await universityModel.updateById(id, fields);
     if (!row) throw httpError(404, 'University not found');
+
+    if (row.email) {
+      try {
+        const { rows: admins } = await pool.query(
+          `SELECT uu.user_id FROM user_universities uu
+           JOIN users u ON u.id = uu.user_id
+           WHERE uu.university_id = $1 AND uu.role = 'institution_admin' AND u.deleted_at IS NULL
+           LIMIT 1`,
+          [id]
+        );
+        if (admins.length === 0) {
+          const { provisionInstitutionAdmin } = require('./institution-admin-provision.service');
+          await provisionInstitutionAdmin({
+            email: row.email,
+            university_id: id,
+          });
+        }
+      } catch {
+        // Silently ignore if already provisioned or conflict
+      }
+    }
+
     return row;
   }
 

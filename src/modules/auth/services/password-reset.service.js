@@ -80,6 +80,7 @@ function dispatchOtpEmail({ user, code }) {
     // eslint-disable-next-line no-console
     console.warn('[password-reset.email] send failed:', err && err.message);
   });
+
 }
 
 function dispatchOtpSms({ user, code }) {
@@ -124,7 +125,28 @@ function dispatchTokenEmail({ user, rawToken }) {
 
 async function loadUserForReset(identifier) {
   const AuthModel = require('../models/auth.model');
-  const user = await AuthModel.findByIdentifier(identifier);
+  let user = await AuthModel.findByIdentifier(identifier);
+  if (!user && typeof identifier === 'string' && identifier.includes('@')) {
+    const normalizedEmail = identifier.trim().toLowerCase();
+    try {
+      const uniRes = await pool.query(
+        `SELECT id, name, email FROM jupeb_universities WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1`,
+        [normalizedEmail]
+      );
+      if (uniRes.rows[0]) {
+        const university = uniRes.rows[0];
+        const { provisionInstitutionAdmin } = require('../../jupeb/services/institution-admin-provision.service');
+        await provisionInstitutionAdmin({
+          email: university.email,
+          university_id: university.id,
+        });
+        user = await AuthModel.findByIdentifier(normalizedEmail);
+      }
+    } catch {
+      user = await AuthModel.findByIdentifier(normalizedEmail);
+    }
+  }
+
   if (!user) return null;
   // Pull first_name for nicer email/sms copy.
   const r = await pool.query(

@@ -110,6 +110,42 @@ async function provisionInstitutionAdmin({
 
   const existing = await AuthModel.findByIdentifier(normalizedEmail);
   if (existing) {
+    const existingBinding = await UserUniversityModel.findPrimary(existing.id);
+    if (!existingBinding) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const binding = await UserUniversityModel.bind(
+          {
+            userId: existing.id,
+            universityId: university_id,
+            role: 'institution_admin',
+            isPrimary: true,
+            createdBy,
+          },
+          client
+        );
+        await client.query(
+          `UPDATE profiles SET jupeb_university_id = $2, updated_at = NOW()
+           WHERE user_id = $1`,
+          [existing.id, university_id]
+        );
+        await client.query('COMMIT');
+        return {
+          user: existing,
+          passwordPlaintext: null,
+          binding,
+          first_name: existing.first_name || null,
+          last_name: existing.last_name || null,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
     const err = httpError(409, 'User with this email already exists');
     err.details = {
       error_code: 'duplicate',

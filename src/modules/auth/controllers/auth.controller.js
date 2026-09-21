@@ -593,7 +593,7 @@ class AuthController {
           },
           requestedDelivery === 'otp'
             ? 'If an account exists, a reset code has been sent'
-            : 'If an account exists, a reset link has been sent',
+            : 'If an account exists, a reset code has been sent',
           OK
         );
       }
@@ -620,7 +620,7 @@ class AuthController {
         },
         issued.delivery === 'otp'
           ? 'Password reset code sent'
-          : 'Password reset link sent',
+          : 'Password reset code sent',
         OK
       );
     } catch (error) {
