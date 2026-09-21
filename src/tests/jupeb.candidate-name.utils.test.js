@@ -34,4 +34,34 @@ describe('resolveCandidateDisplayName', () => {
       ninStatus: 'verified',
     })).toBe('Mock1234 Candidate');
   });
+
+  it('falls back to profile name when NIN is verified but payload is purged post-approval', () => {
+    expect(resolveCandidateDisplayName({
+      ninPayload: {},
+      ninFullName: null,
+      intake: { name: 'jamie Croix' },
+      profile: { display_name: 'SADIYA UMAR', first_name: 'SADIYA', last_name: 'UMAR' },
+      ninStatus: 'verified',
+    })).toBe('SADIYA UMAR');
+  });
+
+  it('falls back to profile first and last name when display_name is absent and payload is purged', () => {
+    expect(resolveCandidateDisplayName({
+      ninPayload: {},
+      ninFullName: null,
+      intake: { name: 'jamie Croix' },
+      profile: { first_name: 'SADIYA', last_name: 'UMAR' },
+      ninStatus: 'verified',
+    })).toBe('SADIYA UMAR');
+  });
+
+  it('falls back to intake name if both ninPayload and profile are empty for verified NIN', () => {
+    expect(resolveCandidateDisplayName({
+      ninPayload: {},
+      ninFullName: null,
+      intake: { name: 'jamie Croix' },
+      profile: {},
+      ninStatus: 'verified',
+    })).toBe('jamie Croix');
+  });
 });
