@@ -11,6 +11,7 @@ const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
 const crmsProviders = require('../../integrations/crms');
 const attendanceProviders = require('../../integrations/attendance');
+const { normalizeStatus } = require('../../../shared/utils/status');
 
 const NIGERIAN_STATES = [
   'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
@@ -218,6 +219,13 @@ class CatalogService {
     if (body.description !== undefined) {
       fields.description = body.description ? String(body.description).trim() : null;
     }
+    if (body.status !== undefined) {
+      const norm = normalizeStatus(body.status);
+      if (!norm) throw httpError(422, 'status must be active or inactive');
+      fields.status = norm;
+    } else if (body.is_active !== undefined) {
+      fields.status = body.is_active ? 'active' : 'inactive';
+    }
     const row = await universityModel.updateById(id, fields);
     if (!row) throw httpError(404, 'University not found');
 
@@ -246,11 +254,12 @@ class CatalogService {
   }
 
   async setUniversityStatus(id, status) {
-    if (!['active', 'inactive'].includes(status)) {
+    const norm = normalizeStatus(status);
+    if (!norm) {
       throw httpError(422, 'status must be active or inactive');
     }
     await this.getUniversityById(id);
-    const row = await universityModel.setStatus(id, status);
+    const row = await universityModel.setStatus(id, norm);
     if (!row) throw httpError(404, 'University not found');
     return row;
   }
@@ -473,11 +482,12 @@ class CatalogService {
   }
 
   async setSubjectCombinationStatus(id, status) {
-    if (!['active', 'inactive'].includes(status)) {
+    const norm = normalizeStatus(status);
+    if (!norm) {
       throw httpError(422, 'status must be active or inactive');
     }
     await this.getSubjectCombinationById(id);
-    const row = await subjectCombinationModel.setStatus(id, status);
+    const row = await subjectCombinationModel.setStatus(id, norm);
     if (!row) throw httpError(404, 'Subject combination not found');
     return row;
   }
@@ -554,11 +564,12 @@ class CatalogService {
   }
 
   async setSubjectStatus(id, status) {
-    if (!['active', 'inactive'].includes(status)) {
+    const norm = normalizeStatus(status);
+    if (!norm) {
       throw httpError(422, 'status must be active or inactive');
     }
     await this.getSubjectById(id);
-    const row = await subjectModel.setStatus(id, status);
+    const row = await subjectModel.setStatus(id, norm);
     if (!row) throw httpError(404, 'Subject not found');
     return row;
   }

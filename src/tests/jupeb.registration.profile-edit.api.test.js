@@ -85,8 +85,8 @@ describe('PATCH /registration/me/profile (M.2)', () => {
         .send({
           academic_year: academicYear,
           year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 30 * 86400000).toISOString(),
         });
       if (sessRes.status === 201) break;
     }
@@ -243,6 +243,180 @@ describe('PATCH /registration/me/profile (M.2)', () => {
       .send({ email: existingEmail });
     expect(res.status).toBe(409);
   });
+
+  it('persists next_of_kin via nested object on PATCH /registration/me/profile', async () => {
+    if (!registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const { studentToken } = await newClaimedRegistration(adminToken, 'NOK1');
+
+    const nokData = {
+      name: 'Folashade Adebayo',
+      relationship: 'mother',
+      phone: '+2348030000000',
+      email: 'folashade@example.com',
+      address: '12 Victoria Island, Lagos',
+    };
+
+    const patch = await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        residential_address: '12 Surulere Avenue, Lagos',
+        next_of_kin: nokData,
+      });
+
+    expect(patch.status).toBe(200);
+    expect(patch.body.success).toBe(true);
+    expect(patch.body.data.next_of_kin).toBeDefined();
+    expect(patch.body.data.next_of_kin.name).toBe(nokData.name);
+    expect(patch.body.data.next_of_kin.relationship).toBe(nokData.relationship);
+    expect(patch.body.data.next_of_kin.phone).toBe(nokData.phone);
+    expect(patch.body.data.next_of_kin.email).toBe(nokData.email);
+    expect(patch.body.data.next_of_kin.address).toBe(nokData.address);
+    expect(patch.body.data.next_of_kin.source).toBe('student');
+
+    // Subsequent GET /registration/me/profile reflects the same next_of_kin
+    const profile = await request(app)
+      .get('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`);
+    expect(profile.status).toBe(200);
+    expect(profile.body.data.next_of_kin).toBeDefined();
+    expect(profile.body.data.next_of_kin.name).toBe(nokData.name);
+    expect(profile.body.data.next_of_kin.phone).toBe(nokData.phone);
+
+    // Dedicated GET /registration/me/next-of-kin endpoint also reflects it
+    const nokRes = await request(app)
+      .get('/registration/me/next-of-kin')
+      .set('Authorization', `Bearer ${studentToken}`);
+    expect(nokRes.status).toBe(200);
+    expect(nokRes.body.data.name).toBe(nokData.name);
+    expect(nokRes.body.data.phone).toBe(nokData.phone);
+  });
+
+  it('allows partial next_of_kin update merging with existing active next_of_kin', async () => {
+    if (!registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const { studentToken } = await newClaimedRegistration(adminToken, 'NOK2');
+
+    // Initial creation via PATCH /registration/me/profile
+    await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        next_of_kin: {
+          name: 'Jane Doe',
+          relationship: 'sister',
+          phone: '+2348012345678',
+          email: 'jane@example.com',
+          address: '456 Ikeja Road',
+        },
+      });
+
+    // Partial update: update only phone
+    const patch = await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        next_of_kin: {
+          phone: '+2348099998888',
+        },
+      });
+
+    expect(patch.status).toBe(200);
+    expect(patch.body.data.next_of_kin.name).toBe('Jane Doe');
+    expect(patch.body.data.next_of_kin.relationship).toBe('sibling');
+    expect(patch.body.data.next_of_kin.phone).toBe('+2348099998888');
+    expect(patch.body.data.next_of_kin.email).toBe('jane@example.com');
+    expect(patch.body.data.next_of_kin.address).toBe('456 Ikeja Road');
+  });
+
+  it('supports flat next_of_kin fields on PATCH /registration/me/profile', async () => {
+    if (!registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const { studentToken } = await newClaimedRegistration(adminToken, 'NOK3');
+
+    const patch = await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        next_of_kin_name: 'Samuel Tester',
+        next_of_kin_relationship: 'father',
+        next_of_kin_phone: '+2348077776666',
+        next_of_kin_email: 'samuel@example.com',
+        next_of_kin_address: '77 Marina St',
+      });
+
+    expect(patch.status).toBe(200);
+    expect(patch.body.data.next_of_kin.name).toBe('Samuel Tester');
+    expect(patch.body.data.next_of_kin.relationship).toBe('father');
+    expect(patch.body.data.next_of_kin.phone).toBe('+2348077776666');
+    expect(patch.body.data.next_of_kin.email).toBe('samuel@example.com');
+    expect(patch.body.data.next_of_kin.address).toBe('77 Marina St');
+  });
+
+  it('validates next_of_kin fields on PATCH /registration/me/profile (422)', async () => {
+    if (!registrationMigrated || !addressColumnsMigrated) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+    const { studentToken } = await newClaimedRegistration(adminToken, 'NOKVAL');
+
+    // 1. Invalid relationship
+    const resRel = await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        next_of_kin: {
+          name: 'Jane Doe',
+          relationship: 'pet',
+          phone: '+2348012345678',
+        },
+      });
+    expect(resRel.status).toBe(422);
+    expect(
+      resRel.body.details?.errors?.some(
+        (e) => e.field === 'next_of_kin.relationship' && e.error_code === 'invalid_relationship'
+      )
+    ).toBe(true);
+
+    // 2. Phone too short
+    const resPhone = await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        next_of_kin: {
+          name: 'Jane Doe',
+          relationship: 'mother',
+          phone: '123',
+        },
+      });
+    expect(resPhone.status).toBe(422);
+    expect(
+      resPhone.body.details?.errors?.some(
+        (e) => e.field === 'next_of_kin.phone' && e.error_code === 'phone_too_short'
+      )
+    ).toBe(true);
+
+    // 3. Invalid email
+    const resEmail = await request(app)
+      .patch('/registration/me/profile')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        next_of_kin: {
+          name: 'Jane Doe',
+          relationship: 'mother',
+          email: 'not-an-email',
+        },
+      });
+    expect(resEmail.status).toBe(422);
+    expect(
+      resEmail.body.details?.errors?.some(
+        (e) => e.field === 'next_of_kin.email' && e.error_code === 'invalid_email'
+      )
+    ).toBe(true);
+  });
 });
 
 describe('PATCH /registration/institution/registrations/:id/candidate', () => {
@@ -312,8 +486,8 @@ describe('PATCH /registration/institution/registrations/:id/candidate', () => {
         .send({
           academic_year: academicYear,
           year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 30 * 86400000).toISOString(),
         });
       if (sessRes.status === 201) break;
     }
@@ -500,8 +674,8 @@ describe('PATCH /registration/institution/registrations/:id/candidate', () => {
         .send({
           academic_year: academicYear,
           year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 30 * 86400000).toISOString(),
         });
       if (sessRes.status === 201) break;
     }

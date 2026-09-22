@@ -6,6 +6,7 @@ const {
   nextJupebTestPrefix,
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
+  buildCatalogUniversityPayload,
 } = require('./jupeb-session-test-helpers');
 
 describe('GET /registration/me/profile', () => {
@@ -44,11 +45,12 @@ describe('GET /registration/me/profile', () => {
       uniRes = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${token}`)
-        .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} Profile Uni`,
-          jupeb_prefix: nextJupebTestPrefix(),
-        });
+        .send(
+          buildCatalogUniversityPayload(`${tag}${i}`, {
+            code: nextJupebTestUniversityCode(tag),
+            name: `${tag} Profile Uni`,
+          })
+        );
       if (uniRes.status === 201) break;
     }
     expect(uniRes.status).toBe(201);
@@ -75,8 +77,8 @@ describe('GET /registration/me/profile', () => {
         .send({
           academic_year: academicYear,
           year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 30 * 86400000).toISOString(),
         });
       if (sessRes.status === 201) break;
     }

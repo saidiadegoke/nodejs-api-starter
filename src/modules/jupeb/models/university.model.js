@@ -1,4 +1,5 @@
 const pool = require('../../../db/pool');
+const { normalizeStatus } = require('../../../shared/utils/status');
 
 class UniversityModel {
   async create({
@@ -155,7 +156,12 @@ class UniversityModel {
       'phone',
       'expected_candidate_count',
       'description',
+      'status',
     ];
+    if (fields.status !== undefined) {
+      const norm = normalizeStatus(fields.status);
+      if (norm) fields.status = norm;
+    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
