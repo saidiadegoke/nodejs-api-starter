@@ -185,14 +185,20 @@ async function request(method, path, { params, data, studentContext } = {}, { re
 }
 
 async function getHomeSummary(studentContext, filters = {}) {
+  console.info('studentContext', studentContext);
+  console.info('filters', filters);
   return request('GET', '/api/students/me/home', { studentContext, params: filters });
 }
 
 async function getSummary(studentContext, filters = {}) {
+  console.info('studentContext', studentContext);
+  console.info('filters', filters);
   return request('GET', '/api/students/me/summary', { studentContext, params: filters });
 }
 
 async function getClasses(studentContext, filters = {}) {
+  console.info('studentContext', studentContext);
+  console.info('filters', filters);
   return request('GET', '/api/students/me/classes', { studentContext, params: filters });
 }
 

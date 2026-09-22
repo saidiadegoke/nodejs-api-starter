@@ -89,6 +89,30 @@ class RegistrationModel {
     return result.rows[0] || null;
   }
 
+  async findByCandidateCode(candidateCode) {
+    if (!candidateCode) return null;
+    const code = String(candidateCode).trim();
+    if (!code) return null;
+
+    const result = await pool.query(
+      `SELECT r.*
+         FROM jupeb_registrations r
+         LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
+        WHERE UPPER(COALESCE(r.jupeb_candidate_number, '')) = UPPER($1)
+           OR UPPER(COALESCE(r.provisional_candidate_code, '')) = UPPER($1)
+           OR UPPER(COALESCE(r.institution_issued_code, '')) = UPPER($1)
+           OR UPPER(COALESCE(r.attendance_registration_code, '')) = UPPER($1)
+           OR UPPER(COALESCE(r.attendance_student_id, '')) = UPPER($1)
+           OR r.id::text = $1
+        ORDER BY (s.status = 'open') DESC,
+                 r.updated_at DESC NULLS LAST,
+                 r.created_at DESC
+        LIMIT 1`,
+      [code]
+    );
+    return result.rows[0] || null;
+  }
+
   async findLatestForUser(userId) {
     // Prefer a registration in the currently-open session — that's the
     // one the student is actively working on. If they don't have one in

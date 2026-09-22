@@ -30,18 +30,19 @@ function pickFilterQuery(query = {}) {
   return out;
 }
 
-async function resolveAttendanceContext(userId) {
-  return resolveStudentContext(userId);
+async function resolveAttendanceContext(userId, candidateCode = null) {
+  return resolveStudentContext(userId, { candidateCode });
 }
 
 class AttendanceService {
   static async getHome(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     const attendance = attendanceProviders.get();
     const filters = pickFilterQuery(query);
 
     const attHomePromise = attendance.getHomeSummary(ctx, filters);
-    const unreadPromise = NotificationModel.getUnreadCount(userId);
+    const unreadPromise = NotificationModel.getUnreadCount(ctx.user_id || userId);
 
     // CRMS needs a real CRP registration; skip gracefully for synthetic/mock contexts.
     let crmsHome = {};
@@ -54,7 +55,7 @@ class AttendanceService {
     }
 
     const [attHome, unread] = await Promise.all([attHomePromise, unreadPromise]);
-
+    console.info('attHome', attHome);
     const isArray = Array.isArray(attHome);
     const attObj = !isArray && attHome && typeof attHome === 'object' ? attHome : {};
     const classes = isArray ? attHome : (attObj.todays_classes || attObj.classes || []);
@@ -73,17 +74,20 @@ class AttendanceService {
   }
 
   static async getSummary(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().getSummary(ctx, pickFilterQuery(query));
   }
 
   static async getClasses(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().getClasses(ctx, pickFilterQuery(query));
   }
 
   static async getHistory(userId, query = {}) {
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().getHistory(ctx, pickFilterQuery(query));
   }
 
@@ -91,7 +95,8 @@ class AttendanceService {
     if (!courseCode || !String(courseCode).trim()) {
       throw httpError(422, 'courseCode is required', { error_code: 'course_code_required' });
     }
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().getCourseSessions(
       ctx,
       String(courseCode).trim(),
@@ -102,7 +107,8 @@ class AttendanceService {
   static async getTimetable(userId, query = {}) {
     const filters = pickFilterQuery(query);
     const validatedMonth = validateMonth(filters.month);
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().getTimetable(ctx, {
       ...filters,
       month: validatedMonth || undefined,
@@ -110,12 +116,14 @@ class AttendanceService {
   }
 
   static async checkIn(userId, classId, payload = {}) {
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = payload.candidate_code || payload.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().checkIn(ctx, classId || payload.lecture_id, payload);
   }
 
   static async checkOut(userId, classId, payload = {}) {
-    const ctx = await resolveAttendanceContext(userId);
+    const candidateCode = payload.candidate_code || payload.candidateCode;
+    const ctx = await resolveAttendanceContext(userId, candidateCode);
     return attendanceProviders.get().checkOut(ctx, classId || payload.lecture_id, payload);
   }
 
