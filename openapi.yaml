@@ -7153,6 +7153,63 @@ paths:
                       nin_verification:
                         type: object
                         nullable: true
+    patch:
+      tags:
+        - Registration — student
+      summary: Patch editable candidate profile fields (bio-data, contact, next-of-kin)
+      description: |
+        Allows student to update editable profile fields during onboarding and before final submission.
+        NIN-derived fields (name, date_of_birth, gender) are immutable when a verified NIN is attached.
+        Accepts residential_address, state_of_origin, lga, place_of_birth, phone, email, and next_of_kin.
+        Returns the updated composite profile (same shape as GET).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                residential_address:
+                  type: string
+                state_of_origin:
+                  type: string
+                lga:
+                  type: string
+                place_of_birth:
+                  type: string
+                phone:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                next_of_kin:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    relationship:
+                      type: string
+                      enum: [mother, father, parent, guardian, spouse, sibling, child, relative, friend, other]
+                    phone:
+                      type: string
+                    email:
+                      type: string
+                      format: email
+                    address:
+                      type: string
+      responses:
+        '200':
+          description: Profile updated
+        '401':
+          description: Unauthorized
+        '409':
+          description: Conflict (email already taken)
+        '422':
+          description: Validation error or immutable field modification rejected
   /registration/me/submission-preview:
     get:
       tags:

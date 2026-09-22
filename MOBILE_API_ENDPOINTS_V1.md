@@ -450,15 +450,24 @@ Two body shapes are supported:
 
 ```json
 {
+  "title": "Mr",
   "residential_address": "456 New Address",
+  "state_of_origin": "Lagos",
+  "lga": "Ikeja",
+  "place_of_birth": "Lagos",
   "phone": "+2348011111111",
   "email": "newemail@example.com",
-  "first_name": "Jane",
-  "last_name": "Doe"
+  "next_of_kin": {
+    "name": "Jane Doe",
+    "relationship": "mother",
+    "phone": "+2348012345678",
+    "email": "jane@example.com",
+    "address": "123 Main St"
+  }
 }
 ```
 
-**Response `data`:** Same as `GET /registration/me/profile`.
+**Response `data`:** Same composite shape as `GET /registration/me/profile`.
 
 ---
 

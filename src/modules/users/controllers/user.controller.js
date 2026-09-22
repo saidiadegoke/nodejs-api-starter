@@ -56,8 +56,9 @@ class UserController {
    */
   static async updateUser(req, res) {
     try {
+      const userId = req.params.userId || req.params.user_id;
       const user = await UserService.updateUser(
-        req.params.userId,
+        userId,
         req.body,
         req.user && req.user.user_id
       );
@@ -67,9 +68,38 @@ class UserController {
     }
   }
 
+  static async activateUser(req, res) {
+    try {
+      const userId = req.params.userId || req.params.user_id;
+      const user = await UserService.updateUser(
+        userId,
+        { status: 'active' },
+        req.user && req.user.user_id
+      );
+      sendSuccess(res, user, 'User activated successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, error.status || BAD_REQUEST);
+    }
+  }
+
+  static async deactivateUser(req, res) {
+    try {
+      const userId = req.params.userId || req.params.user_id;
+      const user = await UserService.updateUser(
+        userId,
+        { status: 'inactive' },
+        req.user && req.user.user_id
+      );
+      sendSuccess(res, user, 'User deactivated successfully', OK);
+    } catch (error) {
+      sendError(res, error.message, error.status || BAD_REQUEST);
+    }
+  }
+
   static async deleteUser(req, res) {
     try {
-      await UserService.deleteUser(req.params.userId, req.user && req.user.user_id);
+      const userId = req.params.userId || req.params.user_id;
+      await UserService.deleteUser(userId, req.user && req.user.user_id);
       sendSuccess(res, null, 'User deleted successfully', OK);
     } catch (error) {
       sendError(res, error.message, error.status || BAD_REQUEST);

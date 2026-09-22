@@ -3,6 +3,7 @@ const {
   resolveAdminRbacScope,
   assertUserAccessible,
 } = require('../../admin/utils/admin-rbac-scope');
+const { normalizeStatus } = require('../../../shared/utils/status');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -70,7 +71,17 @@ class UserService {
     if (actorUserId) {
       await UserService.getUserById(id, actorUserId);
     }
-    const user = await User.update(id, userData);
+    const payload = { ...userData };
+    if (payload.status !== undefined) {
+      const norm = normalizeStatus(payload.status);
+      if (!norm) {
+        throw httpError(422, 'status must be active or inactive');
+      }
+      payload.status = norm;
+    } else if (payload.is_active !== undefined) {
+      payload.status = payload.is_active ? 'active' : 'inactive';
+    }
+    const user = await User.update(id, payload);
     if (!user) {
       throw httpError(404, 'User not found');
     }

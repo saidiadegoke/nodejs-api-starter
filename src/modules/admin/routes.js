@@ -98,6 +98,22 @@ router.patch(
   UserController.updateUser
 );
 
+/** POST /admin/users/:userId/activate — activate a user (requires users.update) */
+router.post(
+  '/users/:userId/activate',
+  requireAuth,
+  requirePermission('users.update'),
+  UserController.activateUser
+);
+
+/** POST /admin/users/:userId/deactivate — deactivate a user (requires users.update) */
+router.post(
+  '/users/:userId/deactivate',
+  requireAuth,
+  requirePermission('users.update'),
+  UserController.deactivateUser
+);
+
 /** DELETE /admin/users/:userId — soft-delete a user (requires users.delete) */
 router.delete(
   '/users/:userId',

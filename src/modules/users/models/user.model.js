@@ -1,6 +1,7 @@
 const pool = require('../../../db/pool');
 const bcrypt = require('bcryptjs');
 const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
+const { normalizeStatus } = require('../../../shared/utils/status');
 
 const USER_LIST_COLUMNS = `
     u.id,
@@ -220,7 +221,12 @@ class User {
       const userFields = {};
       if (userData.email !== undefined) userFields.email = userData.email;
       if (userData.phone !== undefined) userFields.phone = userData.phone;
-      if (userData.status !== undefined) userFields.status = userData.status;
+      if (userData.status !== undefined) {
+        const norm = normalizeStatus(userData.status);
+        userFields.status = norm !== null && norm !== undefined ? norm : userData.status;
+      } else if (userData.is_active !== undefined) {
+        userFields.status = userData.is_active ? 'active' : 'inactive';
+      }
 
       if (Object.keys(userFields).length) {
         const sets = [];

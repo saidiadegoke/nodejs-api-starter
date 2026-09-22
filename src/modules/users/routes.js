@@ -148,5 +148,26 @@ router.get('/:user_id/activities', UserActivityController.getUserActivities);
  */
 router.get('/', requireAuth, requirePermission('users.view'), UserController.getAllUsers);
 
+/**
+ * @route   PATCH /api/users/:userId
+ * @desc    Update user
+ * @access  Admin (requires users.update)
+ */
+router.patch('/:userId', requireAuth, requirePermission('users.update'), UserController.updateUser);
+
+/**
+ * @route   POST /api/users/:userId/activate
+ * @desc    Activate user
+ * @access  Admin (requires users.update)
+ */
+router.post('/:userId/activate', requireAuth, requirePermission('users.update'), UserController.activateUser);
+
+/**
+ * @route   POST /api/users/:userId/deactivate
+ * @desc    Deactivate user
+ * @access  Admin (requires users.update)
+ */
+router.post('/:userId/deactivate', requireAuth, requirePermission('users.update'), UserController.deactivateUser);
+
 module.exports = router;
 

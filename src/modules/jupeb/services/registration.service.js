@@ -136,13 +136,29 @@ async function assertComboForUniversity(subjectCombinationId, universityId) {
   throw httpError(422, 'Subject combination is not available for this university');
 }
 
+const nextOfKinModel = require('../models/next-of-kin.model');
+const { ALLOWED_RELATIONSHIPS } = require('./next-of-kin.service');
+
 /**
- * Shared M.2 profile patch: validates body against NIN-immutable rules and
- * updates `profiles` + `users` in one transaction. Used by student self-service
+ * Shared M.2 profile patch: validates body against NIN-immutable rules,
+ * updates `profiles` + `users` and optionally updates `jupeb_next_of_kin`
+ * in one transaction. Used by student self-service (including onboarding)
  * and institution candidate edit.
  */
-async function applyUserProfilePatch(targetUserId, body, ninPayload) {
+async function applyUserProfilePatch(
+  targetUserId,
+  body,
+  ninPayload,
+  registrationId = null,
+  actorUserId = null,
+  actorRole = 'student'
+) {
   if (!body || typeof body !== 'object') throw httpError(422, 'Body is required');
+
+  if (!registrationId && targetUserId) {
+    const r = await registrationModel.findLatestForUser(targetUserId);
+    if (r) registrationId = r.id;
+  }
 
   const errors = [];
   const NIN_IMMUTABLE = ['date_of_birth', 'gender', 'first_name', 'last_name', 'name', 'middle_name'];
@@ -174,6 +190,138 @@ async function applyUserProfilePatch(targetUserId, body, ninPayload) {
   }
   if (phone && phone.length < 6) {
     errors.push({ field: 'phone', error_code: 'phone_too_short' });
+  }
+
+  // Next-of-kin parsing (supports nested object or flat fields)
+  let nokInput = null;
+  if (body.next_of_kin !== undefined) {
+    if (body.next_of_kin !== null && typeof body.next_of_kin === 'object' && !Array.isArray(body.next_of_kin)) {
+      nokInput = { ...body.next_of_kin };
+    } else {
+      errors.push({
+        field: 'next_of_kin',
+        error_code: 'invalid_next_of_kin',
+        message: 'next_of_kin must be an object',
+      });
+    }
+  } else if (
+    body.next_of_kin_name !== undefined ||
+    body.next_of_kin_relationship !== undefined ||
+    body.next_of_kin_phone !== undefined ||
+    body.next_of_kin_email !== undefined ||
+    body.next_of_kin_address !== undefined ||
+    body.nok_name !== undefined ||
+    body.nok_relationship !== undefined ||
+    body.nok_phone !== undefined ||
+    body.nok_email !== undefined ||
+    body.nok_address !== undefined
+  ) {
+    nokInput = {
+      name: body.next_of_kin_name !== undefined ? body.next_of_kin_name : body.nok_name,
+      relationship: body.next_of_kin_relationship !== undefined ? body.next_of_kin_relationship : body.nok_relationship,
+      phone: body.next_of_kin_phone !== undefined ? body.next_of_kin_phone : body.nok_phone,
+      email: body.next_of_kin_email !== undefined ? body.next_of_kin_email : body.nok_email,
+      address: body.next_of_kin_address !== undefined ? body.next_of_kin_address : body.nok_address,
+    };
+  }
+
+  let nokPayload = null;
+  if (nokInput) {
+    let existingNok = null;
+    if (registrationId) {
+      try {
+        existingNok = await nextOfKinModel.findActiveByRegistration(registrationId);
+      } catch {
+        existingNok = null;
+      }
+    }
+    const ninNok =
+      ninPayload && typeof ninPayload === 'object' && ninPayload.next_of_kin && typeof ninPayload.next_of_kin === 'object'
+        ? ninPayload.next_of_kin
+        : null;
+
+    const rawName =
+      nokInput.name !== undefined
+        ? nokInput.name
+        : (existingNok && existingNok.name) || (ninNok && (ninNok.name || ninNok.full_name)) || undefined;
+    const rawRel =
+      nokInput.relationship !== undefined
+        ? nokInput.relationship
+        : (existingNok && existingNok.relationship) || (ninNok && (ninNok.relationship || ninNok.relation)) || undefined;
+    const rawPhone =
+      nokInput.phone !== undefined || nokInput.contact !== undefined || nokInput.contact_no !== undefined
+        ? (nokInput.phone !== undefined ? nokInput.phone : (nokInput.contact !== undefined ? nokInput.contact : nokInput.contact_no))
+        : (existingNok && existingNok.phone) || (ninNok && (ninNok.phone || ninNok.contact || ninNok.contact_no)) || undefined;
+    const rawEmail =
+      nokInput.email !== undefined
+        ? nokInput.email
+        : (existingNok && existingNok.email) || (ninNok && ninNok.email) || undefined;
+    const rawAddress =
+      nokInput.address !== undefined
+        ? nokInput.address
+        : (existingNok && existingNok.address) || (ninNok && ninNok.address) || undefined;
+
+    const name = rawName !== undefined && rawName !== null ? String(rawName).trim() : '';
+    let relationship = rawRel !== undefined && rawRel !== null ? String(rawRel).toLowerCase().trim() : '';
+    const RELATIONSHIP_SYNONYMS = {
+      sister: 'sibling',
+      brother: 'sibling',
+      husband: 'spouse',
+      wife: 'spouse',
+      son: 'child',
+      daughter: 'child',
+      mom: 'mother',
+      mum: 'mother',
+      dad: 'father',
+      uncle: 'relative',
+      aunt: 'relative',
+      cousin: 'relative',
+      nephew: 'relative',
+      niece: 'relative',
+      grandparent: 'relative',
+      grandmother: 'relative',
+      grandfather: 'relative',
+    };
+    if (RELATIONSHIP_SYNONYMS[relationship]) {
+      relationship = RELATIONSHIP_SYNONYMS[relationship];
+    }
+    const nokPhone = rawPhone !== undefined && rawPhone !== null && String(rawPhone).trim() !== '' ? String(rawPhone).trim() : null;
+    const nokEmail = rawEmail !== undefined && rawEmail !== null && String(rawEmail).trim() !== '' ? String(rawEmail).trim() : null;
+    const nokAddress = rawAddress !== undefined && rawAddress !== null && String(rawAddress).trim() !== '' ? String(rawAddress).trim() : null;
+
+    if (!name) {
+      errors.push({ field: 'next_of_kin.name', error_code: 'name_required', message: 'next_of_kin name is required' });
+    } else if (name.length < 2) {
+      errors.push({ field: 'next_of_kin.name', error_code: 'name_too_short', message: 'next_of_kin name must be at least 2 characters' });
+    }
+
+    if (!relationship) {
+      errors.push({ field: 'next_of_kin.relationship', error_code: 'relationship_required', message: 'next_of_kin relationship is required' });
+    } else if (!ALLOWED_RELATIONSHIPS.has(relationship)) {
+      errors.push({
+        field: 'next_of_kin.relationship',
+        error_code: 'invalid_relationship',
+        message: `relationship must be one of: ${Array.from(ALLOWED_RELATIONSHIPS).join(', ')}`,
+      });
+    }
+
+    if (!nokPhone && !nokEmail) {
+      errors.push({ field: 'next_of_kin.phone', error_code: 'contact_required', message: 'next_of_kin phone or email is required' });
+    }
+    if (nokPhone && nokPhone.length < 6) {
+      errors.push({ field: 'next_of_kin.phone', error_code: 'phone_too_short', message: 'next_of_kin phone is too short' });
+    }
+    if (nokEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(nokEmail)) {
+      errors.push({ field: 'next_of_kin.email', error_code: 'invalid_email', message: 'next_of_kin email is not a valid address' });
+    }
+
+    nokPayload = {
+      name,
+      relationship,
+      phone: nokPhone,
+      email: nokEmail,
+      address: nokAddress,
+    };
   }
 
   if (errors.length) {
@@ -221,6 +369,18 @@ async function applyUserProfilePatch(targetUserId, body, ninPayload) {
         targetUserId,
         email,
       ]);
+    }
+
+    if (nokPayload && registrationId) {
+      await nextOfKinModel.softReplaceActive(
+        registrationId,
+        {
+          ...nokPayload,
+          source: actorRole === 'institution' ? 'institution' : 'student',
+          created_by: actorUserId || targetUserId,
+        },
+        client
+      );
     }
 
     await client.query('COMMIT');
@@ -1078,7 +1238,7 @@ class RegistrationService {
       }
     }
 
-    await applyUserProfilePatch(reg.user_id, body, ninPayload);
+    await applyUserProfilePatch(reg.user_id, body, ninPayload, reg.id, actorUserId, 'institution');
 
     if (body.subject_combination_id !== undefined && body.subject_combination_id !== null) {
       const scid = String(body.subject_combination_id).trim();
@@ -1895,7 +2055,7 @@ class RegistrationService {
       }
     }
 
-    await applyUserProfilePatch(userId, body, ninPayload);
+    await applyUserProfilePatch(userId, body, ninPayload, reg.id, userId, 'student');
     return this.getMeProfile(userId);
   }
 

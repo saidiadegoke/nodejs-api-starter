@@ -6,6 +6,7 @@ const {
   nextJupebTestPrefix,
   nextJupebTestUniversityCode,
   nextJupebAcademicSession,
+  buildCatalogUniversityPayload,
 } = require('./jupeb-session-test-helpers');
 
 describe('Next-of-kin endpoints (M.1)', () => {
@@ -41,11 +42,12 @@ describe('Next-of-kin endpoints (M.1)', () => {
       uniRes = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} NoK University`,
-          jupeb_prefix: nextJupebTestPrefix(),
-        });
+        .send(
+          buildCatalogUniversityPayload(`${tag}${i}`, {
+            code: nextJupebTestUniversityCode(tag),
+            name: `${tag} NoK University`,
+          })
+        );
       if (uniRes.status === 201) break;
     }
     let scRes;
@@ -70,8 +72,8 @@ describe('Next-of-kin endpoints (M.1)', () => {
         .send({
           academic_year: academicYear,
           year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 30 * 86400000).toISOString(),
         });
       if (sessRes.status === 201) break;
     }
