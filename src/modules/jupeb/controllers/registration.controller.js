@@ -3,6 +3,32 @@ const bulkRegistrationService = require('../services/bulk-registration.service')
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
 
+function summarizeFailures(items = []) {
+  const byCode = items.reduce((acc, f) => {
+    const code = f.error_code || f.error || 'error';
+    acc[code] = (acc[code] || 0) + 1;
+    return acc;
+  }, {});
+  return Object.entries(byCode)
+    .map(([code, count]) => `${count} ${String(code).replace(/_/g, ' ')}`)
+    .join(', ');
+}
+
+function buildBulkUploadMessage(result) {
+  const { succeeded_count = 0, failed_count = 0, skipped_count = 0, failed = [], skipped = [] } = result;
+  const parts = [];
+  if (succeeded_count) parts.push(`${succeeded_count} succeeded`);
+  if (failed_count) {
+    const detail = summarizeFailures(failed);
+    parts.push(`${failed_count} failed${detail ? ` (${detail})` : ''}`);
+  }
+  if (skipped_count) {
+    const detail = summarizeFailures(skipped);
+    parts.push(`${skipped_count} skipped${detail ? ` (${detail})` : ''}`);
+  }
+  return parts.join(', ');
+}
+
 class RegistrationController {
   static async institutionBulkUpload(req, res) {
     try {
@@ -24,26 +50,16 @@ class RegistrationController {
         provider,
       });
 
-      if (result.succeeded_count > 0 && (result.failed_count > 0 || result.skipped_count > 0)) {
-        return sendSuccess(res, result, 'Bulk upload completed with partial success', 207);
+      const summary = buildBulkUploadMessage(result);
+      const { succeeded_count = 0, failed_count = 0, skipped_count = 0 } = result;
+
+      if (succeeded_count > 0 && (failed_count > 0 || skipped_count > 0)) {
+        return sendSuccess(res, result, `Bulk upload completed with partial success: ${summary}`, 207);
       }
-      if (result.succeeded_count > 0) {
-        return sendSuccess(res, result, 'Bulk upload completed successfully', 200);
+      if (succeeded_count > 0) {
+        return sendSuccess(res, result, `Bulk upload completed successfully: ${summary}`, 200);
       }
-      let failureMessage = 'All rows in bulk upload failed or were skipped';
-      const duplicateFailures = (result.failed || []).filter(
-        (f) => f.error_code === 'already_registered' || f.error_code === 'duplicate_in_file'
-      );
-      if (duplicateFailures.length > 0 && duplicateFailures.length === result.failed_count && (result.skipped_count === 0 || !result.skipped_count)) {
-        failureMessage = 'Bulk upload failed: All candidates have duplicate or already registered NINs';
-      } else if (duplicateFailures.length > 0) {
-        failureMessage = `Bulk upload failed: Duplicate or already registered NINs detected (${duplicateFailures.length} candidate${duplicateFailures.length > 1 ? 's' : ''})`;
-      }
-      return res.status(422).json({
-        success: false,
-        message: failureMessage,
-        data: result,
-      });
+      return sendError(res, `Bulk upload failed: ${summary || 'no rows were processed'}`, 422, result);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
     }

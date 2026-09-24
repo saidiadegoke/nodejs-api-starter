@@ -55,7 +55,6 @@ class AttendanceService {
     }
 
     const [attHome, unread] = await Promise.all([attHomePromise, unreadPromise]);
-    console.info('attHome', attHome);
     const isArray = Array.isArray(attHome);
     const attObj = !isArray && attHome && typeof attHome === 'object' ? attHome : {};
     const classes = isArray ? attHome : (attObj.todays_classes || attObj.classes || []);
