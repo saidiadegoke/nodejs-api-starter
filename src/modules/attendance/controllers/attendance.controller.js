@@ -67,10 +67,11 @@ class AttendanceController {
 
   static async checkIn(req, res) {
     try {
+      const payload = { ...req.query, ...req.body };
       const data = await AttendanceService.checkIn(
         req.user.user_id,
-        req.params.classId || req.body.lecture_id,
-        req.body
+        req.params.classId || payload.lecture_id,
+        payload
       );
       return sendSuccess(res, data, 'Checked in successfully', OK);
     } catch (err) {
@@ -80,10 +81,11 @@ class AttendanceController {
 
   static async checkOut(req, res) {
     try {
+      const payload = { ...req.query, ...req.body };
       const data = await AttendanceService.checkOut(
         req.user.user_id,
-        req.params.classId || req.body.lecture_id,
-        req.body
+        req.params.classId || payload.lecture_id,
+        payload
       );
       return sendSuccess(res, data, 'Checked out successfully', OK);
     } catch (err) {

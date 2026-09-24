@@ -3,18 +3,21 @@ const { resolveStudentContext } = require('../../integrations/student-context');
 const resultsReleaseService = require('../../jupeb/services/results-release.service');
 
 class CrmsService {
-  static async getHomeSummary(userId) {
-    const ctx = await resolveStudentContext(userId);
+  static async getHomeSummary(userId, query = {}) {
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveStudentContext(userId, { candidateCode });
     return crmsProviders.get().getHomeSummary(ctx);
   }
 
-  static async getCourses(userId) {
-    const ctx = await resolveStudentContext(userId);
+  static async getCourses(userId, query = {}) {
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveStudentContext(userId, { candidateCode });
     return crmsProviders.get().getCourses(ctx);
   }
 
-  static async getResults(userId) {
-    const ctx = await resolveStudentContext(userId);
+  static async getResults(userId, query = {}) {
+    const candidateCode = query.candidate_code || query.candidateCode;
+    const ctx = await resolveStudentContext(userId, { candidateCode });
     await resultsReleaseService.checkStudentReleaseAccess(ctx);
     return crmsProviders.get().getResults(ctx);
   }

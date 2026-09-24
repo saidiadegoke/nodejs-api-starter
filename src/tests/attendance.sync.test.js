@@ -138,6 +138,78 @@ describe('Attendance Institution and Student Sync', () => {
       syncInstSpy.mockRestore();
       syncStudentsSpy.mockRestore();
     });
+
+    it('should resolve candidate_code when passed by admin or institution', async () => {
+      const registrationModel = require('../modules/jupeb/models/registration.model');
+      const rbacMiddleware = require('../shared/middleware/rbac.middleware');
+      const institutionScope = require('../modules/jupeb/utils/institution-scope');
+
+      const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue({
+        id: 'reg-uuid-1',
+        session_id: 'session-uuid-1',
+        university_id: 'uni-uuid-1',
+        jupeb_candidate_number: '241010001',
+        user_id: 'student-user-id',
+      });
+      const getUserRolesSpy = jest.spyOn(rbacMiddleware, 'getUserRoles').mockResolvedValue(['admin']);
+      const scopeSpy = jest.spyOn(institutionScope, 'assertInstitutionUniversityAccess').mockResolvedValue();
+      const getSummarySpy = jest.spyOn(httpProvider, 'getSummary').mockResolvedValue({ attendance_percent: 90 });
+
+      const adminUserId = 'admin-user-id';
+      const summaryRes = await AttendanceService.getSummary(adminUserId, { candidate_code: '241010001' });
+
+      expect(summaryRes).toEqual({ attendance_percent: 90 });
+      expect(findByCandidateSpy).toHaveBeenCalledWith('241010001');
+      expect(getSummarySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          candidate_code: '241010001',
+          registration_id: 'reg-uuid-1',
+        }),
+        {}
+      );
+
+      findByCandidateSpy.mockRestore();
+      getUserRolesSpy.mockRestore();
+      scopeSpy.mockRestore();
+      getSummarySpy.mockRestore();
+    });
+
+    it('should throw 404 when candidate_code is not found', async () => {
+      const registrationModel = require('../modules/jupeb/models/registration.model');
+
+      const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue(null);
+
+      await expect(
+        AttendanceService.getSummary('admin-id', { candidate_code: 'INVALID_CODE' })
+      ).rejects.toMatchObject({
+        status: 404,
+        details: { error_code: 'registration_not_found' },
+      });
+
+      findByCandidateSpy.mockRestore();
+    });
+
+    it('should throw 403 when a student tries to access another candidate by candidate_code', async () => {
+      const registrationModel = require('../modules/jupeb/models/registration.model');
+      const rbacMiddleware = require('../shared/middleware/rbac.middleware');
+
+      const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue({
+        id: 'reg-uuid-2',
+        university_id: 'uni-uuid-1',
+        user_id: 'other-student-id',
+      });
+      const getUserRolesSpy = jest.spyOn(rbacMiddleware, 'getUserRoles').mockResolvedValue(['student']);
+
+      await expect(
+        AttendanceService.getSummary('my-student-id', { candidate_code: 'OTHER_CODE' })
+      ).rejects.toMatchObject({
+        status: 403,
+        details: { error_code: 'unauthorized_candidate_access' },
+      });
+
+      findByCandidateSpy.mockRestore();
+      getUserRolesSpy.mockRestore();
+    });
   });
 
   describe('Catalog Service - _syncInstitutionToAttendance', () => {
