@@ -47,26 +47,28 @@ function renderHeader(doc, preview) {
   const sessionLabel = (preview.session && preview.session.academic_year) || '—';
   doc.fillColor(COLORS.muted).fontSize(10).font('Helvetica')
     .text(`${uniName} · Session ${sessionLabel}`, { align: 'center' });
-  doc.moveDown(0.6);
+  doc.moveDown(0.5);
   rule(doc);
-  doc.moveDown(0.6);
+  doc.moveDown(0.5);
+  doc.x = doc.page.margins.left;
 }
 
 function renderCandidate(doc, preview) {
   const c = preview.candidate || {};
+  doc.x = doc.page.margins.left;
   doc.fillColor(COLORS.text).fontSize(14).font('Helvetica-Bold').text(safe(c.full_name));
   doc.moveDown(0.1);
   doc.fillColor(COLORS.muted).fontSize(10).font('Helvetica')
-    .text(`Candidate code: ${safe(c.provisional_candidate_code)}`)
-    .text(`JUPEB number:   ${safe(c.jupeb_candidate_number)}`)
+    .text(`JUPEB number: ${safe(c.jupeb_candidate_number || c.provisional_candidate_code)}`)
     .text(`Status:         ${safe(c.status)}`);
-  doc.moveDown(0.6);
+  doc.moveDown(0.4);
+  doc.x = doc.page.margins.left;
 }
 
 function renderTwoColumn(doc, title, pairs) {
   section(doc, title);
-  const colWidth = (doc.page.width - doc.page.margins.left - doc.page.margins.right) / 2 - 6;
   const left = doc.page.margins.left;
+  const colWidth = (doc.page.width - doc.page.margins.left - doc.page.margins.right) / 2 - 6;
   const right = left + colWidth + 12;
 
   for (let i = 0; i < pairs.length; i += 2) {
@@ -84,19 +86,20 @@ function renderTwoColumn(doc, title, pairs) {
     const leftEndY = doc.y;
 
     // Draw right column at the same starting Y
+    let rightEndY = rowStartY;
     if (b) {
       doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica')
         .text(b[0].toUpperCase(), right, rowStartY, { width: colWidth });
       doc.fillColor(COLORS.text).fontSize(11).font('Helvetica-Bold')
         .text(safe(b[1]), right, rowStartY + 11, { width: colWidth });
+      rightEndY = doc.y;
     }
 
-    const rightEndY = doc.y;
-
     // Advance past the taller column + a small gap
-    doc.y = Math.max(leftEndY, rightEndY) + 6;
+    doc.y = Math.max(leftEndY, rightEndY) + 5;
   }
-  doc.moveDown(0.4);
+  doc.x = left;
+  doc.moveDown(0.25);
 }
 
 function drawPair(doc, x, y, width, label, value) {
@@ -105,9 +108,11 @@ function drawPair(doc, x, y, width, label, value) {
 }
 
 function section(doc, title) {
-  doc.moveDown(0.4);
-  doc.fillColor(COLORS.accent).fontSize(11).font('Helvetica-Bold').text(title.toUpperCase());
+  doc.x = doc.page.margins.left;
+  doc.moveDown(0.35);
+  doc.fillColor(COLORS.accent).fontSize(11).font('Helvetica-Bold').text(title.toUpperCase(), doc.page.margins.left);
   doc.moveDown(0.2);
+  doc.x = doc.page.margins.left;
 }
 
 function rule(doc) {
@@ -154,95 +159,110 @@ function renderNok(doc, preview) {
 function renderSubjectCombination(doc, preview) {
   const sc = preview.subject_combination || {};
   section(doc, 'Subject combination');
-  doc.fillColor(COLORS.text).fontSize(11).font('Helvetica-Bold').text(safe(sc.code) + ' — ' + safe(sc.title));
-  doc.moveDown(0.4);
+  const left = doc.page.margins.left;
+  doc.fillColor(COLORS.text).fontSize(11).font('Helvetica-Bold')
+    .text(`${safe(sc.code)} — ${safe(sc.title)}`, left);
+  doc.moveDown(0.3);
+  doc.x = left;
 }
 
 function renderAcademic(doc, preview) {
   const groups = preview.academic_details || [];
   section(doc, 'Academic results');
+  const left = doc.page.margins.left;
+
   if (groups.length === 0) {
-    doc.fillColor(COLORS.muted).fontSize(10).font('Helvetica').text('No results entered yet.');
-    doc.moveDown(0.4);
+    doc.fillColor(COLORS.muted).fontSize(10).font('Helvetica').text('No results entered yet.', left);
+    doc.moveDown(0.3);
+    doc.x = left;
     return;
   }
+
+  const subjectColX = left;
+  const gradeColX = left + 280;
+
   for (const g of groups) {
     doc.fillColor(COLORS.text).fontSize(11).font('Helvetica-Bold')
-      .text(`${(g.source || '').toUpperCase()} — Sitting ${g.sitting} (${(g.origins || []).join(', ') || 'manual'})`);
-    doc.moveDown(0.2);
+      .text(`${(g.source || '').toUpperCase()} — Sitting ${g.sitting} (${(g.origins || []).join(', ') || 'manual'})`, left);
+    doc.moveDown(0.15);
 
-    const subjectColX = doc.page.margins.left;
-    const gradeColX = doc.page.margins.left + 280;
-    const normColX = doc.page.margins.left + 360;
-    const scoreColX = doc.page.margins.left + 420;
-
+    const headerY = doc.y;
     doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica');
-    doc.text('SUBJECT', subjectColX, doc.y, { continued: true, width: 280 });
-    doc.text('GRADE', gradeColX - subjectColX, undefined, { continued: true });
-    doc.text('A–F', normColX - gradeColX, undefined, { continued: true });
-    doc.text('SCORE', scoreColX - normColX);
-    doc.moveDown(0.1);
+    doc.text('SUBJECT', subjectColX, headerY);
+    doc.text('GRADE', gradeColX, headerY);
+    doc.y = headerY + 11;
     rule(doc);
     doc.moveDown(0.2);
 
     for (const s of g.subjects || []) {
+      const rowY = doc.y;
       doc.fillColor(COLORS.text).fontSize(10).font('Helvetica');
-      const y = doc.y;
-      doc.text(safe(s.subject), subjectColX, y, { width: 270 });
-      doc.text(safe(s.grade), gradeColX, y);
-      doc.text(safe(s.grade_normalized), normColX, y);
-      doc.text(s.score === null || s.score === undefined ? '—' : String(s.score), scoreColX, y);
+      doc.text(safe(s.subject), subjectColX, rowY, { width: 270 });
+      doc.text(safe(s.grade), gradeColX, rowY);
       doc.moveDown(0.2);
     }
-    doc.moveDown(0.3);
+    doc.moveDown(0.25);
   }
+  doc.x = left;
 }
 
 function renderBiometricStatus(doc, preview) {
   const status = preview.biometric_status || 'none';
   const types = (preview.biometrics || []).map((b) => b.capture_type);
-  doc.moveDown(0.3);
-  doc.fillColor(COLORS.accent).fontSize(11).font('Helvetica-Bold').text('BIOMETRIC CAPTURE', { continued: false });
+  const left = doc.page.margins.left;
+  doc.x = left;
+  doc.moveDown(0.25);
+  doc.fillColor(COLORS.accent).fontSize(11).font('Helvetica-Bold').text('BIOMETRIC CAPTURE', left);
+  doc.moveDown(0.1);
   doc.fillColor(COLORS.text).fontSize(10).font('Helvetica')
-    .text(`Status: ${status}`)
-    .text(`Captured: ${types.length ? types.join(', ') : 'none'}`);
-  doc.moveDown(0.4);
+    .text(`Status: ${status}`, left)
+    .text(`Captured: ${types.length ? types.join(', ') : 'none'}`, left);
+  doc.moveDown(0.3);
+  doc.x = left;
 }
 
 function renderSignatureBlock(doc) {
-  doc.moveDown(1);
+  doc.moveDown(0.4);
   rule(doc);
-  doc.moveDown(0.6);
+  doc.moveDown(0.4);
   const left = doc.page.margins.left;
   const right = doc.page.width - doc.page.margins.right;
   const colWidth = (right - left - 24) / 2;
 
-  doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica').text('CANDIDATE SIGNATURE', left, doc.y);
-  doc.fillColor(COLORS.muted).text('DATE', left + colWidth + 24, doc.y - 9);
-  doc.moveDown(2);
+  const y1 = doc.y;
+  doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica').text('CANDIDATE SIGNATURE', left, y1);
+  doc.text('DATE', left + colWidth + 24, y1);
+  const line1Y = y1 + 22;
   doc.strokeColor(COLORS.rule).lineWidth(0.5)
-    .moveTo(left, doc.y).lineTo(left + colWidth, doc.y).stroke()
-    .moveTo(left + colWidth + 24, doc.y).lineTo(right, doc.y).stroke();
-  doc.moveDown(0.8);
-  doc.fillColor(COLORS.muted).fontSize(8).text('INSTITUTION OFFICIAL', left, doc.y);
-  doc.text('DATE', left + colWidth + 24, doc.y - 9);
-  doc.moveDown(2);
+    .moveTo(left, line1Y).lineTo(left + colWidth, line1Y).stroke()
+    .moveTo(left + colWidth + 24, line1Y).lineTo(right, line1Y).stroke();
+
+  const y2 = line1Y + 10;
+  doc.fillColor(COLORS.muted).fontSize(8).text('INSTITUTION OFFICIAL', left, y2);
+  doc.text('DATE', left + colWidth + 24, y2);
+  const line2Y = y2 + 22;
   doc.strokeColor(COLORS.rule).lineWidth(0.5)
-    .moveTo(left, doc.y).lineTo(left + colWidth, doc.y).stroke()
-    .moveTo(left + colWidth + 24, doc.y).lineTo(right, doc.y).stroke();
+    .moveTo(left, line2Y).lineTo(left + colWidth, line2Y).stroke()
+    .moveTo(left + colWidth + 24, line2Y).lineTo(right, line2Y).stroke();
+
+  doc.y = line2Y + 8;
+  doc.x = left;
 }
 
 function renderFooter(doc) {
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i += 1) {
     doc.switchToPage(range.start + i);
+    const origBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     doc.fillColor(COLORS.muted).fontSize(8).font('Helvetica')
       .text(
         `Generated ${new Date().toISOString().slice(0, 10)} · page ${i + 1} of ${range.count}`,
         doc.page.margins.left,
-        doc.page.height - doc.page.margins.bottom + 10,
+        doc.page.height - 24,
         { align: 'right', width: doc.page.width - doc.page.margins.left - doc.page.margins.right }
       );
+    doc.page.margins.bottom = origBottom;
   }
 }
 
@@ -255,7 +275,7 @@ class RegistrationFormPdfService {
     const PDFDocument = getPdfKit();
     const doc = new PDFDocument({
       size: 'A4',
-      margins: { top: 56, bottom: 64, left: 48, right: 48 },
+      margins: { top: 40, bottom: 40, left: 48, right: 48 },
       bufferPages: true,
       info: {
         Title: `JUPEB Registration Form — ${(preview.candidate && preview.candidate.full_name) || ''}`,
@@ -288,3 +308,4 @@ class RegistrationFormPdfService {
 }
 
 module.exports = RegistrationFormPdfService;
+
