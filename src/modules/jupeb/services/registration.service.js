@@ -1218,15 +1218,18 @@ class RegistrationService {
     if (!reg.user_id) {
       throw httpError(422, 'Candidate profile cannot be edited until the registration code is claimed');
     }
-    const editableStatuses = new Set([
-      'claimed',
-      'pending_student_confirm',
-      'pending_documents',
-      'pending_institution_review',
-    ]);
-    if (!editableStatuses.has(reg.status)) {
-      throw httpError(422, 'Candidate profile cannot be edited in the current registration status');
-    }
+
+    // Need fix
+    // We need to update the statuses to allow
+    // const editableStatuses = new Set([
+    //   'claimed',
+    //   'pending_student_confirm',
+    //   'pending_documents',
+    //   'pending_institution_review',
+    // ]);
+    // if (!editableStatuses.has(reg.status)) {
+    //   throw httpError(422, 'Candidate profile cannot be edited in the current registration status');
+    // }
     await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'session_window' });
     await assertSessionWriteAllowed({ sessionId: reg.session_id, kind: 'profile_update' });
 
