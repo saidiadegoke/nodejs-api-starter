@@ -40,6 +40,8 @@ describe('JUPEB registration utils', () => {
   it('canTransition allows expected edges', () => {
     expect(canTransition('code_issued', 'claimed')).toBe(true);
     expect(canTransition('claimed', 'pending_documents')).toBe(true);
+    expect(canTransition('claimed', 'pending_institution_review')).toBe(true);
+    expect(canTransition('pending_student_confirm', 'pending_institution_review')).toBe(true);
     expect(canTransition('pending_documents', 'pending_institution_review')).toBe(true);
     expect(canTransition('pending_institution_review', 'approved')).toBe(true);
     expect(canTransition('pending_institution_review', 'rejected')).toBe(true);

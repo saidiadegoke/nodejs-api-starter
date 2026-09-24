@@ -4,8 +4,8 @@
 const TRANSITIONS = {
   provisional: ['code_issued', 'withdrawn'],
   code_issued: ['claimed', 'withdrawn'],
-  claimed: ['pending_student_confirm', 'pending_documents', 'withdrawn'],
-  pending_student_confirm: ['pending_documents', 'withdrawn'],
+  claimed: ['pending_student_confirm', 'pending_documents', 'pending_institution_review', 'withdrawn'],
+  pending_student_confirm: ['pending_documents', 'pending_institution_review', 'withdrawn'],
   pending_documents: ['pending_institution_review', 'withdrawn'],
   pending_institution_review: ['approved', 'rejected', 'withdrawn'],
   approved: [],

@@ -2112,6 +2112,12 @@ class RegistrationService {
         message: 'Your registration has been received and is waiting approval',
       };
     }
+    if (reg.status === 'approved') {
+      return {
+        row: reg,
+        message: 'Your registration has already been approved',
+      };
+    }
     const now = new Date().toISOString();
     const row = await transitionStatus(reg, 'pending_institution_review', {
       userId,
