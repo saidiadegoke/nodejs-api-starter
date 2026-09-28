@@ -1,5 +1,6 @@
 const registrationService = require('../services/registration.service');
 const bulkRegistrationService = require('../services/bulk-registration.service');
+const AdminAuditService = require('../../admin/services/adminAudit.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
 
@@ -53,6 +54,15 @@ class RegistrationController {
       const summary = buildBulkUploadMessage(result);
       const { succeeded_count = 0, failed_count = 0, skipped_count = 0 } = result;
 
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.bulk_upload',
+        resourceType: 'registration',
+        universityId: university_id || null,
+        details: { session_id, university_id, succeeded_count, failed_count, skipped_count },
+        req,
+      });
+
       if (succeeded_count > 0 && (failed_count > 0 || skipped_count > 0)) {
         return sendSuccess(res, result, `Bulk upload completed with partial success: ${summary}`, 207);
       }
@@ -68,6 +78,15 @@ class RegistrationController {
   static async institutionCreate(req, res) {
     try {
       const row = await registrationService.institutionCreate(req.body, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.create',
+        resourceType: 'registration',
+        resourceId: row.id,
+        universityId: row.university_id,
+        details: { session_id: row.session_id, institution_issued_code: row.institution_issued_code },
+        req,
+      });
       return sendSuccess(res, row, 'Registration created', CREATED);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
@@ -81,6 +100,15 @@ class RegistrationController {
         req.body,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.update',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        universityId: row.university_id,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, row, 'Registration updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
@@ -94,6 +122,14 @@ class RegistrationController {
         req.body,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'candidate.update',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, data, 'Candidate updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
@@ -106,6 +142,13 @@ class RegistrationController {
         req.params.registrationId,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.resend_code',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        req,
+      });
       return sendSuccess(res, data, 'Registration code email queued');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
@@ -119,6 +162,13 @@ class RegistrationController {
         req.params.registrationId,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.delete',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        req,
+      });
       return sendSuccess(res, data, 'Registration deleted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -187,6 +237,14 @@ class RegistrationController {
   static async institutionApprove(req, res) {
     try {
       const row = await registrationService.institutionApprove(req.params.registrationId, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.approve',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        universityId: row.university_id || null,
+        req,
+      });
       return sendSuccess(res, row, 'Registration approved');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -200,6 +258,15 @@ class RegistrationController {
       const { action, total, accepted_count, rejected_count } = data;
       const verb = action === 'delete' ? 'deleted' : `${action}d`;
       const message = `${accepted_count} of ${total} registration${total === 1 ? '' : 's'} ${verb}`;
+
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: `registration.batch_${action || 'action'}`,
+        resourceType: 'registration',
+        details: { action, total, accepted_count, rejected_count, ids: req.body?.ids },
+        req,
+      });
+
       if (accepted_count === 0 && rejected_count > 0) {
         return sendError(res, message, 422, data);
       }
@@ -217,6 +284,14 @@ class RegistrationController {
         req.body,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.withdraw',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        details: { reason: req.body?.reason },
+        req,
+      });
       return sendSuccess(res, data, 'Registration withdrawn');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR, err.details || null);
@@ -226,6 +301,14 @@ class RegistrationController {
   static async institutionReject(req, res) {
     try {
       const row = await registrationService.institutionReject(req.params.registrationId, req.body, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'registration.reject',
+        resourceType: 'registration',
+        resourceId: req.params.registrationId,
+        details: { reason: req.body?.reason },
+        req,
+      });
       return sendSuccess(res, row, 'Registration rejected');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

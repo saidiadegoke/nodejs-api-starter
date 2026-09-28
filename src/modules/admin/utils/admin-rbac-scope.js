@@ -49,7 +49,7 @@ async function resolveAdminRbacScope(userId) {
     );
   }
 
-  return { mode: 'full' };
+  return { mode: 'self', actorId: userId };
 }
 
 /**

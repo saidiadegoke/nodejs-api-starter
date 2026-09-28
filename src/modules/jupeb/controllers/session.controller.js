@@ -1,5 +1,6 @@
 const sessionService = require('../services/session.service');
 const sessionContext = require('../services/session-context.service');
+const AdminAuditService = require('../../admin/services/adminAudit.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const {
   CREATED,
@@ -78,6 +79,14 @@ class SessionController {
   static async create(req, res) {
     try {
       const row = await sessionService.create(req.body, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.create',
+        resourceType: 'session',
+        resourceId: row.id,
+        details: { academic_year: row.academic_year, opens_at: row.opens_at, closes_at: row.closes_at },
+        req,
+      });
       return sendSuccess(res, row, 'Session created', CREATED);
     } catch (err) {
       if (err.status) return sendError(res, err.message, err.status);
@@ -100,6 +109,14 @@ class SessionController {
   static async patch(req, res) {
     try {
       const row = await sessionService.patch(req.params.sessionId, req.body, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.update',
+        resourceType: 'session',
+        resourceId: req.params.sessionId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, row, 'Session updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -118,6 +135,13 @@ class SessionController {
   static async open(req, res) {
     try {
       const row = await sessionService.open(req.params.sessionId, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.open',
+        resourceType: 'session',
+        resourceId: req.params.sessionId,
+        req,
+      });
       return sendSuccess(res, row, 'Session opened');
     } catch (err) {
       if (err.status === CONFLICT) return sendError(res, err.message, CONFLICT);
@@ -128,6 +152,13 @@ class SessionController {
   static async close(req, res) {
     try {
       const row = await sessionService.close(req.params.sessionId, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.close',
+        resourceType: 'session',
+        resourceId: req.params.sessionId,
+        req,
+      });
       return sendSuccess(res, row, 'Session closed');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -137,6 +168,13 @@ class SessionController {
   static async reopen(req, res) {
     try {
       const row = await sessionService.reopen(req.params.sessionId, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.reopen',
+        resourceType: 'session',
+        resourceId: req.params.sessionId,
+        req,
+      });
       return sendSuccess(res, row, 'Session reopened');
     } catch (err) {
       if (err.status === CONFLICT) return sendError(res, err.message, CONFLICT);
@@ -151,6 +189,14 @@ class SessionController {
         req.body,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: row.registration_locked ? 'session.lock_registration' : 'session.unlock_registration',
+        resourceType: 'session',
+        resourceId: req.params.sessionId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(
         res,
         row,
@@ -167,6 +213,14 @@ class SessionController {
         req.params.sessionId,
         req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.finalize_candidate_numbers',
+        resourceType: 'session',
+        resourceId: req.params.sessionId,
+        details: data,
+        req,
+      });
       return sendSuccess(res, data, 'Finalization accepted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -177,6 +231,13 @@ class SessionController {
   static async finalizeAllClosed(req, res) {
     try {
       const data = await sessionService.finalizeAllClosed(req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'session.finalize_all_closed',
+        resourceType: 'session',
+        details: data,
+        req,
+      });
       return sendSuccess(res, data, 'Bulk finalization complete');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

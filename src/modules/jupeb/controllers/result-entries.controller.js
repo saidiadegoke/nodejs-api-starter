@@ -1,4 +1,5 @@
 const resultEntriesService = require('../services/result-entries.service');
+const AdminAuditService = require('../../admin/services/adminAudit.service');
 const { sendSuccess, sendError } = require('../../../shared/utils/response');
 
 function handle(res, fn) {
@@ -53,9 +54,18 @@ class ResultEntriesController {
         req.params.entryId,
         req.body
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'results.institution_entry_patch',
+        resourceType: 'result_entry',
+        resourceId: req.params.entryId,
+        details: req.body,
+        req,
+      });
       sendSuccess(res, data, 'Entry updated');
     });
   }
 }
 
 module.exports = ResultEntriesController;
+

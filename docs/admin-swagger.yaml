@@ -107,20 +107,45 @@ paths:
         '200':
           description: Setting upserted
 
-  /admin/audit:
+  /audit:
     get:
-      summary: List admin audit log entries
+      summary: List audit log entries
+      description: |
+        Requires `activity_logs.view` permission.
+        - Global staff (super_admin, admin, registrar) see all platform logs (with optional `university_id` filter).
+        - Institution staff (institution_admin, program_director) see logs scoped to their university.
+        - Other users see only audits related to their own account.
+        Also accessible at `/admin/audit`.
       tags: [Audit Log]
       parameters:
         - in: query
+          name: actor_user_id
+          schema: { type: string, format: uuid }
+          description: Filter by actor user ID
+        - in: query
           name: admin_user_id
           schema: { type: string, format: uuid }
+          description: Alias for actor_user_id
+        - in: query
+          name: university_id
+          schema: { type: string, format: uuid }
+          description: Filter by institution UUID (global staff only)
         - in: query
           name: action
           schema: { type: string }
+          description: Action name (e.g. registration.create, session.close, user.create)
         - in: query
           name: resource_type
           schema: { type: string }
+          description: Resource type (e.g. registration, session, university, user, role)
+        - in: query
+          name: resource_id
+          schema: { type: string }
+          description: Target resource ID
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Text search across action, actor name/email, resource ID, university name, details
         - in: query
           name: start_date
           schema: { type: string, format: date-time }
@@ -135,7 +160,23 @@ paths:
           schema: { type: integer, default: 20 }
       responses:
         '200':
-          description: Paginated audit log
+          description: Paginated audit log entries with actor and university details
+
+  /audit/export:
+    get:
+      summary: Export audit logs as CSV
+      description: |
+        Requires `activity_logs.view` permission. Returns CSV file with columns:
+        `S/N, TIME STAMP, ROLE, USER, EMAIL, ACTION, DETAILS`.
+        Also accessible at `/admin/audit/export`.
+      tags: [Audit Log]
+      responses:
+        '200':
+          description: CSV file download
+          content:
+            text/csv:
+              schema:
+                type: string
 
   /admin/roles:
     get:
@@ -357,6 +398,30 @@ paths:
         - in: query
           name: limit
           schema: { type: integer, default: 10 }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Search term matching email, first name, last name, display name
+        - in: query
+          name: role
+          schema: { type: string }
+          description: Filter users with a specific role name
+        - in: query
+          name: include_all
+          schema: { type: boolean, default: false }
+          description: Include student and institution-scoped users (filtered out by default on /admin/users)
+        - in: query
+          name: include_students
+          schema: { type: boolean, default: false }
+          description: Include student users in the list
+        - in: query
+          name: include_institution
+          schema: { type: boolean, default: false }
+          description: Include institution admin and program director users in the list
+        - in: query
+          name: exclude_roles
+          schema: { type: string }
+          description: Comma-separated list of additional role names to exclude
       responses:
         '200':
           description: Paginated list of users

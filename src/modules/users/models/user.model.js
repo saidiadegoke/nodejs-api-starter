@@ -43,7 +43,14 @@ const USER_LIST_SELECT = `
 `;
 
 class User {
-  static _buildListFilters({ q = null, universityId = null, excludeGlobalRoleNames = [] } = {}) {
+  static _buildListFilters({
+    q = null,
+    universityId = null,
+    excludeGlobalRoleNames = [],
+    excludeRoleNames = [],
+    excludeInstitutionRoles = false,
+    role = null,
+  } = {}) {
     const values = [];
     const conditions = ['u.deleted_at IS NULL'];
     let idx = 1;
@@ -63,6 +70,18 @@ class User {
       values.push(universityId);
       idx += 1;
     }
+    if (role) {
+      conditions.push(`EXISTS (
+        SELECT 1
+          FROM user_roles ur_r
+          JOIN roles r_r ON ur_r.role_id = r_r.id
+         WHERE ur_r.user_id = u.id
+           AND r_r.name = $${idx}
+           AND (ur_r.expires_at IS NULL OR ur_r.expires_at > NOW())
+      )`);
+      values.push(role);
+      idx += 1;
+    }
     if (excludeGlobalRoleNames && excludeGlobalRoleNames.length) {
       conditions.push(`NOT EXISTS (
         SELECT 1
@@ -76,6 +95,28 @@ class User {
       values.push(excludeGlobalRoleNames);
       idx += 1;
     }
+    if (excludeRoleNames && excludeRoleNames.length) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1
+          FROM user_roles ur_ex2
+          JOIN roles r_ex2 ON ur_ex2.role_id = r_ex2.id
+         WHERE ur_ex2.user_id = u.id
+           AND r_ex2.name = ANY($${idx}::text[])
+           AND (ur_ex2.expires_at IS NULL OR ur_ex2.expires_at > NOW())
+      )`);
+      values.push(excludeRoleNames);
+      idx += 1;
+    }
+    if (excludeInstitutionRoles) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1
+          FROM user_roles ur_inst
+          JOIN roles r_inst ON ur_inst.role_id = r_inst.id
+         WHERE ur_inst.user_id = u.id
+           AND r_inst.owner_jupeb_university_id IS NOT NULL
+           AND (ur_inst.expires_at IS NULL OR ur_inst.expires_at > NOW())
+      )`);
+    }
     return { whereSql: conditions.join(' AND '), values, nextIdx: idx };
   }
 
@@ -88,11 +129,17 @@ class User {
     q = null,
     universityId = null,
     excludeGlobalRoleNames = [],
+    excludeRoleNames = [],
+    excludeInstitutionRoles = false,
+    role = null,
   }) {
     const { whereSql, values, nextIdx } = User._buildListFilters({
       q,
       universityId,
       excludeGlobalRoleNames,
+      excludeRoleNames,
+      excludeInstitutionRoles,
+      role,
     });
     const limitIdx = nextIdx;
     const offsetIdx = nextIdx + 1;
@@ -120,7 +167,10 @@ class User {
     offset = 0,
     q = null,
     universityId = null,
-    excludeGlobalRoleNames = []
+    excludeGlobalRoleNames = [],
+    excludeRoleNames = [],
+    excludeInstitutionRoles = false,
+    role = null
   ) {
     const { rows } = await User.findAllPaginated({
       limit,
@@ -128,6 +178,9 @@ class User {
       q,
       universityId,
       excludeGlobalRoleNames,
+      excludeRoleNames,
+      excludeInstitutionRoles,
+      role,
     });
     return rows;
   }
@@ -135,11 +188,21 @@ class User {
   /**
    * Count total non-deleted users
    */
-  static async count(q = null, universityId = null, excludeGlobalRoleNames = []) {
+  static async count(
+    q = null,
+    universityId = null,
+    excludeGlobalRoleNames = [],
+    excludeRoleNames = [],
+    excludeInstitutionRoles = false,
+    role = null
+  ) {
     const { whereSql, values } = User._buildListFilters({
       q,
       universityId,
       excludeGlobalRoleNames,
+      excludeRoleNames,
+      excludeInstitutionRoles,
+      role,
     });
     const result = await pool.query(
       `SELECT COUNT(*)::int AS c

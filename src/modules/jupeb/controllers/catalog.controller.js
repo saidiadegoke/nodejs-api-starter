@@ -1,4 +1,5 @@
 const catalogService = require('../services/catalog.service');
+const AdminAuditService = require('../../admin/services/adminAudit.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const { NOT_FOUND, INTERNAL_SERVER_ERROR, CREATED } = require('../../../shared/constants/statusCodes');
 const { mapUniqueViolation } = require('../../../shared/utils/pg-unique-violation');
@@ -65,6 +66,15 @@ class CatalogController {
   static async createUniversity(req, res) {
     try {
       const row = await catalogService.createUniversity(req.body, req.user && req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.university_create',
+        resourceType: 'university',
+        resourceId: row.id,
+        universityId: row.id,
+        details: { code: row.code, name: row.name, jupeb_prefix: row.jupeb_prefix },
+        req,
+      });
       return sendSuccess(res, row, 'University created', CREATED);
     } catch (err) {
       return sendCatalogError(res, err);
@@ -74,6 +84,15 @@ class CatalogController {
   static async patchUniversity(req, res) {
     try {
       const row = await catalogService.patchUniversity(req.params.universityId, req.body);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.university_update',
+        resourceType: 'university',
+        resourceId: req.params.universityId,
+        universityId: req.params.universityId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, row, 'University updated');
     } catch (err) {
       return sendCatalogError(res, err);
@@ -83,6 +102,14 @@ class CatalogController {
   static async activateUniversity(req, res) {
     try {
       const row = await catalogService.setUniversityStatus(req.params.universityId, 'active');
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.university_activate',
+        resourceType: 'university',
+        resourceId: req.params.universityId,
+        universityId: req.params.universityId,
+        req,
+      });
       return sendSuccess(res, row, 'University activated');
     } catch (err) {
       const status = err.status || NOT_FOUND;
@@ -93,6 +120,14 @@ class CatalogController {
   static async deactivateUniversity(req, res) {
     try {
       const row = await catalogService.setUniversityStatus(req.params.universityId, 'inactive');
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.university_deactivate',
+        resourceType: 'university',
+        resourceId: req.params.universityId,
+        universityId: req.params.universityId,
+        req,
+      });
       return sendSuccess(res, row, 'University deactivated');
     } catch (err) {
       const status = err.status || NOT_FOUND;
@@ -103,6 +138,14 @@ class CatalogController {
   static async deleteUniversity(req, res) {
     try {
       const row = await catalogService.deleteUniversity(req.params.universityId);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.university_delete',
+        resourceType: 'university',
+        resourceId: req.params.universityId,
+        universityId: req.params.universityId,
+        req,
+      });
       return sendSuccess(res, row, 'University deleted');
     } catch (err) {
       const status = err.status || NOT_FOUND;
@@ -141,6 +184,15 @@ class CatalogController {
   static async createSubjectCombination(req, res) {
     try {
       const row = await catalogService.createSubjectCombination(req.body);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.subject_combination_create',
+        resourceType: 'subject_combination',
+        resourceId: row.id,
+        universityId: row.university_id || null,
+        details: { code: row.code, title: row.title, is_global: row.is_global },
+        req,
+      });
       return sendSuccess(res, row, 'Subject combination created', 201);
     } catch (err) {
       return sendCatalogError(res, err);
@@ -153,6 +205,15 @@ class CatalogController {
         req.params.subjectCombinationId,
         req.body
       );
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.subject_combination_update',
+        resourceType: 'subject_combination',
+        resourceId: req.params.subjectCombinationId,
+        universityId: row.university_id || null,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, row, 'Subject combination updated');
     } catch (err) {
       return sendCatalogError(res, err);
@@ -165,6 +226,13 @@ class CatalogController {
         req.params.subjectCombinationId,
         'active'
       );
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.subject_combination_activate',
+        resourceType: 'subject_combination',
+        resourceId: req.params.subjectCombinationId,
+        req,
+      });
       return sendSuccess(res, row, 'Subject combination activated');
     } catch (err) {
       const status = err.status || NOT_FOUND;
@@ -178,6 +246,13 @@ class CatalogController {
         req.params.subjectCombinationId,
         'inactive'
       );
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.subject_combination_deactivate',
+        resourceType: 'subject_combination',
+        resourceId: req.params.subjectCombinationId,
+        req,
+      });
       return sendSuccess(res, row, 'Subject combination deactivated');
     } catch (err) {
       const status = err.status || NOT_FOUND;
@@ -187,9 +262,14 @@ class CatalogController {
 
   static async deleteSubjectCombination(req, res) {
     try {
-      const row = await catalogService.deleteSubjectCombination(
-        req.params.subjectCombinationId
-      );
+      const row = await catalogService.deleteSubjectCombination(req.params.subjectCombinationId);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.subject_combination_delete',
+        resourceType: 'subject_combination',
+        resourceId: req.params.subjectCombinationId,
+        req,
+      });
       return sendSuccess(res, row, 'Subject combination deleted');
     } catch (err) {
       const status = err.status || NOT_FOUND;

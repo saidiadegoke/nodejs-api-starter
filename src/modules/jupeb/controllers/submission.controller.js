@@ -1,4 +1,5 @@
 const submissionService = require('../services/submission.service');
+const AdminAuditService = require('../../admin/services/adminAudit.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const { CREATED, INTERNAL_SERVER_ERROR, CONFLICT } = require('../../../shared/constants/statusCodes');
 
@@ -19,6 +20,14 @@ class SubmissionController {
   static async createRequirement(req, res) {
     try {
       const row = await submissionService.createRequirement(req.body);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.document_requirement_create',
+        resourceType: 'document_requirement',
+        resourceId: row.id,
+        details: { key: row.key, title: row.title },
+        req,
+      });
       return sendSuccess(res, row, 'Requirement created', CREATED);
     } catch (err) {
       if (err.status === CONFLICT) return sendError(res, err.message, CONFLICT);
@@ -29,6 +38,14 @@ class SubmissionController {
   static async patchRequirement(req, res) {
     try {
       const row = await submissionService.patchRequirement(req.params.requirementId, req.body);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.document_requirement_update',
+        resourceType: 'document_requirement',
+        resourceId: req.params.requirementId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, row, 'Requirement updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -38,6 +55,13 @@ class SubmissionController {
   static async activateRequirement(req, res) {
     try {
       const row = await submissionService.setRequirementStatus(req.params.requirementId, 'active');
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.document_requirement_activate',
+        resourceType: 'document_requirement',
+        resourceId: req.params.requirementId,
+        req,
+      });
       return sendSuccess(res, row, 'Requirement activated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -47,6 +71,13 @@ class SubmissionController {
   static async deactivateRequirement(req, res) {
     try {
       const row = await submissionService.setRequirementStatus(req.params.requirementId, 'inactive');
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'catalog.document_requirement_deactivate',
+        resourceType: 'document_requirement',
+        resourceId: req.params.requirementId,
+        req,
+      });
       return sendSuccess(res, row, 'Requirement deactivated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -139,6 +170,14 @@ class SubmissionController {
         'accepted',
         req.body.review_note
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'document.review_accept',
+        resourceType: 'registration_document',
+        resourceId: req.params.documentId,
+        details: { review_note: req.body.review_note, status: 'accepted' },
+        req,
+      });
       return sendSuccess(res, row, 'Document accepted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -153,6 +192,14 @@ class SubmissionController {
         'rejected',
         req.body.review_note
       );
+      AdminAuditService.log({
+        actorUserId: req.user.user_id,
+        action: 'document.review_reject',
+        resourceType: 'registration_document',
+        resourceId: req.params.documentId,
+        details: { review_note: req.body.review_note, status: 'rejected' },
+        req,
+      });
       return sendSuccess(res, row, 'Document rejected');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);

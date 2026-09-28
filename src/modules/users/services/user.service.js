@@ -13,12 +13,48 @@ function httpError(status, message) {
 
 class UserService {
   /**
-   * Get all users with pagination and optional search
+   * Get all users with pagination, optional search, and role exclusions/filters
    */
-  static async getAllUsers(page = 1, limit = 10, q = null, actorUserId = null) {
+  static async getAllUsers(page = 1, limit = 10, q = null, actorUserId = null, options = {}) {
     const scope = actorUserId ? await resolveAdminRbacScope(actorUserId) : { mode: 'full' };
     const universityId = scope.mode === 'institution' ? scope.universityId : null;
-    const excludeGlobalRoleNames = scope.mode === 'institution' ? ['institution_admin'] : [];
+
+    const {
+      role = null,
+      include_all = false,
+      include_students = false,
+      include_institution = false,
+      exclude_roles = null,
+    } = options;
+
+    const isIncludeAll = include_all === true || include_all === 'true' || include_all === '1';
+    const isIncludeStudents = include_students === true || include_students === 'true' || include_students === '1';
+    const isIncludeInstitution = include_institution === true || include_institution === 'true' || include_institution === '1';
+
+    let excludeRoleNames = [];
+    let excludeInstitutionRoles = false;
+    let excludeGlobalRoleNames = [];
+
+    if (scope.mode === 'institution') {
+      excludeGlobalRoleNames = ['institution_admin'];
+    } else {
+      if (!isIncludeAll && !role) {
+        if (!isIncludeStudents) {
+          excludeRoleNames.push('student');
+        }
+        if (!isIncludeInstitution) {
+          excludeRoleNames.push('institution_admin', 'program_director');
+          excludeInstitutionRoles = true;
+        }
+      }
+    }
+
+    if (exclude_roles) {
+      const extraExcludes = Array.isArray(exclude_roles)
+        ? exclude_roles
+        : String(exclude_roles).split(',').map((r) => r.trim()).filter(Boolean);
+      excludeRoleNames = Array.from(new Set([...excludeRoleNames, ...extraExcludes]));
+    }
 
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
@@ -30,7 +66,10 @@ class UserService {
       offset,
       q: searchTerm,
       universityId,
+      role: role ? String(role).trim() : null,
       excludeGlobalRoleNames,
+      excludeRoleNames,
+      excludeInstitutionRoles,
     });
 
     return { users: rows, total, page: safePage, limit: safeLimit };
