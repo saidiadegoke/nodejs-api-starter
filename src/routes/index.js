@@ -22,6 +22,7 @@ const ocrRoutes = require('../modules/ocr/routes');
 const attendanceRoutes = require('../modules/attendance/routes');
 const crmsRoutes = require('../modules/crms/routes');
 const supportRoutes = require('../modules/support/routes/support.routes');
+const auditRoutes = require('../modules/admin/audit.routes');
 const ssoRoutes = require('../modules/auth/routes/sso.routes');
 const wellKnownRoutes = require('../modules/auth/routes/well-known.routes');
 const testRoutes = require('./test-routes');
@@ -98,6 +99,7 @@ router.get('/', (req, res) => {
       dashboard: '/dashboard',
       attendance: '/attendance',
       support: '/support',
+      audit: '/audit',
       sso: '/sso',
       jwks: '/.well-known/jwks.json',
       health: '/health'
@@ -131,6 +133,7 @@ router.use('/crms', crmsRoutes);
 router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
 router.use('/assets', assetsRoutes);
+router.use('/audit', auditRoutes);
 router.use('/admin', adminRoutes);
 router.use('/api-keys', apiKeysRoutes);
 router.use('/webhooks', webhooksRoutes);

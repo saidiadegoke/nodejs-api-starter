@@ -1,4 +1,5 @@
 const rbacService = require('../services/rbac.service');
+const AdminAuditService = require('../services/adminAudit.service');
 const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
 const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
 
@@ -32,6 +33,15 @@ class RbacController {
   static async createRole(req, res) {
     try {
       const role = await rbacService.createRole(req.body, req.user && req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'role.create',
+        resourceType: 'role',
+        resourceId: role.id,
+        universityId: role.owner_jupeb_university_id || null,
+        details: { name: role.name, display_name: role.display_name },
+        req,
+      });
       return sendSuccess(res, role, 'Role created', CREATED);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -41,6 +51,15 @@ class RbacController {
   static async patchRole(req, res) {
     try {
       const role = await rbacService.patchRole(req.params.roleId, req.body, req.user && req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'role.update',
+        resourceType: 'role',
+        resourceId: req.params.roleId,
+        universityId: role.owner_jupeb_university_id || null,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, role, 'Role updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -50,6 +69,13 @@ class RbacController {
   static async deleteRole(req, res) {
     try {
       await rbacService.deleteRole(req.params.roleId, req.user && req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'role.delete',
+        resourceType: 'role',
+        resourceId: req.params.roleId,
+        req,
+      });
       return sendSuccess(res, null, 'Role deleted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -85,6 +111,14 @@ class RbacController {
   static async createPermission(req, res) {
     try {
       const p = await rbacService.createPermission(req.body);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'permission.create',
+        resourceType: 'permission',
+        resourceId: p.id,
+        details: { name: p.name, resource: p.resource, action: p.action },
+        req,
+      });
       return sendSuccess(res, p, 'Permission created', CREATED);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -94,6 +128,14 @@ class RbacController {
   static async patchPermission(req, res) {
     try {
       const p = await rbacService.patchPermission(req.params.permissionId, req.body);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'permission.update',
+        resourceType: 'permission',
+        resourceId: req.params.permissionId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, p, 'Permission updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -103,6 +145,13 @@ class RbacController {
   static async deletePermission(req, res) {
     try {
       await rbacService.deletePermission(req.params.permissionId);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'permission.delete',
+        resourceType: 'permission',
+        resourceId: req.params.permissionId,
+        req,
+      });
       return sendSuccess(res, null, 'Permission deleted');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -129,6 +178,14 @@ class RbacController {
         req.params.permissionId,
         req.user && req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'role.permission_attach',
+        resourceType: 'role',
+        resourceId: req.params.roleId,
+        details: { permission_id: req.params.permissionId },
+        req,
+      });
       return sendSuccess(res, result, result.attached ? 'Permission attached' : 'Already attached');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -142,6 +199,14 @@ class RbacController {
         req.params.permissionId,
         req.user && req.user.user_id
       );
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'role.permission_detach',
+        resourceType: 'role',
+        resourceId: req.params.roleId,
+        details: { permission_id: req.params.permissionId },
+        req,
+      });
       return sendSuccess(res, result, result.detached ? 'Permission detached' : 'Was not attached');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
@@ -161,6 +226,14 @@ class RbacController {
   static async setUserRoles(req, res) {
     try {
       const rows = await rbacService.setUserRoles(req.params.userId, req.body, req.user.user_id);
+      AdminAuditService.log({
+        actorUserId: req.user && req.user.user_id,
+        action: 'user.roles_update',
+        resourceType: 'user',
+        resourceId: req.params.userId,
+        details: req.body,
+        req,
+      });
       return sendSuccess(res, rows, 'User roles updated');
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
