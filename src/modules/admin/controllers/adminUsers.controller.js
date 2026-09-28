@@ -163,6 +163,14 @@ class AdminUsersController {
           firstName: first_name,
           role: roleRow.name,
         });
+        AdminAuditService.log({
+          actorUserId: req.user && req.user.user_id,
+          action: 'user.create',
+          resourceType: 'user',
+          resourceId: user.id,
+          details: { email: user.email, role: roleRow.name },
+          req,
+        });
         return sendSuccess(
           res,
           {
@@ -212,6 +220,16 @@ class AdminUsersController {
           firstName: first_name,
           role: roleRow.name,
           universityName: uni.name,
+        });
+
+        AdminAuditService.log({
+          actorUserId: req.user && req.user.user_id,
+          action: 'user.create_with_university',
+          resourceType: 'user',
+          resourceId: user.id,
+          universityId: university_id,
+          details: { email: user.email, role: roleRow.name, university_id, university_name: uni.name },
+          req,
         });
 
         return sendSuccess(

@@ -39,6 +39,9 @@ router.put('/settings', requireAuth, requirePermission('system.config'), AdminSe
 // Audit log
 // ============================================================================
 
+/** GET /admin/audit/export — CSV export of audit logs */
+router.get('/audit/export', requireAuth, requirePermission('activity_logs.view'), AdminAuditController.exportCsv);
+
 /** GET /admin/audit — paginated audit log */
 router.get('/audit', requireAuth, requirePermission('activity_logs.view'), AdminAuditController.list);
 

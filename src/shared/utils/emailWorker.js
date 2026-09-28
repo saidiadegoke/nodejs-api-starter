@@ -48,12 +48,30 @@ const sendEmail = async ({ to, subject, templateFile, placeholders, replyTo, fro
       });
     }
 
+    // Attach actual JUPEB logo file as inline CID attachment
+    const logoLocations = [
+      path.join(__dirname, '../assets/logo.png'),
+      path.join(__dirname, '../emails/assets/logo.png'),
+      path.join(__dirname, '../../../logo.png'),
+    ];
+    const resolvedLogoPath = logoLocations.find((p) => fs.existsSync(p));
+
+    const attachments = [];
+    if (resolvedLogoPath) {
+      attachments.push({
+        filename: 'logo.png',
+        path: resolvedLogoPath,
+        cid: 'jupeb-logo', // Matches <img src="cid:jupeb-logo" ...>
+      });
+    }
+
     // Mail options configuration
     const mailOptions = {
       from: `"${process.env.APP_NAME || 'App'}" <${fromEmail || process.env.FROM_EMAIL}>`,
       to,
       subject,
       html: htmlContent,
+      ...(attachments.length > 0 && { attachments }),
       ...(replyTo && { replyTo }), // Include replyTo if provided
     };
 

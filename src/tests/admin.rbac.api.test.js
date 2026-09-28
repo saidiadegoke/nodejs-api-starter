@@ -321,6 +321,34 @@ describe('Admin RBAC — roles, permissions, user assignment', () => {
     expect(res.status).toBe(403);
   });
 
+  it('GET /admin/users filters out student and institution users by default', async () => {
+    if (!dbReady) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const res = await request(app)
+      .get('/admin/users?limit=100')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    for (const u of res.body.data) {
+      const userRoles = u.roles || [];
+      expect(userRoles).not.toContain('student');
+      expect(userRoles).not.toContain('institution_admin');
+      expect(userRoles).not.toContain('program_director');
+    }
+  });
+
+  it('GET /admin/users?include_all=true allows retrieving all users including student and institution users', async () => {
+    if (!dbReady) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const res = await request(app)
+      .get('/admin/users?limit=100&include_all=true')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
   it('GET /admin/users/:userId/roles returns current assignments', async () => {
     if (!dbReady) return;
     const token = await getAdminToken();
@@ -337,3 +365,4 @@ describe('Admin RBAC — roles, permissions, user assignment', () => {
     expect(res.body.data.find((r) => r.name === 'admin' || r.name === 'super_admin')).toBeDefined();
   });
 });
+
