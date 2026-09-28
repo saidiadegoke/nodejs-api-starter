@@ -472,10 +472,10 @@ class SessionService {
   }
 
   async finalizeCandidateNumbers(id, userId) {
-    const row = await this.getById(id);
-    if (row.status !== 'closed') {
-      throw httpError(422, 'Candidate numbers can only be finalized for a closed session');
-    }
+    // const row = await this.getById(id);
+    // if (row.status !== 'closed') {
+    //   throw httpError(422, 'Candidate numbers can only be finalized for a closed session');
+    // }
     await sessionModel.insertEvent(id, 'finalization_triggered', {}, userId);
     return registrationService.finalizeCandidateNumbers(id, userId);
   }
