@@ -870,6 +870,10 @@ class RegistrationService {
     if (session.registration_locked) {
       throw httpError(423, 'Registration is locked for this session');
     }
+    const isUniLocked = await sessionModel.isUniversityRegistrationLocked(session_id, university_id);
+    if (isUniLocked) {
+      throw httpError(423, 'Registration is locked for this institution for the current session');
+    }
     // Session window + the candidate-info cutoff. All candidate creation is
     // gated on candidate_info_cutoff_at, which is the earliest cutoff in the
     // enforced ordering (closes_at <= candidate_info <= profile_update <= ca).
@@ -1385,6 +1389,11 @@ class RegistrationService {
       trend: prev ? t(curVal, prevVal) : null,
     });
 
+    const isUniLocked = scopedUniversityId
+      ? await sessionModel.isUniversityRegistrationLocked(currentSession.id, scopedUniversityId)
+      : false;
+    const isLocked = Boolean(currentSession.registration_locked) || isUniLocked;
+
     return {
       total_registered: card(cur.total, prev?.total),
       approved: card(cur.approved, prev?.approved),
@@ -1395,9 +1404,11 @@ class RegistrationService {
         cur.total_subject_combinations,
         prev?.total_subject_combinations
       ),
-      registration_locked: Boolean(currentSession.registration_locked),
+      registration_locked: isLocked,
       registration_lock: {
-        locked: Boolean(currentSession.registration_locked),
+        locked: isLocked,
+        session_locked: Boolean(currentSession.registration_locked),
+        institution_locked: isUniLocked,
         session_id: currentSession.id,
         label: currentSession.academic_year,
       },

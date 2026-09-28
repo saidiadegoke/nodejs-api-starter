@@ -280,7 +280,7 @@ describe('JUPEB sessions API', () => {
         profile_update_cutoff_at: new Date(`${y1}-07-01T00:00:00.000Z`).toISOString(),
       });
     expect(res.status).toBe(422);
-    expect(res.body.message).toMatch(/profile_update_cutoff_at/i);
+    expect(res.body.message).toMatch(/Profile update cutoff/i);
   });
 
   it('GET /sessions/:id/stats returns extended KPIs', async () => {

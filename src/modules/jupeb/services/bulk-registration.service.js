@@ -151,6 +151,10 @@ class BulkRegistrationService {
     if (session.registration_locked) {
       throw httpError(423, 'Registration is locked for this session');
     }
+    const isUniLocked = await sessionModel.isUniversityRegistrationLocked(session_id, university_id);
+    if (isUniLocked) {
+      throw httpError(423, 'Registration is locked for this institution for the current session');
+    }
     // Session window + candidate-info cutoff, checked up front so a passed
     // cutoff fails the whole upload before any row is written.
     const windowFailure = describeSessionWindowFailure(session, 'session_window');

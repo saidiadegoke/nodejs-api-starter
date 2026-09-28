@@ -15,14 +15,18 @@ function isUuid(value) {
   );
 }
 
-function toSessionSummary(row) {
+function toSessionSummary(row, isInstitutionLocked = false) {
   if (!row) return null;
   const windows = evaluateSessionWindows(row);
+  const sessionLocked = Boolean(row.registration_locked);
+  const effectiveLocked = sessionLocked || Boolean(isInstitutionLocked);
   return {
     id: row.id,
     label: row.academic_year,
     status: row.status,
-    registration_locked: Boolean(row.registration_locked),
+    registration_locked: effectiveLocked,
+    session_registration_locked: sessionLocked,
+    institution_registration_locked: Boolean(isInstitutionLocked),
     opens_at: row.opens_at || null,
     closes_at: row.closes_at || null,
     // Cutoff state so the portal can grey out actions before the request
@@ -49,6 +53,15 @@ async function getUserViewingSessionId(userId) {
     [userId]
   );
   return r.rows[0]?.viewing_jupeb_session_id || null;
+}
+
+async function getUserUniversityId(userId) {
+  if (!userId) return null;
+  const r = await pool.query(
+    `SELECT jupeb_university_id FROM profiles WHERE user_id = $1`,
+    [userId]
+  );
+  return r.rows[0]?.jupeb_university_id || null;
 }
 
 async function setUserViewingSession(userId, sessionId) {
@@ -104,16 +117,34 @@ async function getSessionContext(userId) {
     }
   }
   const effectiveSession = viewingSession || activeSession;
+
+  const uniId = userId ? await getUserUniversityId(userId) : null;
+  const checkUniLocked = async (session) => {
+    if (!session || !uniId) return false;
+    const r = await pool.query(
+      `SELECT locked FROM jupeb_session_university_locks WHERE session_id = $1 AND university_id = $2`,
+      [session.id, uniId]
+    );
+    return Boolean(r.rows[0]?.locked);
+  };
+
+  const [activeUniLocked, viewingUniLocked, effectiveUniLocked] = await Promise.all([
+    checkUniLocked(activeSession),
+    checkUniLocked(viewingSession),
+    checkUniLocked(effectiveSession),
+  ]);
+
   return {
-    active_session: toSessionSummary(activeSession),
-    viewing_session: toSessionSummary(viewingSession),
-    effective_session: toSessionSummary(effectiveSession),
+    active_session: toSessionSummary(activeSession, activeUniLocked),
+    viewing_session: toSessionSummary(viewingSession, viewingUniLocked),
+    effective_session: toSessionSummary(effectiveSession, effectiveUniLocked),
   };
 }
 
 module.exports = {
   getActiveSession,
   getUserViewingSessionId,
+  getUserUniversityId,
   setUserViewingSession,
   clearUserViewingSession,
   resolveEffectiveSession,
