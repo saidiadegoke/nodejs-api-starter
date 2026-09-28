@@ -191,6 +191,124 @@ class SessionModel {
     return result.rows[0];
   }
 
+  async isUniversityRegistrationLocked(sessionId, universityId) {
+    if (!sessionId || !universityId) return false;
+    const result = await pool.query(
+      `SELECT locked FROM jupeb_session_university_locks
+       WHERE session_id = $1 AND university_id = $2`,
+      [sessionId, universityId]
+    );
+    if (!result.rows.length) return false;
+    return Boolean(result.rows[0].locked);
+  }
+
+  async setUniversityRegistrationLocks(sessionId, { universityIds, locked, reason, userId }) {
+    const isLocked = Boolean(locked);
+    const updatedRows = [];
+    for (const universityId of universityIds) {
+      const result = await pool.query(
+        `INSERT INTO jupeb_session_university_locks (
+           session_id, university_id, locked, reason, locked_at, locked_by, updated_at, updated_by
+         ) VALUES (
+           $1, $2, $3, $4,
+           CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,
+           CASE WHEN $3 THEN $5::uuid ELSE NULL END,
+           CURRENT_TIMESTAMP, $5
+         )
+         ON CONFLICT (session_id, university_id)
+         DO UPDATE SET
+           locked = EXCLUDED.locked,
+           reason = CASE WHEN EXCLUDED.locked THEN EXCLUDED.reason ELSE jupeb_session_university_locks.reason END,
+           locked_at = CASE WHEN EXCLUDED.locked THEN CURRENT_TIMESTAMP ELSE jupeb_session_university_locks.locked_at END,
+           locked_by = CASE WHEN EXCLUDED.locked THEN EXCLUDED.locked_by ELSE jupeb_session_university_locks.locked_by END,
+           updated_at = CURRENT_TIMESTAMP,
+           updated_by = EXCLUDED.updated_by
+         RETURNING *`,
+        [sessionId, universityId, isLocked, reason || null, userId || null]
+      );
+      updatedRows.push(result.rows[0]);
+    }
+    return updatedRows;
+  }
+
+  async getUniversityRegistrationLocks(sessionId, { page = 1, limit = 50, q, locked } = {}) {
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const offset = (parsedPage - 1) * parsedLimit;
+
+    const values = [sessionId];
+    const where = ['u.deleted_at IS NULL'];
+    let idx = 2;
+
+    if (locked !== undefined && locked !== null && locked !== '') {
+      const isLocked = locked === 'true' || locked === true || locked === 1 || locked === '1';
+      if (isLocked) {
+        where.push(`l.locked = true`);
+      } else {
+        where.push(`(l.locked IS NULL OR l.locked = false)`);
+      }
+    }
+
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim()}%`;
+      where.push(`(
+        u.name ILIKE $${idx} OR
+        u.code ILIKE $${idx} OR
+        u.short_name ILIKE $${idx}
+      )`);
+      values.push(term);
+      idx += 1;
+    }
+
+    const whereSql = where.join(' AND ');
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM jupeb_universities u
+      LEFT JOIN jupeb_session_university_locks l
+        ON l.university_id = u.id AND l.session_id = $1
+      WHERE ${whereSql}
+    `;
+    const countResult = await pool.query(countSql, values);
+    const total = countResult.rows[0]?.total || 0;
+
+    values.push(parsedLimit, offset);
+    const dataSql = `
+      SELECT
+        u.id AS university_id,
+        u.name AS university_name,
+        u.code AS university_code,
+        u.short_name AS university_short_name,
+        COALESCE(l.locked, false) AS locked,
+        l.reason,
+        l.locked_at,
+        l.locked_by,
+        l.updated_at,
+        l.updated_by,
+        NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '') AS locked_by_name,
+        up.display_name AS locked_by_display_name,
+        u_user.email AS locked_by_email
+      FROM jupeb_universities u
+      LEFT JOIN jupeb_session_university_locks l
+        ON l.university_id = u.id AND l.session_id = $1
+      LEFT JOIN profiles up
+        ON up.user_id = l.locked_by
+      LEFT JOIN users u_user
+        ON u_user.id = l.locked_by
+      WHERE ${whereSql}
+      ORDER BY COALESCE(l.locked, false) DESC, u.name ASC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `;
+
+    const dataResult = await pool.query(dataSql, values);
+    return {
+      rows: dataResult.rows,
+      total,
+      page: parsedPage,
+      limit: parsedLimit,
+    };
+  }
+
   async setFinalNumbersGeneratedAt(id, updatedBy) {
     const result = await pool.query(
       `UPDATE jupeb_registration_sessions

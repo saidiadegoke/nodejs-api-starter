@@ -405,6 +405,57 @@ class SessionService {
     if (!body || typeof body.locked !== 'boolean') {
       throw httpError(422, 'locked must be a boolean');
     }
+
+    const hasUniversityIds = Array.isArray(body.university_ids);
+    const hasUniversityId = typeof body.university_id === 'string' && Boolean(body.university_id.trim());
+
+    if (hasUniversityIds || hasUniversityId) {
+      const rawIds = hasUniversityIds ? body.university_ids : [body.university_id.trim()];
+      if (!rawIds.length) {
+        throw httpError(422, 'university_ids must not be empty');
+      }
+      for (const uniId of rawIds) {
+        if (!isUuid(uniId)) {
+          throw httpError(422, `Invalid university ID: ${uniId}`);
+        }
+      }
+
+      const uniCheck = await pool.query(
+        `SELECT id FROM jupeb_universities WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+        [rawIds]
+      );
+      if (uniCheck.rows.length !== rawIds.length) {
+        throw httpError(404, 'One or more universities were not found');
+      }
+
+      const updatedRows = await sessionModel.setUniversityRegistrationLocks(id, {
+        universityIds: rawIds,
+        locked: body.locked,
+        reason: body.reason,
+        userId,
+      });
+
+      await sessionModel.insertEvent(
+        id,
+        body.locked ? 'institution_registration_locked' : 'institution_registration_unlocked',
+        {
+          university_ids: rawIds,
+          locked: body.locked,
+          reason: body.reason || null,
+        },
+        userId
+      );
+
+      return {
+        session_id: id,
+        locked: body.locked,
+        reason: body.reason || null,
+        university_ids: rawIds,
+        updated_count: updatedRows.length,
+        items: updatedRows,
+      };
+    }
+
     const updated = await sessionModel.setRegistrationLocked(id, body.locked, userId);
     await sessionModel.insertEvent(
       id,
@@ -415,8 +466,16 @@ class SessionService {
     return updated;
   }
 
-  async finalizeCandidateNumbers(id, userId) {
+  async getUniversityRegistrationLocks(id, query = {}) {
     await this.getById(id);
+    return sessionModel.getUniversityRegistrationLocks(id, query);
+  }
+
+  async finalizeCandidateNumbers(id, userId) {
+    const row = await this.getById(id);
+    if (row.status !== 'closed') {
+      throw httpError(422, 'Candidate numbers can only be finalized for a closed session');
+    }
     await sessionModel.insertEvent(id, 'finalization_triggered', {}, userId);
     return registrationService.finalizeCandidateNumbers(id, userId);
   }

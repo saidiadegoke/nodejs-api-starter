@@ -184,14 +184,31 @@ class SessionController {
 
   static async setRegistrationLock(req, res) {
     try {
-      const row = await sessionService.setRegistrationLock(
+      const result = await sessionService.setRegistrationLock(
         req.params.sessionId,
         req.body,
         req.user.user_id
       );
+      const isSelective = Boolean(req.body && (req.body.university_ids || req.body.university_id));
+      if (isSelective) {
+        AdminAuditService.log({
+          actorUserId: req.user.user_id,
+          action: req.body.locked ? 'session.institution_registration_lock' : 'session.institution_registration_unlock',
+          resourceType: 'session',
+          resourceId: req.params.sessionId,
+          details: req.body,
+          req,
+        });
+        return sendSuccess(
+          res,
+          result,
+          req.body.locked ? 'Institution registration locked' : 'Institution registration unlocked'
+        );
+      }
+
       AdminAuditService.log({
         actorUserId: req.user.user_id,
-        action: row.registration_locked ? 'session.lock_registration' : 'session.unlock_registration',
+        action: result.registration_locked ? 'session.lock_registration' : 'session.unlock_registration',
         resourceType: 'session',
         resourceId: req.params.sessionId,
         details: req.body,
@@ -199,9 +216,21 @@ class SessionController {
       });
       return sendSuccess(
         res,
-        row,
-        row.registration_locked ? 'Registration locked' : 'Registration unlocked'
+        result,
+        result.registration_locked ? 'Registration locked' : 'Registration unlocked'
       );
+    } catch (err) {
+      return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  static async getUniversityRegistrationLocks(req, res) {
+    try {
+      const { rows, total, page, limit } = await sessionService.getUniversityRegistrationLocks(
+        req.params.sessionId,
+        req.query
+      );
+      return sendPaginated(res, rows, page, limit, total);
     } catch (err) {
       return sendError(res, err.message, err.status || INTERNAL_SERVER_ERROR);
     }

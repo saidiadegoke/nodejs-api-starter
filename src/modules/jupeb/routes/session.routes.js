@@ -23,6 +23,10 @@ router.get('/:sessionId/stats', sessionRead, SessionController.stats);
 router.post('/:sessionId/open', sessionWrite, SessionController.open);
 router.post('/:sessionId/close', sessionWrite, SessionController.close);
 router.post('/:sessionId/reopen', superAdminOnly, SessionController.reopen);
+router.get('/:sessionId/university-locks', sessionRead, SessionController.getUniversityRegistrationLocks);
+router.get('/:sessionId/registration-lock/universities', sessionRead, SessionController.getUniversityRegistrationLocks);
+router.put('/:sessionId/university-locks', sessionWrite, SessionController.setRegistrationLock);
+router.patch('/:sessionId/university-locks', sessionWrite, SessionController.setRegistrationLock);
 router.patch('/:sessionId/registration-lock', sessionWrite, SessionController.setRegistrationLock);
 router.post('/:sessionId/finalize-candidate-numbers', sessionWrite, SessionController.finalize);
 
