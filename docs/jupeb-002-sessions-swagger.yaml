@@ -419,11 +419,68 @@ paths:
   /sessions/{sessionId}/registration-lock:
     patch:
       tags: [Sessions]
-      summary: Lock or unlock institution registration for a session
+      summary: Lock or unlock candidate registration globally or for select schools
       description: |
-        Toggles whether institutions can enroll/issue new candidate codes for
-        this session. This is independent of the session `open` / `closed`
-        lifecycle; an open session can still have registration locked.
+        Toggles whether institutions can create/enroll candidates for this session.
+        - If `university_id` (single UUID) or `university_ids` (array of UUIDs) is provided, locks/unlocks registration specifically for those select institutions.
+        - If no `university_id`/`university_ids` is provided, toggles the global session-wide registration lock.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locked]
+              properties:
+                locked: { type: boolean, description: 'True to lock, false to unlock' }
+                university_id: { type: string, format: uuid, description: 'Optional single university ID to lock/unlock' }
+                university_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  description: 'Optional array of university IDs to lock/unlock'
+                reason: { type: string, description: 'Optional reason for locking (e.g. fee reconciliation)' }
+      responses:
+        '200': { description: Success }
+        '422': { description: locked must be boolean / invalid university IDs }
+
+  /sessions/{sessionId}/university-locks:
+    get:
+      tags: [Sessions]
+      summary: List institution registration lock status for a session
+      description: |
+        Returns list of universities with their lock state, reason, and locked_by details for this session.
+        Supports pagination, `locked=true|false` filter, and search query `q`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: locked
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: Filter by lock status (true = only locked schools)
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: Search by university name, code, or short name
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+      responses:
+        '200': { description: Paginated list of university registration locks }
+    put:
+      tags: [Sessions]
+      summary: Lock or unlock select universities for a session
       security:
         - BearerAuth: []
       parameters:
@@ -437,9 +494,14 @@ paths:
               required: [locked]
               properties:
                 locked: { type: boolean }
+                university_id: { type: string, format: uuid }
+                university_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                reason: { type: string }
       responses:
-        '200': { description: Updated session }
-        '422': { description: locked must be boolean }
+        '200': { description: Success }
+
 
   /sessions/{sessionId}/reopen:
     post:
