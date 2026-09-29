@@ -1,11 +1,10 @@
 import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AI_QUEUES } from './queues.config';
+import { AI_QUEUES, SYNC_QUEUES } from './queues.config';
 
 /**
- * BullMQ module for AI worker job queues.
- * Queues are consumed by Python workers in commod-ai-workers repo.
+ * BullMQ module for background job queues.
  */
 @Global()
 @Module({
@@ -15,27 +14,45 @@ import { AI_QUEUES } from './queues.config';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
         const redisUrl =
-          configService.get('redis.redisHost', { infer: true }) ?? '';
+          configService.get('redis.redisHost', { infer: true }) ||
+          process.env.REDIS_URL ||
+          'redis://localhost:6379';
         const rejectUnauthorized =
           configService.get<boolean>('redis.rejectUnauthorized', {
             infer: true,
-          }) ?? true;
-        const url = new URL(redisUrl);
-        const isTls = url.protocol === 'rediss:';
+          }) ?? false;
+
+        let host = 'localhost';
+        let port = 6379;
+        let password: string | undefined;
+        let username: string | undefined;
+        let isTls = false;
+
+        try {
+          const url = new URL(redisUrl);
+          host = url.hostname || 'localhost';
+          port = parseInt(url.port, 10) || 6379;
+          password = url.password || undefined;
+          username = url.username || undefined;
+          isTls = url.protocol === 'rediss:';
+        } catch {
+          // fallback default
+        }
 
         return {
           connection: {
-            host: url.hostname,
-            port: parseInt(url.port, 10) || 6379,
-            password: url.password || undefined,
-            username: url.username || undefined,
+            host,
+            port,
+            password,
+            username,
             tls: isTls ? { rejectUnauthorized } : undefined,
           },
         };
       },
       inject: [ConfigService],
     }),
-    // Register all AI queues
+    // Register queues
+    BullModule.registerQueue({ name: SYNC_QUEUES.CANDIDATE_SYNC }),
     BullModule.registerQueue({ name: AI_QUEUES.OCR_INGESTION }),
     BullModule.registerQueue({ name: AI_QUEUES.FIELD_EXTRACTION }),
     BullModule.registerQueue({ name: AI_QUEUES.CONTRACT_EXTRACTION }),

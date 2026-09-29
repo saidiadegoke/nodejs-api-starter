@@ -36,6 +36,8 @@ import { MailModule } from './modules/mail';
 import { AttendanceModule } from './modules/attendance';
 import { CrmsModule } from './modules/crms';
 import { OcrModule } from './modules/ocr';
+import { BullMQModule } from './infra/bullmq/bullmq.module';
+import { SyncModule } from './modules/sync';
 
 @Module({
   imports: [
@@ -45,7 +47,9 @@ import { OcrModule } from './modules/ocr';
       envFilePath: process.env.NODE_ENV === 'test' ? ['.env.test', '.env'] : ['.env'],
     }),
     DatabaseModule,
+    BullMQModule,
     SharedModule,
+    SyncModule,
     ApiKeysModule,
     UsersModule,
     AuthModule,

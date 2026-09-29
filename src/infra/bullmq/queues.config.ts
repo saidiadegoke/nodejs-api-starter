@@ -28,4 +28,9 @@ export const AI_QUEUES = {
   CREDENTIAL_VERIFY_RESULT: 'credential-verify-result',
 } as const;
 
+export const SYNC_QUEUES = {
+  CANDIDATE_SYNC: 'candidate-sync',
+} as const;
+
+export type SyncQueueName = (typeof SYNC_QUEUES)[keyof typeof SYNC_QUEUES];
 export type AiQueueName = (typeof AI_QUEUES)[keyof typeof AI_QUEUES];

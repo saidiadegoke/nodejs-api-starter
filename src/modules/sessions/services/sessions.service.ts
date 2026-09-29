@@ -1,52 +1,74 @@
 import {
+  ConflictException,
   Injectable,
   NotFoundException,
-  ConflictException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { isUUID } from 'class-validator';
+import { DataSource, In, Repository } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
-import { SessionRepository } from '../repositories/session.repository';
-import { SessionUniversityLockRepository } from '../repositories/session-university-lock.repository';
-import { SessionEventRepository } from '../repositories/session-event.repository';
-import { SessionContextService } from './session-context.service';
-import { AcademicSessionEntity, SessionStatus } from '../entities/academic-session.entity';
+import { CandidateSyncQueueService } from '../../sync/services/candidate-sync-queue.service';
+import { RegistrationStatus } from '../../registration/entities/registration.entity';
+import { UniversityEntity } from '../../institutions/entities/university.entity';
 import {
   CreateSessionDto,
-  PatchSessionDto,
   ListSessionsQueryDto,
-  SetRegistrationLockDto,
+  PatchSessionDto,
+  SelectiveLockResultDto,
   SessionMetricsQueryDto,
   SessionMetricsResponseDto,
   SessionStatsResponseDto,
-  MetricDeltaDto,
-  SelectiveLockResultDto,
+  SetRegistrationLockDto,
 } from '../dto';
+import { AcademicSessionEntity, SessionStatus } from '../entities/academic-session.entity';
+import { SessionEventRepository } from '../repositories/session-event.repository';
+import { SessionRegistrationRepository } from '../repositories/session-registration.repository';
+import { SessionUniversityLockRepository } from '../repositories/session-university-lock.repository';
+import { SessionRepository } from '../repositories/session.repository';
+import { computeDeltas } from '../utils/metric-delta.util';
 import {
-  validateYearShortForAcademicYear,
+  CSV_EXPORT_LIMIT,
+  DEFAULT_CURRENCY,
+  DEFAULT_PAGE_SIZE,
+  FINALIZE_ALL_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  SessionEventType,
+} from '../utils/session.constants';
+import {
+  assertSessionDateRules,
+  mapSessionDtoToFields,
+} from '../utils/session-fields.mapper';
+import {
   canTransitionStatus,
+  validateYearShortForAcademicYear,
 } from '../utils/session-validation.util';
+import { SessionContextService } from './session-context.service';
 
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const METRIC_KEYS = [
+  'institutions',
+  'total_candidates',
+  'current_candidates_enrolled',
+  'candidates_with_biometrics',
+] as const;
 
-function computeDelta(value: number, previous: number): MetricDeltaDto {
-  const v = Number(value) || 0;
-  const p = Number(previous) || 0;
-  let pct: number | null = null;
-  let direction = 'flat';
-  if (p === 0 && v === 0) {
-    pct = 0;
-  } else if (p === 0) {
-    pct = null;
-    direction = v > 0 ? 'up' : 'flat';
-  } else {
-    pct = Number((((v - p) / p) * 100).toFixed(2));
-    if (Math.abs(pct) < 0.001) direction = 'flat';
-    else direction = pct > 0 ? 'up' : 'down';
-  }
-  return { value: v, previous: p, delta_pct: pct, direction };
-}
+const STATS_KEYS = [
+  'total_registrations',
+  'institutions_count',
+  'subject_combinations_count',
+  'candidates_with_biometrics',
+  'candidates_without_biometrics',
+] as const;
+
+const emptyMetrics = () => ({
+  exams: null,
+  institutions: 0,
+  total_candidates: 0,
+  current_candidates_enrolled: 0,
+  candidates_with_biometrics: 0,
+});
+
+type UserId = string | null | undefined;
 
 @Injectable()
 export class SessionsService {
@@ -56,207 +78,109 @@ export class SessionsService {
     private readonly sessionRepo: SessionRepository,
     private readonly lockRepo: SessionUniversityLockRepository,
     private readonly eventRepo: SessionEventRepository,
+    private readonly registrationRepo: SessionRegistrationRepository,
+    @InjectRepository(UniversityEntity)
+    private readonly universityRepo: Repository<UniversityEntity>,
     private readonly sessionContextService: SessionContextService,
+    private readonly candidateSyncQueueService: CandidateSyncQueueService,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(SessionsService.name);
   }
 
+  // ─────────────────────────────── Queries ───────────────────────────────
+
   async list(query: ListSessionsQueryDto) {
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
-    const offset = (page - 1) * limit;
+    const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(query.limit) || DEFAULT_PAGE_SIZE));
+    const filter = { status: query.status, q: query.q };
 
-    const rows = await this.sessionRepo.findAll({
-      limit,
-      offset,
-      status: query.status,
-      q: query.q,
-    });
-    const total = await this.sessionRepo.count({
-      status: query.status,
-      q: query.q,
-    });
+    const [rows, total] = await Promise.all([
+      this.sessionRepo.findAll({ ...filter, limit, offset: (page - 1) * limit }),
+      this.sessionRepo.count(filter),
+    ]);
 
     return { rows, page, limit, total };
   }
 
   async getById(id: string): Promise<AcademicSessionEntity> {
-    if (!UUID_REGEX.test(id)) {
-      throw new UnprocessableEntityException('Invalid session id');
-    }
+    this.assertUuid(id, 'Invalid session id');
     const row = await this.sessionRepo.findById(id);
-    if (!row) {
-      throw new NotFoundException('Session not found');
-    }
+    if (!row) throw new NotFoundException('Session not found');
     return row;
   }
 
-  async create(dto: CreateSessionDto, userId?: string | null): Promise<AcademicSessionEntity> {
-    const y = validateYearShortForAcademicYear(dto.academic_year, dto.year_short);
-    if (!y.ok) {
-      throw new UnprocessableEntityException(y.error);
-    }
+  // ─────────────────────────────── Commands ──────────────────────────────
 
-    const opens = new Date(dto.opens_at);
-    const closes = new Date(dto.closes_at);
-    if (opens.getTime() >= closes.getTime()) {
-      throw new UnprocessableEntityException('opens_at must be before closes_at');
-    }
+  async create(dto: CreateSessionDto, userId?: UserId): Promise<AcademicSessionEntity> {
+    const fields = mapSessionDtoToFields(dto);
 
-    const cutoffCandidate = dto.candidate_info_cutoff_at ? new Date(dto.candidate_info_cutoff_at) : null;
-    const cutoffProfile = dto.profile_update_cutoff_at ? new Date(dto.profile_update_cutoff_at) : null;
-    const cutoffCa = dto.ca_cutoff_at ? new Date(dto.ca_cutoff_at) : null;
+    this.assertYearPair(fields.academicYear, fields.yearShort);
+    assertSessionDateRules(fields);
 
-    const ordered: [string, Date | null][] = [
-      ['Session close date', closes],
-      ['Candidate info cutoff', cutoffCandidate],
-      ['Profile update cutoff', cutoffProfile],
-      ['CA cutoff', cutoffCa],
-    ];
-    const presentCutoffs = ordered.filter(([, v]) => v != null) as [string, Date][];
-
-    for (let i = 1; i < presentCutoffs.length; i += 1) {
-      const [prevName, prevTs] = presentCutoffs[i - 1];
-      const [thisName, thisTs] = presentCutoffs[i];
-      if (thisTs.getTime() < prevTs.getTime()) {
-        const fmt = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 16);
-        throw new UnprocessableEntityException(
-          `The ${thisName} (${fmt(thisTs)}) cannot be earlier than the ${prevName} (${fmt(prevTs)}).`,
-        );
-      }
-    }
-
-    const existing = await this.sessionRepo.findByAcademicYear(dto.academic_year.trim());
-    if (existing) {
+    if (await this.sessionRepo.findByAcademicYear(fields.academicYear!)) {
       throw new ConflictException('A session with this academic_year already exists');
     }
 
-    await this.sessionRepo.closeOpenSessions(userId);
+    if (fields.registrationFeeAmount != null && !fields.registrationFeeCurrency) {
+      fields.registrationFeeCurrency = DEFAULT_CURRENCY;
+    }
 
-    const created = await this.sessionRepo.create({
-      academicYear: dto.academic_year.trim(),
-      yearShort: dto.year_short.trim(),
-      status: SessionStatus.OPEN,
-      opensAt: opens,
-      closesAt: closes,
-      studentSubmissionDeadline: dto.student_submission_deadline ? new Date(dto.student_submission_deadline) : null,
-      institutionApprovalDeadline: dto.institution_approval_deadline ? new Date(dto.institution_approval_deadline) : null,
-      notes: dto.notes ?? dto.description ?? null,
-      createdBy: userId || null,
-      updatedBy: userId || null,
-      registrationFeeAmount: dto.registration_fee_amount != null ? Number(dto.registration_fee_amount) : null,
-      registrationFeeCurrency: dto.registration_fee_currency
-        ? dto.registration_fee_currency.trim().toUpperCase().slice(0, 3)
-        : (dto.registration_fee_amount != null ? 'NGN' : null),
-      candidateInfoCutoffAt: cutoffCandidate,
-      profileUpdateCutoffAt: cutoffProfile,
-      caCutoffAt: cutoffCa,
-      maxCaScore: dto.max_ca_score != null ? Number(dto.max_ca_score) : null,
-      affiliationFeeExisting: dto.affiliation_fee_existing != null ? Number(dto.affiliation_fee_existing) : null,
-      affiliationFeeNew: dto.affiliation_fee_new != null ? Number(dto.affiliation_fee_new) : null,
-      examFeePerCandidate: dto.exam_fee_per_candidate != null ? Number(dto.exam_fee_per_candidate) : null,
+    // Close open sessions + create new session atomically in a transaction
+    const created = await this.dataSource.transaction(async (manager) => {
+      await this.sessionRepo.closeOpenSessions(userId, manager);
+      return this.sessionRepo.create(
+        {
+          ...fields,
+          status: SessionStatus.OPEN,
+          createdBy: userId ?? null,
+          updatedBy: userId ?? null,
+        },
+        manager,
+      );
     });
 
-    await this.eventRepo.insertEvent(created.id, 'session_created', { academic_year: created.academicYear }, userId);
+    await this.eventRepo.insertEvent(
+      created.id,
+      SessionEventType.Created,
+      { academic_year: created.academicYear },
+      userId,
+    );
     return created;
   }
 
-  async patch(id: string, dto: PatchSessionDto, userId?: string | null): Promise<AcademicSessionEntity> {
+  async patch(id: string, dto: PatchSessionDto, userId?: UserId): Promise<AcademicSessionEntity> {
     const row = await this.getById(id);
-    const fields: Partial<AcademicSessionEntity> = {};
-
-    if (dto.academic_year !== undefined) {
-      fields.academicYear = dto.academic_year.trim();
-      if (!fields.academicYear) throw new UnprocessableEntityException('academic_year cannot be empty');
-    }
-    if (dto.year_short !== undefined) {
-      fields.yearShort = dto.year_short.trim();
-      if (!fields.yearShort) throw new UnprocessableEntityException('year_short cannot be empty');
-    }
-    if (fields.academicYear !== undefined || fields.yearShort !== undefined) {
-      const y = validateYearShortForAcademicYear(
-        fields.academicYear ?? row.academicYear,
-        fields.yearShort ?? row.yearShort,
-      );
-      if (!y.ok) throw new UnprocessableEntityException(y.error);
-    }
-
-    if (dto.opens_at !== undefined) fields.opensAt = new Date(dto.opens_at);
-    if (dto.closes_at !== undefined) fields.closesAt = new Date(dto.closes_at);
-
-    const opens = fields.opensAt ?? row.opensAt;
-    const closes = fields.closesAt ?? row.closesAt;
-    if (opens && closes && opens.getTime() >= closes.getTime()) {
-      throw new UnprocessableEntityException('opens_at must be before closes_at');
-    }
-
-    if (dto.student_submission_deadline !== undefined) {
-      fields.studentSubmissionDeadline = dto.student_submission_deadline ? new Date(dto.student_submission_deadline) : null;
-    }
-    if (dto.institution_approval_deadline !== undefined) {
-      fields.institutionApprovalDeadline = dto.institution_approval_deadline ? new Date(dto.institution_approval_deadline) : null;
-    }
-    if (dto.candidate_info_cutoff_at !== undefined) {
-      fields.candidateInfoCutoffAt = dto.candidate_info_cutoff_at ? new Date(dto.candidate_info_cutoff_at) : null;
-    }
-    if (dto.profile_update_cutoff_at !== undefined) {
-      fields.profileUpdateCutoffAt = dto.profile_update_cutoff_at ? new Date(dto.profile_update_cutoff_at) : null;
-    }
-    if (dto.ca_cutoff_at !== undefined) {
-      fields.caCutoffAt = dto.ca_cutoff_at ? new Date(dto.ca_cutoff_at) : null;
-    }
-
-    const cutoffCandidate = fields.candidateInfoCutoffAt ?? row.candidateInfoCutoffAt;
-    const cutoffProfile = fields.profileUpdateCutoffAt ?? row.profileUpdateCutoffAt;
-    const cutoffCa = fields.caCutoffAt ?? row.caCutoffAt;
-
-    const ordered: [string, Date | null][] = [
-      ['Session close date', closes],
-      ['Candidate info cutoff', cutoffCandidate],
-      ['Profile update cutoff', cutoffProfile],
-      ['CA cutoff', cutoffCa],
-    ];
-    const presentCutoffs = ordered.filter(([, v]) => v != null) as [string, Date][];
-
-    for (let i = 1; i < presentCutoffs.length; i += 1) {
-      const [prevName, prevTs] = presentCutoffs[i - 1];
-      const [thisName, thisTs] = presentCutoffs[i];
-      if (thisTs.getTime() < prevTs.getTime()) {
-        const fmt = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 16);
-        throw new UnprocessableEntityException(
-          `The ${thisName} (${fmt(thisTs)}) cannot be earlier than the ${prevName} (${fmt(prevTs)}).`,
-        );
-      }
-    }
-
-    if (dto.notes !== undefined) {
-      fields.notes = dto.notes || null;
-    } else if (dto.description !== undefined) {
-      fields.notes = dto.description || null;
-    }
-
-    if (dto.registration_fee_amount !== undefined) {
-      fields.registrationFeeAmount = dto.registration_fee_amount != null ? Number(dto.registration_fee_amount) : null;
-    }
-    if (dto.registration_fee_currency !== undefined) {
-      fields.registrationFeeCurrency = dto.registration_fee_currency ? dto.registration_fee_currency.trim().toUpperCase().slice(0, 3) : null;
-    }
-    if (fields.registrationFeeAmount != null && fields.registrationFeeCurrency === undefined && !row.registrationFeeCurrency) {
-      fields.registrationFeeCurrency = 'NGN';
-    }
-
-    if (dto.max_ca_score !== undefined) fields.maxCaScore = dto.max_ca_score != null ? Number(dto.max_ca_score) : null;
-    if (dto.affiliation_fee_existing !== undefined) fields.affiliationFeeExisting = dto.affiliation_fee_existing != null ? Number(dto.affiliation_fee_existing) : null;
-    if (dto.affiliation_fee_new !== undefined) fields.affiliationFeeNew = dto.affiliation_fee_new != null ? Number(dto.affiliation_fee_new) : null;
-    if (dto.exam_fee_per_candidate !== undefined) fields.examFeePerCandidate = dto.exam_fee_per_candidate != null ? Number(dto.exam_fee_per_candidate) : null;
+    const fields = mapSessionDtoToFields(dto);
 
     if (Object.keys(fields).length === 0) {
       throw new UnprocessableEntityException('No updatable session fields supplied');
     }
 
-    fields.updatedBy = userId || null;
+    if (fields.academicYear !== undefined || fields.yearShort !== undefined) {
+      this.assertYearPair(
+        fields.academicYear ?? row.academicYear,
+        fields.yearShort ?? row.yearShort,
+      );
+    }
+
+    // Validate the effective state (patched values layered over the stored row)
+    assertSessionDateRules({
+      opensAt: fields.opensAt ?? row.opensAt,
+      closesAt: fields.closesAt ?? row.closesAt,
+      candidateInfoCutoffAt: fields.candidateInfoCutoffAt ?? row.candidateInfoCutoffAt,
+      profileUpdateCutoffAt: fields.profileUpdateCutoffAt ?? row.profileUpdateCutoffAt,
+      caCutoffAt: fields.caCutoffAt ?? row.caCutoffAt,
+    });
+
+    if (
+      fields.registrationFeeAmount != null &&
+      fields.registrationFeeCurrency === undefined &&
+      !row.registrationFeeCurrency
+    ) {
+      fields.registrationFeeCurrency = DEFAULT_CURRENCY;
+    }
 
     if (fields.academicYear && fields.academicYear !== row.academicYear) {
       const duplicate = await this.sessionRepo.findByAcademicYear(fields.academicYear);
@@ -265,129 +189,53 @@ export class SessionsService {
       }
     }
 
+    fields.updatedBy = userId ?? null;
+
     const updated = await this.sessionRepo.updateById(id, fields);
-    await this.eventRepo.insertEvent(id, 'session_updated', fields as Record<string, unknown>, userId);
+    await this.eventRepo.insertEvent(id, SessionEventType.Updated, { ...fields }, userId);
     return updated!;
   }
 
-  async open(id: string, userId?: string | null): Promise<AcademicSessionEntity> {
-    const row = await this.getById(id);
-    if (row.status === SessionStatus.OPEN) {
-      return row;
-    }
-    if (!canTransitionStatus(row.status, SessionStatus.OPEN)) {
-      throw new UnprocessableEntityException(`Cannot open session in status ${row.status}`);
-    }
-    const others = await this.sessionRepo.countOtherOpenSessions(id);
-    if (others > 0) {
-      throw new ConflictException('Another session is already open; close it before opening this one');
-    }
-    const updated = await this.sessionRepo.setStatus(id, SessionStatus.OPEN, userId);
-    await this.eventRepo.insertEvent(id, 'opened', {}, userId);
-    return updated!;
+  open(id: string, userId?: UserId): Promise<AcademicSessionEntity> {
+    return this.transitionToOpen(id, userId, SessionEventType.Opened, {
+      returnIfAlreadyOpen: true,
+      invalidMessage: (s) => `Cannot open session in status ${s}`,
+      conflictMessage: 'Another session is already open; close it before opening this one',
+    });
   }
 
-  async close(id: string, userId?: string | null): Promise<AcademicSessionEntity> {
+  reopen(id: string, userId?: UserId): Promise<AcademicSessionEntity> {
+    return this.transitionToOpen(id, userId, SessionEventType.Reopened, {
+      returnIfAlreadyOpen: false,
+      invalidMessage: (s) => `Cannot reopen session in status ${s}`,
+      conflictMessage: 'Another session is already open',
+    });
+  }
+
+  async close(id: string, userId?: UserId): Promise<AcademicSessionEntity> {
     const row = await this.getById(id);
-    if (row.status === SessionStatus.CLOSED) {
-      return row;
-    }
+    if (row.status === SessionStatus.CLOSED) return row;
     if (row.status !== SessionStatus.OPEN) {
       throw new UnprocessableEntityException(`Cannot close session in status ${row.status}`);
     }
     const updated = await this.sessionRepo.setStatus(id, SessionStatus.CLOSED, userId);
-    await this.eventRepo.insertEvent(id, 'closed', {}, userId);
+    await this.eventRepo.insertEvent(id, SessionEventType.Closed, {}, userId);
     return updated!;
   }
 
-  async reopen(id: string, userId?: string | null): Promise<AcademicSessionEntity> {
-    const row = await this.getById(id);
-    if (!canTransitionStatus(row.status, SessionStatus.OPEN)) {
-      throw new UnprocessableEntityException(`Cannot reopen session in status ${row.status}`);
-    }
-    const others = await this.sessionRepo.countOtherOpenSessions(id);
-    if (others > 0) {
-      throw new ConflictException('Another session is already open');
-    }
-    const updated = await this.sessionRepo.setStatus(id, SessionStatus.OPEN, userId);
-    await this.eventRepo.insertEvent(id, 'reopened', {}, userId);
-    return updated!;
-  }
+  // ───────────────────────── Registration locks ─────────────────────────
 
   async setRegistrationLock(
     id: string,
     body: SetRegistrationLockDto,
-    userId?: string | null,
+    userId?: UserId,
   ): Promise<AcademicSessionEntity | SelectiveLockResultDto> {
     await this.getById(id);
 
-    const hasUniversityIds = Array.isArray(body.university_ids) && body.university_ids.length > 0;
-    const hasUniversityId = typeof body.university_id === 'string' && Boolean(body.university_id.trim());
-
-    if (hasUniversityIds || hasUniversityId) {
-      const rawIds = hasUniversityIds ? body.university_ids! : [body.university_id!.trim()];
-      for (const uniId of rawIds) {
-        if (!UUID_REGEX.test(uniId)) {
-          throw new UnprocessableEntityException(`Invalid university ID: ${uniId}`);
-        }
-      }
-
-      const uniCheck: { id: string }[] = await this.dataSource.query(
-        `SELECT id FROM jupeb_universities WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
-        [rawIds],
-      );
-      if (uniCheck.length !== rawIds.length) {
-        throw new NotFoundException('One or more universities were not found');
-      }
-
-      const updatedRows = await this.lockRepo.setUniversityRegistrationLocks(id, {
-        universityIds: rawIds,
-        locked: body.locked,
-        reason: body.reason,
-        userId,
-      });
-
-      await this.eventRepo.insertEvent(
-        id,
-        body.locked ? 'institution_registration_locked' : 'institution_registration_unlocked',
-        {
-          university_ids: rawIds,
-          locked: body.locked,
-          reason: body.reason || null,
-        },
-        userId,
-      );
-
-      const itemsDto = updatedRows.map((r) => ({
-        university_id: r.universityId,
-        university_name: '',
-        university_code: '',
-        university_short_name: null,
-        locked: r.locked,
-        reason: r.reason,
-        locked_at: r.lockedAt ? r.lockedAt.toISOString() : null,
-        locked_by: r.lockedBy,
-        updated_at: r.updatedAt ? r.updatedAt.toISOString() : null,
-      }));
-
-      return {
-        session_id: id,
-        locked: body.locked,
-        reason: body.reason || null,
-        university_ids: rawIds,
-        updated_count: updatedRows.length,
-        items: itemsDto,
-      };
-    }
-
-    const updated = await this.sessionRepo.setRegistrationLocked(id, body.locked, userId);
-    await this.eventRepo.insertEvent(
-      id,
-      body.locked ? 'registration_locked' : 'registration_unlocked',
-      { registration_locked: body.locked },
-      userId,
-    );
-    return updated!;
+    const universityIds = this.extractUniversityIds(body);
+    return universityIds.length > 0
+      ? this.lockUniversities(id, universityIds, body, userId)
+      : this.lockSession(id, body, userId);
   }
 
   async getUniversityRegistrationLocks(id: string, query: any) {
@@ -395,278 +243,329 @@ export class SessionsService {
     return this.lockRepo.getUniversityRegistrationLocks(id, query);
   }
 
-  async finalizeCandidateNumbers(id: string, userId?: string | null) {
-    await this.getById(id);
-    await this.eventRepo.insertEvent(id, 'finalization_triggered', {}, userId);
+  private async lockSession(id: string, body: SetRegistrationLockDto, userId?: UserId) {
+    const updated = await this.sessionRepo.setRegistrationLocked(id, body.locked, userId);
+    await this.eventRepo.insertEvent(
+      id,
+      body.locked ? SessionEventType.RegistrationLocked : SessionEventType.RegistrationUnlocked,
+      { registration_locked: body.locked },
+      userId,
+    );
+    return updated!;
+  }
+
+  private async lockUniversities(
+    sessionId: string,
+    universityIds: string[],
+    body: SetRegistrationLockDto,
+    userId?: UserId,
+  ): Promise<SelectiveLockResultDto> {
+    // Soft-deleted rows are excluded automatically when querying with @DeleteDateColumn
+    const universities = await this.universityRepo.find({ where: { id: In(universityIds) } });
+    if (universities.length !== universityIds.length) {
+      throw new NotFoundException('One or more universities were not found');
+    }
+    const byId = new Map(universities.map((u) => [u.id, u]));
+
+    const updatedRows = await this.lockRepo.setUniversityRegistrationLocks(sessionId, {
+      universityIds,
+      locked: body.locked,
+      reason: body.reason,
+      userId,
+    });
+
+    await this.eventRepo.insertEvent(
+      sessionId,
+      body.locked
+        ? SessionEventType.InstitutionRegistrationLocked
+        : SessionEventType.InstitutionRegistrationUnlocked,
+      { university_ids: universityIds, locked: body.locked, reason: body.reason || null },
+      userId,
+    );
+
+    return {
+      session_id: sessionId,
+      locked: body.locked,
+      reason: body.reason || null,
+      university_ids: universityIds,
+      updated_count: updatedRows.length,
+      items: updatedRows.map((r) => {
+        const uni = byId.get(r.universityId);
+        return {
+          university_id: r.universityId,
+          university_name: uni?.name ?? '',
+          university_code: uni?.code ?? '',
+          university_short_name: uni?.shortName ?? null,
+          locked: r.locked,
+          reason: r.reason,
+          locked_at: r.lockedAt?.toISOString() ?? null,
+          locked_by: r.lockedBy,
+          updated_at: r.updatedAt?.toISOString() ?? null,
+        };
+      }),
+    };
+  }
+
+  private extractUniversityIds(body: SetRegistrationLockDto): string[] {
+    const raw = body.university_ids?.length
+      ? body.university_ids
+      : body.university_id?.trim()
+        ? [body.university_id.trim()]
+        : [];
+
+    const unique = [...new Set(raw)];
+    for (const uniId of unique) this.assertUuid(uniId, `Invalid university ID: ${uniId}`);
+    return unique;
+  }
+
+  // ───────────────────────── Candidate numbers ─────────────────────────
+
+  async finalizeCandidateNumbers(id: string, userId?: UserId) {
+    const session = await this.getById(id);
+    await this.eventRepo.insertEvent(id, SessionEventType.FinalizationTriggered, {}, userId);
+
+    const assignedCount = await this.dataSource.transaction(async (manager) => {
+      // Serialise concurrent finalizations of the same session
+      await manager.findOne(AcademicSessionEntity, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      const [pending, alreadyNumbered] = await Promise.all([
+        this.registrationRepo.findApprovedWithoutCandidateNumber(id, manager),
+        this.registrationRepo.countNumberedByUniversity(id, manager),
+      ]);
+
+      // Continue each university's sequence after numbers it already has,
+      // so re-running finalization will not produce duplicates.
+      const counters = new Map(alreadyNumbered);
+      const updates = pending.map((reg) => {
+        const next = (counters.get(reg.universityId) ?? 0) + 1;
+        counters.set(reg.universityId, next);
+        return {
+          id: reg.id,
+          jupebCandidateNumber: `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`,
+        };
+      });
+
+      await this.registrationRepo.assignCandidateNumbers(updates, manager);
+      return updates.length;
+    });
+
     await this.sessionRepo.setFinalNumbersGeneratedAt(id, userId);
+
+    // Enqueue candidate sync to attendance & CRMS after transaction commit
+    const syncJob = await this.candidateSyncQueueService.enqueueCandidateSyncJob({
+      sessionId: id,
+      userId,
+      triggeredBy: 'finalize_candidate_numbers',
+    });
+
+    this.logger.info(`Finalized ${assignedCount} candidate numbers for session ${id}`);
 
     return {
       session_id: id,
       status: 'completed',
+      assigned_count: assignedCount,
       finalized_at: new Date().toISOString(),
+      sync_job_id: syncJob.jobId,
     };
   }
 
-  async finalizeAllClosed(userId?: string | null) {
-    const closedSessions = await this.sessionRepo.findAll({
-      limit: 100,
-      offset: 0,
-      status: SessionStatus.CLOSED,
-    });
+  async finalizeAllClosed(userId?: UserId) {
+    const finalized = [];
+    let offset = 0;
 
-    const results = [];
-    for (const s of closedSessions) {
-      await this.eventRepo.insertEvent(s.id, 'finalization_triggered', {}, userId);
-      await this.sessionRepo.setFinalNumbersGeneratedAt(s.id, userId);
-      results.push({
-        session_id: s.id,
-        academic_year: s.academicYear,
-        status: 'completed',
+    // Page through every closed session instead of stopping at 100
+    for (;;) {
+      const batch = await this.sessionRepo.findAll({
+        limit: FINALIZE_ALL_PAGE_SIZE,
+        offset,
+        status: SessionStatus.CLOSED,
       });
+      if (batch.length === 0) break;
+
+      for (const s of batch) {
+        const res = await this.finalizeCandidateNumbers(s.id, userId);
+        finalized.push({
+          session_id: s.id,
+          academic_year: s.academicYear,
+          assigned_count: res.assigned_count,
+          status: res.status,
+          sync_job_id: res.sync_job_id,
+        });
+      }
+
+      if (batch.length < FINALIZE_ALL_PAGE_SIZE) break;
+      offset += FINALIZE_ALL_PAGE_SIZE;
     }
 
-    return {
-      total_sessions: closedSessions.length,
-      finalized: results,
-    };
+    return { total_sessions: finalized.length, finalized };
   }
 
-  private async getInstitutionsInSession(sessionId: string): Promise<number> {
-    const r = await this.dataSource.query(
-      `SELECT COUNT(DISTINCT university_id)::int AS c
-         FROM jupeb_registrations
-        WHERE session_id = $1 AND university_id IS NOT NULL`,
-      [sessionId],
-    );
-    return r[0]?.c || 0;
-  }
+  // ───────────────────────── Metrics & stats ─────────────────────────
 
-  private async getSessionMetrics(sessionId: string) {
-    try {
-      const r = await this.dataSource.query(
-        `SELECT
-           COUNT(*)::int AS total,
-           COUNT(*) FILTER (WHERE r.status = 'approved')::int AS approved,
-           COUNT(*) FILTER (
-             WHERE r.status <> 'withdrawn' AND EXISTS (
-               SELECT 1 FROM jupeb_biometric_captures bc
-               WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
-             )
-           )::int AS biometric
-         FROM jupeb_registrations r
-         WHERE r.session_id = $1`,
-        [sessionId],
-      );
-      const kpi = r[0] || { total: 0, approved: 0, biometric: 0 };
-      const institutions = await this.getInstitutionsInSession(sessionId);
-      return {
-        exams: null,
-        institutions,
-        total_candidates: kpi.total || 0,
-        current_candidates_enrolled: kpi.approved || 0,
-        candidates_with_biometrics: kpi.biometric || 0,
-      };
-    } catch {
-      return {
-        exams: null,
-        institutions: 0,
-        total_candidates: 0,
-        current_candidates_enrolled: 0,
-        candidates_with_biometrics: 0,
-      };
-    }
-  }
-
-  async metrics(userId?: string | null, query: SessionMetricsQueryDto = {}): Promise<SessionMetricsResponseDto> {
+  async metrics(
+    userId?: UserId,
+    query: SessionMetricsQueryDto = {},
+  ): Promise<SessionMetricsResponseDto> {
     const session = await this.sessionContextService.resolveEffectiveSession(
       userId,
       query.session_id || null,
     );
+    if (!session) return { session: null, metrics: emptyMetrics() };
 
-    if (!session) {
-      return {
-        session: null,
-        metrics: {
-          exams: null,
-          institutions: 0,
-          total_candidates: 0,
-          current_candidates_enrolled: 0,
-          candidates_with_biometrics: 0,
-        },
-      };
-    }
-
-    const metricsData = await this.getSessionMetrics(session.id);
+    const metrics = await this.collectMetrics(session.id);
     const payload: SessionMetricsResponseDto = {
       session: {
         id: session.id,
         label: session.academicYear,
         status: session.status,
-        opens_at: session.opensAt ? session.opensAt.toISOString() : null,
-        closes_at: session.closesAt ? session.closesAt.toISOString() : null,
+        opens_at: session.opensAt?.toISOString() ?? null,
+        closes_at: session.closesAt?.toISOString() ?? null,
       },
-      metrics: metricsData,
+      metrics,
     };
 
     const previousId = query.previous_session_id;
     if (previousId) {
-      if (!UUID_REGEX.test(previousId)) {
-        throw new UnprocessableEntityException('previous_session_id must be a valid UUID');
-      }
-      const prevRow = await this.getById(previousId);
-      const previousMetrics = await this.getSessionMetrics(previousId);
-
-      payload.compared_to = {
-        session_id: previousId,
-        label: prevRow.academicYear || null,
-      };
-
-      const deltas: Record<string, MetricDeltaDto> = {};
-      const keys = ['institutions', 'total_candidates', 'current_candidates_enrolled', 'candidates_with_biometrics'] as const;
-      for (const key of keys) {
-        deltas[key] = computeDelta(metricsData[key], (previousMetrics as any)[key]);
-      }
-      payload.deltas = deltas;
+      this.assertUuid(previousId, 'previous_session_id must be a valid UUID');
+      const [prevRow, previousMetrics] = await Promise.all([
+        this.getById(previousId),
+        this.collectMetrics(previousId),
+      ]);
+      payload.compared_to = { session_id: previousId, label: prevRow.academicYear || null };
+      payload.deltas = computeDeltas(metrics, previousMetrics, METRIC_KEYS);
     }
 
     return payload;
   }
 
-  private async getStatsRaw(id: string) {
+  async stats(
+    id: string,
+    query: { previous_session_id?: string } = {},
+  ): Promise<SessionStatsResponseDto> {
+    const current = await this.collectStats(id);
+    const previousId = query.previous_session_id;
+    if (!previousId) return current;
+
+    const previous = await this.collectStats(previousId);
+    return {
+      ...current,
+      previous_session_id: previousId,
+      deltas: computeDeltas(current, previous, STATS_KEYS),
+    };
+  }
+
+  private async collectMetrics(sessionId: string) {
+    const [total, approved, biometric, institutions] = await Promise.all([
+      this.registrationRepo.countAll(sessionId),
+      this.registrationRepo.countByStatus(sessionId, RegistrationStatus.APPROVED),
+      this.registrationRepo.countWithActiveBiometrics(sessionId, { excludeWithdrawn: true }),
+      this.registrationRepo.countInstitutions(sessionId),
+    ]);
+
+    return {
+      exams: null,
+      institutions,
+      total_candidates: total,
+      current_candidates_enrolled: approved,
+      candidates_with_biometrics: biometric,
+    };
+  }
+
+  private async collectStats(id: string) {
     await this.getById(id);
-    let byStatus: Record<string, number> = {};
-    let total = 0;
-    let institutionsCount = 0;
-    let subjectCombinationsCount = 0;
-    let withBio = 0;
-    let withoutBio = 0;
 
-    try {
-      const statusRows = await this.dataSource.query(
-        `SELECT status, COUNT(*)::int AS c
-         FROM jupeb_registrations
-         WHERE session_id = $1
-         GROUP BY status`,
-        [id],
-      );
-      for (const r of statusRows) {
-        byStatus[r.status] = r.c;
-        total += r.c;
-      }
-
-      const distinctRows = await this.dataSource.query(
-        `SELECT
-           COUNT(DISTINCT university_id)::int AS institutions_count,
-           COUNT(DISTINCT subject_combination_id)::int AS subject_combinations_count
-         FROM jupeb_registrations
-         WHERE session_id = $1`,
-        [id],
-      );
-      institutionsCount = distinctRows[0]?.institutions_count || 0;
-      subjectCombinationsCount = distinctRows[0]?.subject_combinations_count || 0;
-
-      const bioRows = await this.dataSource.query(
-        `SELECT
-           SUM(CASE WHEN bio.cnt > 0 THEN 1 ELSE 0 END)::int AS with_bio,
-           SUM(CASE WHEN bio.cnt = 0 OR bio.cnt IS NULL THEN 1 ELSE 0 END)::int AS without_bio
-         FROM jupeb_registrations r
-         LEFT JOIN (
-           SELECT registration_id, COUNT(*)::int AS cnt
-           FROM jupeb_biometric_captures
-           WHERE replaced_at IS NULL
-           GROUP BY registration_id
-         ) bio ON bio.registration_id = r.id
-         WHERE r.session_id = $1`,
-        [id],
-      );
-      withBio = bioRows[0]?.with_bio || 0;
-      withoutBio = bioRows[0]?.without_bio || 0;
-    } catch {
-      byStatus = {};
-      total = 0;
-    }
+    const [byStatus, institutions, subjectCombinations, withBio] = await Promise.all([
+      this.registrationRepo.countGroupedByStatus(id),
+      this.registrationRepo.countInstitutions(id),
+      this.registrationRepo.countSubjectCombinations(id),
+      this.registrationRepo.countWithActiveBiometrics(id),
+    ]);
+    const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0);
 
     return {
       session_id: id,
       total_registrations: total,
       registrations_by_status: byStatus,
-      institutions_count: institutionsCount,
-      subject_combinations_count: subjectCombinationsCount,
+      institutions_count: institutions,
+      subject_combinations_count: subjectCombinations,
       candidates_with_biometrics: withBio,
-      candidates_without_biometrics: withoutBio,
+      candidates_without_biometrics: total - withBio,
     };
   }
 
-  async stats(id: string, query: { previous_session_id?: string } = {}): Promise<SessionStatsResponseDto> {
-    const current = await this.getStatsRaw(id);
-    const previousId = query?.previous_session_id;
-    if (!previousId) return current;
-
-    const previous = await this.getStatsRaw(previousId);
-    const metricsKeys = [
-      'total_registrations',
-      'institutions_count',
-      'subject_combinations_count',
-      'candidates_with_biometrics',
-      'candidates_without_biometrics',
-    ] as const;
-
-    const deltas: Record<string, MetricDeltaDto> = {};
-    for (const m of metricsKeys) {
-      deltas[m] = computeDelta((current as any)[m], (previous as any)[m]);
-    }
-
-    return { ...current, previous_session_id: previousId, deltas };
-  }
+  // ───────────────────────────── Export ─────────────────────────────
 
   async exportCsv(): Promise<string> {
-    const rows = await this.sessionRepo.findAll({ limit: 10000, offset: 0 });
-    const header = [
-      'id',
-      'academic_year',
-      'year_short',
-      'status',
-      'opens_at',
-      'closes_at',
-      'candidate_info_cutoff_at',
-      'profile_update_cutoff_at',
-      'ca_cutoff_at',
-      'max_ca_score',
-      'affiliation_fee_existing',
-      'affiliation_fee_new',
-      'exam_fee_per_candidate',
-      'registration_fee_amount',
-      'registration_fee_currency',
-      'created_at',
+    const rows = await this.sessionRepo.findAll({ limit: CSV_EXPORT_LIMIT, offset: 0 });
+
+    const iso = (d?: Date | null) => d?.toISOString();
+    const columns: [header: string, value: (r: AcademicSessionEntity) => unknown][] = [
+      ['id', (r) => r.id],
+      ['academic_year', (r) => r.academicYear],
+      ['year_short', (r) => r.yearShort],
+      ['status', (r) => r.status],
+      ['opens_at', (r) => iso(r.opensAt)],
+      ['closes_at', (r) => iso(r.closesAt)],
+      ['candidate_info_cutoff_at', (r) => iso(r.candidateInfoCutoffAt)],
+      ['profile_update_cutoff_at', (r) => iso(r.profileUpdateCutoffAt)],
+      ['ca_cutoff_at', (r) => iso(r.caCutoffAt)],
+      ['max_ca_score', (r) => r.maxCaScore],
+      ['affiliation_fee_existing', (r) => r.affiliationFeeExisting],
+      ['affiliation_fee_new', (r) => r.affiliationFeeNew],
+      ['exam_fee_per_candidate', (r) => r.examFeePerCandidate],
+      ['registration_fee_amount', (r) => r.registrationFeeAmount],
+      ['registration_fee_currency', (r) => r.registrationFeeCurrency],
+      ['created_at', (r) => iso(r.createdAt)],
     ];
-    const escape = (v: any) => {
-      if (v === null || v === undefined) return '';
+
+    const escape = (v: unknown) => {
+      if (v == null) return '';
       const s = String(v);
-      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-      return s;
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const lines = [header.join(',')];
-    for (const r of rows) {
-      const obj: Record<string, any> = {
-        id: r.id,
-        academic_year: r.academicYear,
-        year_short: r.yearShort,
-        status: r.status,
-        opens_at: r.opensAt?.toISOString(),
-        closes_at: r.closesAt?.toISOString(),
-        candidate_info_cutoff_at: r.candidateInfoCutoffAt?.toISOString(),
-        profile_update_cutoff_at: r.profileUpdateCutoffAt?.toISOString(),
-        ca_cutoff_at: r.caCutoffAt?.toISOString(),
-        max_ca_score: r.maxCaScore,
-        affiliation_fee_existing: r.affiliationFeeExisting,
-        affiliation_fee_new: r.affiliationFeeNew,
-        exam_fee_per_candidate: r.examFeePerCandidate,
-        registration_fee_amount: r.registrationFeeAmount,
-        registration_fee_currency: r.registrationFeeCurrency,
-        created_at: r.createdAt?.toISOString(),
-      };
-      lines.push(header.map((h) => escape(obj[h])).join(','));
+
+    return [
+      columns.map(([h]) => h).join(','),
+      ...rows.map((r) => columns.map(([, get]) => escape(get(r))).join(',')),
+    ].join('\n');
+  }
+
+  // ───────────────────────────── Helpers ─────────────────────────────
+
+  private async transitionToOpen(
+    id: string,
+    userId: UserId,
+    eventType: SessionEventType,
+    opts: {
+      returnIfAlreadyOpen: boolean;
+      invalidMessage: (status: SessionStatus) => string;
+      conflictMessage: string;
+    },
+  ): Promise<AcademicSessionEntity> {
+    const row = await this.getById(id);
+
+    if (opts.returnIfAlreadyOpen && row.status === SessionStatus.OPEN) return row;
+    if (!canTransitionStatus(row.status, SessionStatus.OPEN)) {
+      throw new UnprocessableEntityException(opts.invalidMessage(row.status));
     }
-    return lines.join('\n');
+    if ((await this.sessionRepo.countOtherOpenSessions(id)) > 0) {
+      throw new ConflictException(opts.conflictMessage);
+    }
+
+    const updated = await this.sessionRepo.setStatus(id, SessionStatus.OPEN, userId);
+    await this.eventRepo.insertEvent(id, eventType, {}, userId);
+    return updated!;
+  }
+
+  private assertYearPair(academicYear?: string, yearShort?: string): void {
+    const result = validateYearShortForAcademicYear(academicYear!, yearShort!);
+    if (!result.ok) throw new UnprocessableEntityException(result.error);
+  }
+
+  private assertUuid(value: string, message: string): void {
+    if (!isUUID(value)) throw new UnprocessableEntityException(message);
   }
 }

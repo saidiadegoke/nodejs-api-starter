@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { AcademicSessionEntity, SessionStatus } from '../entities/academic-session.entity';
 
 export interface FindSessionsFilter {
@@ -17,9 +17,17 @@ export class SessionRepository {
     private readonly repo: Repository<AcademicSessionEntity>,
   ) {}
 
-  async create(data: Partial<AcademicSessionEntity>): Promise<AcademicSessionEntity> {
-    const session = this.repo.create(data);
-    return this.repo.save(session);
+  private repoFor(manager?: EntityManager): Repository<AcademicSessionEntity> {
+    return manager ? manager.getRepository(AcademicSessionEntity) : this.repo;
+  }
+
+  async create(
+    data: Partial<AcademicSessionEntity>,
+    manager?: EntityManager,
+  ): Promise<AcademicSessionEntity> {
+    const repository = this.repoFor(manager);
+    const session = repository.create(data);
+    return repository.save(session);
   }
 
   async findById(id: string): Promise<AcademicSessionEntity | null> {
@@ -65,8 +73,8 @@ export class SessionRepository {
       .getCount();
   }
 
-  async closeOpenSessions(updatedBy?: string | null): Promise<void> {
-    await this.repo
+  async closeOpenSessions(updatedBy?: string | null, manager?: EntityManager): Promise<void> {
+    await this.repoFor(manager)
       .createQueryBuilder()
       .update(AcademicSessionEntity)
       .set({
