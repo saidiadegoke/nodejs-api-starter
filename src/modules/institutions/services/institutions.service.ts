@@ -119,6 +119,8 @@ function parseCsv(text: string): Record<string, string>[] {
     .filter((obj) => Object.values(obj).some((v) => v != null && String(v).trim() !== ''));
 }
 
+import { InstitutionSyncQueueService } from '../../sync/services/institution-sync-queue.service';
+
 @Injectable()
 export class InstitutionsService {
   private readonly logger: CommodLogger;
@@ -126,6 +128,7 @@ export class InstitutionsService {
   constructor(
     private readonly universityRepo: UniversityRepository,
     private readonly provisionService: InstitutionAdminProvisionService,
+    private readonly institutionSyncQueueService: InstitutionSyncQueueService,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(InstitutionsService.name);
@@ -248,11 +251,12 @@ export class InstitutionsService {
         createdBy,
       });
 
-      // Async sync to CRMS and Attendance integrations
-      setImmediate(() => {
-        this.syncInstitutionToCrms(university, dto);
-        this.syncInstitutionToAttendance(university, dto);
-      });
+      // Enqueue async sync to CRMS and Attendance via BullMQ
+      this.institutionSyncQueueService.enqueueInstitutionSyncJob({
+        universityIds: [university.id],
+        userId: createdBy,
+        triggeredBy: 'institution_created',
+      }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
 
       return {
         ...university,
@@ -264,7 +268,7 @@ export class InstitutionsService {
     }
   }
 
-  async patch(id: string, dto: PatchUniversityDto): Promise<UniversityEntity> {
+  async patch(id: string, dto: PatchUniversityDto, userId?: string | null): Promise<UniversityEntity> {
     await this.getById(id);
 
     const fields: Partial<UniversityEntity> = {};
@@ -294,20 +298,41 @@ export class InstitutionsService {
 
     const updated = await this.universityRepo.updateById(id, fields);
     if (!updated) throw new NotFoundException('University not found');
+
+    this.institutionSyncQueueService.enqueueInstitutionSyncJob({
+      universityIds: [id],
+      userId,
+      triggeredBy: 'institution_updated',
+    }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
+
     return updated;
   }
 
-  async setStatus(id: string, status: 'active' | 'inactive'): Promise<UniversityEntity> {
+  async setStatus(id: string, status: 'active' | 'inactive', userId?: string | null): Promise<UniversityEntity> {
     await this.getById(id);
     const updated = await this.universityRepo.setStatus(id, status);
     if (!updated) throw new NotFoundException('University not found');
+
+    this.institutionSyncQueueService.enqueueInstitutionSyncJob({
+      universityIds: [id],
+      userId,
+      triggeredBy: 'institution_status_changed',
+    }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
+
     return updated;
   }
 
-  async delete(id: string): Promise<UniversityEntity> {
+  async delete(id: string, userId?: string | null): Promise<UniversityEntity> {
     await this.getById(id);
     const deleted = await this.universityRepo.softDelete(id);
     if (!deleted) throw new NotFoundException('University not found');
+
+    this.institutionSyncQueueService.enqueueInstitutionSyncJob({
+      universityIds: [id],
+      userId,
+      triggeredBy: 'institution_deleted',
+    }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
+
     return deleted;
   }
 
@@ -347,6 +372,14 @@ export class InstitutionsService {
         });
         failed += 1;
       }
+    }
+
+    if (succeeded > 0) {
+      this.institutionSyncQueueService.enqueueInstitutionSyncJob({
+        syncAll: true,
+        userId: createdBy,
+        triggeredBy: 'institutions_bulk_created',
+      }).catch((err) => this.logger.error(`Failed to enqueue bulk institution sync: ${err.message}`));
     }
 
     return { total: rows.length, succeeded, failed, outcomes };

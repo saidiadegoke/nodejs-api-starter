@@ -253,18 +253,15 @@ export async function checkOut(studentContext: any, classId: string, payload: an
 }
 
 export async function syncStudents(payload: any) {
-  try {
-    return await request('POST', '/api/auth/sync-students', { data: payload });
-  } catch (error: any) {
-    throw error;
-  }
+  return request('POST', '/api/auth/sync-students', { data: payload });
 }
 
 export async function syncInstitutions(payload: any) {
-  try {
-    const data = Array.isArray(payload) ? { institutions: payload } : payload;
-    return await request('POST', '/api/auth/sync-institutions', { data });
-  } catch (error: any) {
-    throw error;
-  }
+  const data = Array.isArray(payload) ? { institutions: payload } : payload;
+  return request('POST', '/api/auth/sync-institutions', { data });
+}
+
+export async function syncSubjects(payload: any) {
+  const data = Array.isArray(payload) ? { subjects: payload } : payload;
+  return request('POST', '/api/auth/sync-subjects', { data });
 }

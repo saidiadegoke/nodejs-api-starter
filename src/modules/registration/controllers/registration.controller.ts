@@ -58,8 +58,8 @@ export class RegistrationController {
     summary: 'Preview candidate matric numbers for session',
     description: 'Generates sequence simulation for final candidate numbers prior to batch lock.',
   })
-  async numberingPreview(@Param('sessionId') sessionId: string) {
-    return this.registrationService.numberingPreview(sessionId);
+  async previewCandidateNumbering(@Param('sessionId') sessionId: string) {
+    return this.registrationService.previewCandidateNumbering(sessionId);
   }
 
   @Post('institution/registrations/bulk-upload')
@@ -80,7 +80,7 @@ export class RegistrationController {
       },
     },
   })
-  async institutionBulkUpload(
+  async bulkUploadCandidates(
     @UploadedFile() file: any,
     @Body('session_id') sessionId: string,
     @Body('university_id') universityId: string,
@@ -99,12 +99,12 @@ export class RegistrationController {
   @ApiCreatedResponse({
     type: RegistrationListItemDto,
   })
-  async institutionCreate(
+  async createRegistration(
     @Body() dto: CreateRegistrationDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionCreate(dto, userId);
+    return this.registrationService.createRegistration(dto, userId);
   }
 
   @Patch('institution/registrations/:registrationId')
@@ -113,13 +113,13 @@ export class RegistrationController {
     summary: 'Update candidate registration record',
     description: 'Updates assigned subject combination, institution issued code, or status remarks.',
   })
-  async institutionPatch(
+  async updateRegistration(
     @Param('registrationId') registrationId: string,
     @Body() dto: PatchRegistrationDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionPatch(registrationId, dto, userId);
+    return this.registrationService.updateRegistration(registrationId, dto, userId);
   }
 
   @Patch('institution/registrations/:registrationId/candidate')
@@ -128,13 +128,13 @@ export class RegistrationController {
     summary: 'Update candidate profile information',
     description: 'Updates student demographic and profile data.',
   })
-  async institutionPatchCandidate(
+  async updateCandidateProfile(
     @Param('registrationId') registrationId: string,
     @Body() dto: PatchCandidateDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionPatchCandidate(registrationId, dto, userId);
+    return this.registrationService.updateCandidateProfile(registrationId, dto, userId);
   }
 
   @Post('institution/registrations/:registrationId/resend-code')
@@ -143,12 +143,12 @@ export class RegistrationController {
     summary: 'Resend registration provisional code to candidate',
     description: 'Dispatches provisional access code via SMS/Email to the student.',
   })
-  async institutionResendCode(
+  async resendProvisionalCode(
     @Param('registrationId') registrationId: string,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionResendCode(registrationId, userId);
+    return this.registrationService.resendProvisionalCode(registrationId, userId);
   }
 
   @Delete('institution/registrations/:registrationId')
@@ -157,12 +157,12 @@ export class RegistrationController {
     summary: 'Withdraw / delete candidate registration',
     description: 'Transitions registration status to withdrawn.',
   })
-  async institutionDelete(
+  async withdrawRegistration(
     @Param('registrationId') registrationId: string,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionDelete(registrationId, userId);
+    return this.registrationService.withdrawRegistration(registrationId, userId);
   }
 
   @Get('institution/registrations')
@@ -174,12 +174,12 @@ export class RegistrationController {
   @ApiOkResponse({
     type: [RegistrationListItemDto],
   })
-  async institutionList(
+  async listRegistrations(
     @Query() query: ListRegistrationsQueryDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionList(query, userId);
+    return this.registrationService.listRegistrations(query, userId);
   }
 
   @Get('institution/registrations/export')
@@ -187,13 +187,13 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Export filtered candidate registrations to CSV',
   })
-  async institutionExportCsv(
+  async exportRegistrationsCsv(
     @Query() query: ListRegistrationsQueryDto,
     @Req() req: any,
     @Res() res: Response,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    const csv = await this.registrationService.institutionExportCsv(query, userId);
+    const csv = await this.registrationService.exportRegistrationsCsv(query, userId);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="candidates.csv"');
     res.status(HttpStatus.OK).send(csv);
@@ -205,12 +205,12 @@ export class RegistrationController {
     summary: 'Get candidate registration details',
     description: 'Retrieves complete registration profile, supporting documents, and workflow history.',
   })
-  async institutionGetCandidate(
+  async getRegistrationById(
     @Param('registrationId') registrationId: string,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionGetCandidate(registrationId, userId);
+    return this.registrationService.getRegistrationById(registrationId, userId);
   }
 
   @Get('institution/overview/stats')
@@ -222,12 +222,12 @@ export class RegistrationController {
   @ApiOkResponse({
     type: RegistrationOverviewStatsDto,
   })
-  async institutionStats(
+  async getOverviewStats(
     @Query() query: any,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionStats(query, userId);
+    return this.registrationService.getOverviewStats(query, userId);
   }
 
   @Get('institution/overview/by-university')
@@ -235,12 +235,12 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Get registration breakdown by university',
   })
-  async institutionByUniversity(
+  async getRegistrationsByUniversity(
     @Query() query: any,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionByUniversity(query, userId);
+    return this.registrationService.getRegistrationsByUniversity(query, userId);
   }
 
   @Post('institution/registrations/batch')
@@ -248,12 +248,12 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Execute batch status action on multiple registrations',
   })
-  async institutionBatchAction(
+  async batchUpdateRegistrationStatus(
     @Body() dto: BatchRegistrationActionDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionBatchAction(dto, userId);
+    return this.registrationService.batchUpdateRegistrationStatus(dto, userId);
   }
 
   @Post('institution/registrations/:registrationId/approve')
@@ -262,13 +262,13 @@ export class RegistrationController {
     summary: 'Approve candidate registration',
     description: 'Clears candidate for final matric number generation.',
   })
-  async institutionApprove(
+  async approveRegistration(
     @Param('registrationId') registrationId: string,
     @Body() body: any,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionApprove(registrationId, body, userId);
+    return this.registrationService.approveRegistration(registrationId, body, userId);
   }
 
   @Post('institution/registrations/:registrationId/reject')
@@ -276,13 +276,13 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Reject candidate registration',
   })
-  async institutionReject(
+  async rejectRegistration(
     @Param('registrationId') registrationId: string,
     @Body() body: any,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionReject(registrationId, body, userId);
+    return this.registrationService.rejectRegistration(registrationId, body, userId);
   }
 
   @Post('institution/registrations/:registrationId/withdraw')
@@ -290,16 +290,16 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Withdraw candidate registration',
   })
-  async institutionWithdraw(
+  async withdrawRegistrationDirect(
     @Param('registrationId') registrationId: string,
     @Body() body: any,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.institutionWithdraw(registrationId, body, userId);
+    return this.registrationService.withdrawRegistrationDirect(registrationId, body, userId);
   }
 
-  // --- Student Self-Service Routes (/me/*) ---
+  // ─────────────────────────────── Student Self-Service Routes (/me/*) ───────────────────────────────
 
   @Get('me/code-status')
   @ApiOperation({
@@ -308,9 +308,9 @@ export class RegistrationController {
   @ApiOkResponse({
     type: CodeStatusResponseDto,
   })
-  async getCodeStatus(@Req() req: any) {
+  async getStudentCodeStatus(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getCodeStatus(userId);
+    return this.registrationService.getStudentCodeStatus(userId);
   }
 
   @Post('me/claim-code')
@@ -318,30 +318,30 @@ export class RegistrationController {
     summary: 'Claim registration provisional code',
     description: 'Links provisional registration record to authenticated candidate account.',
   })
-  async claimCode(
+  async claimProvisionalCode(
     @Body() dto: ClaimCodeDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.claimCode(dto.code, userId);
+    return this.registrationService.claimProvisionalCode(dto.code, userId);
   }
 
   @Get('me/current')
   @ApiOperation({
     summary: 'Get current candidate registration summary',
   })
-  async getMeCurrent(@Req() req: any) {
+  async getCurrentStudentRegistration(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getMeCurrent(userId);
+    return this.registrationService.getCurrentStudentRegistration(userId);
   }
 
   @Get('me/profile')
   @ApiOperation({
     summary: 'Get student registration profile',
   })
-  async getMeProfile(@Req() req: any) {
+  async getStudentProfile(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getMeProfile(userId);
+    return this.registrationService.getStudentProfile(userId);
   }
 
   @Get('me/submission-preview')
@@ -351,39 +351,39 @@ export class RegistrationController {
   @ApiOkResponse({
     type: SubmissionPreviewResponseDto,
   })
-  async getMeSubmissionPreview(@Req() req: any) {
+  async getSubmissionPreview(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getMeSubmissionPreview(userId);
+    return this.registrationService.getSubmissionPreview(userId);
   }
 
   @Get('me/exam-results')
   @ApiOperation({
     summary: 'Get candidate exam results and subject scores',
   })
-  async getMeExamResults(@Req() req: any) {
+  async getStudentExamResults(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getMeExamResults(userId);
+    return this.registrationService.getStudentExamResults(userId);
   }
 
   @Get('me/slip')
   @ApiOperation({
     summary: 'Get registration examination slip metadata',
   })
-  async getMeSlip(@Req() req: any) {
+  async getRegistrationSlipSummary(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getMeSlip(userId);
+    return this.registrationService.getRegistrationSlipSummary(userId);
   }
 
   @Get('me/slip/download')
   @ApiOperation({
     summary: 'Download registration examination slip PDF',
   })
-  async downloadMeSlip(
+  async downloadRegistrationSlipPdf(
     @Query('registration_id') registrationId: string,
     @Query('token') token: string,
     @Res() res: Response,
   ) {
-    const pdfBuffer = await this.registrationService.downloadMeSlip(registrationId, token);
+    const pdfBuffer = await this.registrationService.downloadRegistrationSlipPdf(registrationId, token);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'attachment; filename="registration-slip.pdf"');
     res.status(HttpStatus.OK).send(pdfBuffer);
@@ -393,37 +393,37 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Update student academic subject selection',
   })
-  async updateAcademicIntake(
+  async updateSubjectCombination(
     @Body() dto: { subject_combination_id?: string },
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.updateAcademicIntake(dto, userId);
+    return this.registrationService.updateSubjectCombination(dto, userId);
   }
 
   @Patch('me/profile')
   @ApiOperation({
     summary: 'Update candidate profile information',
   })
-  async patchMeProfile(
+  async updateStudentProfile(
     @Body() dto: PatchCandidateDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.patchMeProfile(dto, userId);
+    return this.registrationService.updateStudentProfile(dto, userId);
   }
 
   @Get('me/registration-form.pdf')
   @ApiOperation({
     summary: 'Generate registration form PDF preview',
   })
-  async getMeRegistrationFormPdf(
+  async getRegistrationFormPdf(
     @Req() req: any,
     @Res() res: Response,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    const preview = await this.registrationService.getMeSubmissionPreview(userId);
-    const pdfBuffer = await this.registrationService.downloadMeSlip(preview.registration_id);
+    const preview = await this.registrationService.getSubmissionPreview(userId);
+    const pdfBuffer = await this.registrationService.downloadRegistrationSlipPdf(preview.registration_id);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="registration-form.pdf"');
     res.status(HttpStatus.OK).send(pdfBuffer);
@@ -433,29 +433,29 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Lock candidate subject combination selection',
   })
-  async confirmSubjects(
+  async confirmSubjectCombination(
     @Body() dto: ConfirmSubjectsDto,
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.confirmSubjects(dto, userId);
+    return this.registrationService.confirmSubjectCombination(dto, userId);
   }
 
   @Post('me/submit')
   @ApiOperation({
     summary: 'Submit candidate registration for institution review',
   })
-  async submit(@Req() req: any) {
+  async submitRegistration(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.submit(userId);
+    return this.registrationService.submitRegistration(userId);
   }
 
   @Get('me/dashboard-access')
   @ApiOperation({
     summary: 'Check whether candidate dashboard features are unlocked',
   })
-  async dashboardAccess(@Req() req: any) {
+  async getDashboardAccessStatus(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.dashboardAccess(userId);
+    return this.registrationService.getDashboardAccessStatus(userId);
   }
 }

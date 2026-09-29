@@ -10,6 +10,7 @@ import { SubjectCombinationsService } from './services/subject-combinations.serv
 import { SubjectsController } from './controllers/subjects.controller';
 import { SubjectCombinationsController } from './controllers/subject-combinations.controller';
 import { SharedModule } from '../../utils';
+import { SyncModule } from '../sync';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SharedModule } from '../../utils';
       SubjectCombinationItemEntity,
     ]),
     SharedModule,
+    SyncModule,
   ],
   controllers: [SubjectsController, SubjectCombinationsController],
   providers: [

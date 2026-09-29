@@ -53,6 +53,8 @@ import { AI_QUEUES, SYNC_QUEUES } from './queues.config';
     }),
     // Register queues
     BullModule.registerQueue({ name: SYNC_QUEUES.CANDIDATE_SYNC }),
+    BullModule.registerQueue({ name: SYNC_QUEUES.SUBJECT_SYNC }),
+    BullModule.registerQueue({ name: SYNC_QUEUES.INSTITUTION_SYNC }),
     BullModule.registerQueue({ name: AI_QUEUES.OCR_INGESTION }),
     BullModule.registerQueue({ name: AI_QUEUES.FIELD_EXTRACTION }),
     BullModule.registerQueue({ name: AI_QUEUES.CONTRACT_EXTRACTION }),

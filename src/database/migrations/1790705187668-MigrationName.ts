@@ -373,7 +373,7 @@ export class MigrationName1790705187668 implements MigrationInterface {
         await queryRunner.query(`ALTER TABLE "jupeb_biometric_captures" ALTER COLUMN "created_at" SET DEFAULT now()`);
         await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "payments_payment_id_key"`);
         await queryRunner.query(`ALTER TABLE "payments" DROP COLUMN "payment_id"`);
-        await queryRunner.query(`ALTER TABLE "payments" ADD "payment_id" character varying(100) NOT NULL`);
+        await queryRunner.query(`ALTER TABLE "payments" ADD "payment_id" character varying(100) NOT NULL DEFAULT uuid_generate_v4()`);
         await queryRunner.query(`ALTER TABLE "payments" ADD CONSTRAINT "UQ_8866a3cfff96b8e17c2b204aae0" UNIQUE ("payment_id")`);
         await queryRunner.query(`ALTER TABLE "payments" ALTER COLUMN "amount" TYPE numeric(12,2)`);
         await queryRunner.query(`ALTER TABLE "payments" DROP COLUMN "currency"`);

@@ -6,18 +6,19 @@ import { UserEntity } from '../../../modules/users/entities/user.entity';
 
 interface DefaultRole {
   name: string;
+  displayName: string;
   description: string;
   isSystem: boolean;
 }
 
 const DEFAULT_ROLES: DefaultRole[] = [
-  { name: 'super_admin', description: 'Full system access with all permissions', isSystem: true },
-  { name: 'admin', description: 'Administrative access for system management', isSystem: true },
-  { name: 'jupeb_admin', description: 'JUPEB portal administrator with full access to JUPEB operations', isSystem: true },
-  { name: 'institution_admin', description: 'Institution administrator scoped to a single university', isSystem: true },
-  { name: 'operator', description: 'Operational staff access for day-to-day management', isSystem: true },
-  { name: 'user', description: 'Standard user access', isSystem: true },
-  { name: 'student', description: 'Student user access', isSystem: true },
+  { name: 'super_admin', displayName: 'Super Administrator', description: 'Full system access with all permissions', isSystem: true },
+  { name: 'admin', displayName: 'Administrator', description: 'Administrative access for system management', isSystem: true },
+  { name: 'jupeb_admin', displayName: 'JUPEB Administrator', description: 'JUPEB portal administrator with full access to JUPEB operations', isSystem: true },
+  { name: 'institution_admin', displayName: 'Institution Administrator', description: 'Institution administrator scoped to a single university', isSystem: true },
+  { name: 'operator', displayName: 'Operator', description: 'Operational staff access for day-to-day management', isSystem: true },
+  { name: 'user', displayName: 'User', description: 'Standard user access', isSystem: true },
+  { name: 'student', displayName: 'Student', description: 'Student user access', isSystem: true },
 ];
 
 @Injectable()
@@ -59,11 +60,16 @@ export class RbacSeedService {
       role = await this.roleRepo.save(
         this.roleRepo.create({
           name: roleDef.name,
+          displayName: roleDef.displayName,
           description: roleDef.description,
           isSystem: roleDef.isSystem,
+          status: 'active',
         }),
       );
       this.logger.log(`Created role: ${roleDef.name}`);
+    } else if (!role.displayName) {
+      role.displayName = roleDef.displayName;
+      await this.roleRepo.save(role);
     }
   }
 

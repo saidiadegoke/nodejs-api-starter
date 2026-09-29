@@ -1,9 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { Job } from 'bullmq';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { SYNC_QUEUES } from '../../../infra/bullmq/queues.config';
 import { CandidateSyncJobPayload } from '../dto/enqueue-candidate-sync.dto';
+import { SyncLogEntity, SyncStatus } from '../entities/sync-log.entity';
 import * as attendanceProvider from '../../../integrations/attendance';
 import * as crmsProvider from '../../../integrations/crms';
 
@@ -13,110 +15,164 @@ const CONTEXT = 'CandidateSyncProcessor';
 export class CandidateSyncProcessor extends WorkerHost {
   private readonly logger = new Logger(CONTEXT);
 
-  constructor(private readonly dataSource: DataSource) {
+  constructor(
+    private readonly dataSource: DataSource,
+    @InjectRepository(SyncLogEntity)
+    private readonly syncLogRepo: Repository<SyncLogEntity>,
+  ) {
     super();
   }
 
-  async process(job: Job<CandidateSyncJobPayload>): Promise<any> {
-    const { sessionId, registrationIds } = job.data;
+  async process(job: Job<CandidateSyncJobPayload & { syncLogId?: string }>): Promise<any> {
+    const { sessionId, registrationIds, syncLogId } = job.data;
     this.logger.log(`Processing candidate sync job ${job.id} for session ${sessionId}`);
 
-    let targetIds = registrationIds;
-    if (!targetIds || targetIds.length === 0) {
-      const rows = await this.dataSource.query(
-        `SELECT id FROM jupeb_registrations WHERE session_id = $1 AND status = 'approved'`,
-        [sessionId],
-      );
-      targetIds = rows.map((r: any) => r.id);
+    if (syncLogId) {
+      await this.syncLogRepo.update(syncLogId, {
+        status: SyncStatus.IN_PROGRESS,
+        attemptCount: job.attemptsMade + 1,
+      } as any);
     }
 
-    if (!targetIds || targetIds.length === 0) {
-      this.logger.log(`No approved candidates found to sync for session ${sessionId}`);
-      return { synced: 0 };
-    }
+    try {
+      let targetIds = registrationIds;
+      if (!targetIds || targetIds.length === 0) {
+        const rows = await this.dataSource.query(
+          `SELECT id FROM jupeb_registrations WHERE session_id = $1 AND status = 'approved'`,
+          [sessionId],
+        );
+        targetIds = rows.map((r: any) => r.id);
+      }
 
-    this.logger.log(`Found ${targetIds.length} approved candidates to sync for session ${sessionId}`);
+      if (!targetIds || targetIds.length === 0) {
+        this.logger.log(`No approved candidates found to sync for session ${sessionId}`);
+        if (syncLogId) {
+          await this.syncLogRepo.update(syncLogId, {
+            status: SyncStatus.COMPLETED,
+            completedAt: new Date(),
+            responsePayload: { synced: 0, reason: 'no_approved_candidates' },
+          } as any);
+        }
+        return { synced: 0 };
+      }
 
-    // Fetch session info
-    const sessionRows = await this.dataSource.query(
-      `SELECT * FROM jupeb_registration_sessions WHERE id = $1 LIMIT 1`,
-      [sessionId],
-    );
-    const session = sessionRows[0] || null;
+      this.logger.log(`Found ${targetIds.length} candidates to sync`);
 
-    const chunkSize = 100;
-    let attendanceSuccess = 0;
-    let crmsSuccess = 0;
+      // Fetch session info
+      let session: any = null;
+      if (sessionId) {
+        const sessionRows = await this.dataSource.query(
+          `SELECT * FROM jupeb_registration_sessions WHERE id = $1 LIMIT 1`,
+          [sessionId],
+        );
+        session = sessionRows[0] || null;
+      }
 
-    for (let i = 0; i < targetIds.length; i += chunkSize) {
-      const chunk = targetIds.slice(i, i + chunkSize);
+      const chunkSize = 100;
+      let attendanceSuccess = 0;
+      let crmsSuccess = 0;
+      const errors: string[] = [];
 
-      // 1. Sync to Attendance
-      try {
-        const attendancePayloads = await this.getStudentSyncPayloads(chunk);
-        if (attendancePayloads.length > 0) {
-          const provider = attendanceProvider.get();
-          if (typeof provider.syncStudents === 'function') {
-            const response = await provider.syncStudents({ students: attendancePayloads });
-            this.logger.log(
-              `[AttendanceSync] Chunk ${i / chunkSize + 1} synced successfully for session ${sessionId}`,
-            );
+      for (let i = 0; i < targetIds.length; i += chunkSize) {
+        const chunk = targetIds.slice(i, i + chunkSize);
 
-            // Update registration records with returned attendance registrationCode and student_id
-            if (response && response.results && Array.isArray(response.results)) {
-              for (const res of response.results) {
-                if (res.registrationCode && res.student_id) {
-                  const payloadItem = attendancePayloads.find(
-                    (p: any) => p.jupebNumber === res.jupebNumber,
-                  );
-                  if (payloadItem && payloadItem.registration_id) {
-                    await this.dataSource.query(
-                      `UPDATE jupeb_registrations
-                         SET attendance_registration_code = $2, attendance_student_id = $3, updated_at = NOW()
-                       WHERE id = $1`,
-                      [payloadItem.registration_id, res.registrationCode, res.student_id],
+        // 1. Sync to Attendance
+        try {
+          const attendancePayloads = await this.getStudentSyncPayloads(chunk);
+          if (attendancePayloads.length > 0) {
+            const provider = attendanceProvider.get();
+            if (typeof provider.syncStudents === 'function') {
+              const response = await provider.syncStudents({ students: attendancePayloads });
+              this.logger.log(
+                `[AttendanceSync] Chunk ${i / chunkSize + 1} synced successfully (${attendancePayloads.length} students)`,
+              );
+
+              // Update registration records with returned attendance registrationCode and student_id
+              if (response && response.results && Array.isArray(response.results)) {
+                for (const res of response.results) {
+                  if (res.registrationCode && res.student_id) {
+                    const payloadItem = attendancePayloads.find(
+                      (p: any) => p.jupebNumber === res.jupebNumber,
                     );
+                    if (payloadItem && payloadItem.registration_id) {
+                      await this.dataSource.query(
+                        `UPDATE jupeb_registrations
+                           SET attendance_registration_code = $2, attendance_student_id = $3, updated_at = NOW()
+                         WHERE id = $1`,
+                        [payloadItem.registration_id, res.registrationCode, res.student_id],
+                      );
+                    }
                   }
                 }
               }
+              attendanceSuccess += attendancePayloads.length;
             }
-            attendanceSuccess += attendancePayloads.length;
           }
+        } catch (attErr: any) {
+          const errMsg = `[AttendanceSync] Chunk error: ${attErr.message}`;
+          this.logger.error(errMsg, attErr.stack);
+          errors.push(errMsg);
         }
-      } catch (attErr: any) {
-        this.logger.error(`[AttendanceSync] Error syncing chunk: ${attErr.message}`, attErr.stack);
+
+        // 2. Sync to CRMS
+        try {
+          const crmsPayloads = await this.getCrmsCandidateSyncPayloads(chunk, session);
+          if (crmsPayloads.length > 0) {
+            const provider = crmsProvider.get();
+            if (typeof provider.syncCandidates === 'function') {
+              await provider.syncCandidates(crmsPayloads);
+              this.logger.log(
+                `[CrmsSync] Chunk ${i / chunkSize + 1} synced successfully (${crmsPayloads.length} candidates)`,
+              );
+              crmsSuccess += crmsPayloads.length;
+            }
+          }
+        } catch (crmsErr: any) {
+          const errMsg = `[CrmsSync] Chunk error: ${crmsErr.message}`;
+          this.logger.error(errMsg, crmsErr.stack);
+          errors.push(errMsg);
+        }
       }
 
-      // 2. Sync to CRMS
-      try {
-        const crmsPayloads = await this.getCrmsCandidateSyncPayloads(chunk, session);
-        if (crmsPayloads.length > 0) {
-          const provider = crmsProvider.get();
-          if (typeof provider.syncCandidates === 'function') {
-            await provider.syncCandidates(crmsPayloads);
-            this.logger.log(
-              `[CrmsSync] Chunk ${i / chunkSize + 1} synced successfully for session ${sessionId}`,
-            );
-            crmsSuccess += crmsPayloads.length;
-          }
-        }
-      } catch (crmsErr: any) {
-        this.logger.error(`[CrmsSync] Error syncing chunk: ${crmsErr.message}`, crmsErr.stack);
+      const isPartial = errors.length > 0 && (attendanceSuccess > 0 || crmsSuccess > 0);
+      const isFailed = errors.length > 0 && attendanceSuccess === 0 && crmsSuccess === 0;
+      const status = isFailed ? SyncStatus.FAILED : isPartial ? SyncStatus.PARTIAL : SyncStatus.COMPLETED;
+
+      const result = {
+        totalCandidates: targetIds.length,
+        attendanceSynced: attendanceSuccess,
+        crmsSynced: crmsSuccess,
+        errors: errors.length > 0 ? errors : undefined,
+      };
+
+      if (syncLogId) {
+        await this.syncLogRepo.update(syncLogId, {
+          status,
+          completedAt: new Date(),
+          responsePayload: result,
+          errorMessage: errors.length > 0 ? errors.join('\n') : null,
+        } as any);
       }
+
+      return result;
+    } catch (error: any) {
+      this.logger.error(`Failed processing candidate sync job ${job.id}: ${error.message}`, error.stack);
+      if (syncLogId) {
+        await this.syncLogRepo.update(syncLogId, {
+          status: SyncStatus.FAILED,
+          errorMessage: error.message,
+          errorDetails: { stack: error.stack },
+        } as any);
+      }
+      throw error;
     }
-
-    return {
-      totalCandidates: targetIds.length,
-      attendanceSynced: attendanceSuccess,
-      crmsSynced: crmsSuccess,
-    };
   }
 
   private async getStudentSyncPayloads(registrationIds: string[]) {
     const query = `
       SELECT
         r.id AS "registration_id",
-        r.jupeb_candidate_number AS "jupebNumber",
+        COALESCE(r.jupeb_candidate_number, r.provisional_candidate_code) AS "jupebNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         u.email AS "email",
@@ -146,7 +202,7 @@ export class CandidateSyncProcessor extends WorkerHost {
     const query = `
       SELECT
         r.id AS "registration_id",
-        r.jupeb_candidate_number AS "candidateNumber",
+        COALESCE(r.jupeb_candidate_number, r.provisional_candidate_code) AS "candidateNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         uni.jupeb_prefix AS "institutionCode",
@@ -164,7 +220,6 @@ export class CandidateSyncProcessor extends WorkerHost {
       JOIN jupeb_universities uni ON uni.id = r.university_id
       LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
       WHERE r.id = ANY($1::uuid[])
-        AND r.jupeb_candidate_number IS NOT NULL
     `;
     const rows = await this.dataSource.query(query, [registrationIds]);
 

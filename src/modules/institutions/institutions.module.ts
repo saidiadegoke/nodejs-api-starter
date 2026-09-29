@@ -6,9 +6,14 @@ import { InstitutionsService } from './services/institutions.service';
 import { InstitutionAdminProvisionService } from './services/institution-admin-provision.service';
 import { InstitutionsController } from './controllers/institutions.controller';
 import { SharedModule } from '../../utils';
+import { SyncModule } from '../sync';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UniversityEntity]), SharedModule],
+  imports: [
+    TypeOrmModule.forFeature([UniversityEntity]),
+    SharedModule,
+    SyncModule,
+  ],
   controllers: [InstitutionsController],
   providers: [
     UniversityRepository,

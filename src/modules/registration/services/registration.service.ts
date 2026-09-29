@@ -23,6 +23,8 @@ import {
   ConfirmSubjectsDto,
 } from '../dto';
 
+import { CandidateSyncQueueService } from '../../sync/services/candidate-sync-queue.service';
+
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -38,13 +40,19 @@ export class RegistrationService {
     private readonly kpiService: RegistrationKpiService,
     private readonly eventsService: RegistrationEventsService,
     private readonly pdfService: RegistrationFormPdfService,
+    private readonly candidateSyncQueueService: CandidateSyncQueueService,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(RegistrationService.name);
   }
 
-  async institutionList(query: ListRegistrationsQueryDto, _userId?: string | null) {
+  // ─────────────────────────────── Institution / Admin Operations ───────────────────────────────
+
+  /**
+   * List candidate registrations with filtering and pagination.
+   */
+  async listRegistrations(query: ListRegistrationsQueryDto, _userId?: string | null) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const offset = (page - 1) * limit;
@@ -67,7 +75,10 @@ export class RegistrationService {
     };
   }
 
-  async institutionGetCandidate(registrationId: string, _userId?: string | null) {
+  /**
+   * Retrieve full registration details by registration ID.
+   */
+  async getRegistrationById(registrationId: string, _userId?: string | null) {
     if (!UUID_REGEX.test(registrationId)) throw new UnprocessableEntityException('Invalid registration ID');
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
@@ -99,7 +110,10 @@ export class RegistrationService {
     };
   }
 
-  async institutionCreate(dto: CreateRegistrationDto, userId?: string | null): Promise<RegistrationEntity> {
+  /**
+   * Create an individual candidate registration record.
+   */
+  async createRegistration(dto: CreateRegistrationDto, userId?: string | null): Promise<RegistrationEntity> {
     const serialRows = await this.dataSource.query(
       `SELECT COALESCE(MAX(provisional_serial), 0) + 1 AS next_serial
        FROM jupeb_registrations WHERE session_id = $1`,
@@ -132,7 +146,10 @@ export class RegistrationService {
     return entity;
   }
 
-  async institutionPatch(
+  /**
+   * Update registration fields (subject combination, institution code, status reason).
+   */
+  async updateRegistration(
     registrationId: string,
     dto: PatchRegistrationDto,
     _userId?: string | null,
@@ -149,7 +166,10 @@ export class RegistrationService {
     return updated!;
   }
 
-  async institutionPatchCandidate(
+  /**
+   * Update candidate profile details (names, gender, contact information).
+   */
+  async updateCandidateProfile(
     registrationId: string,
     dto: PatchCandidateDto,
     _userId?: string | null,
@@ -192,10 +212,25 @@ export class RegistrationService {
       );
     }
 
-    return this.institutionGetCandidate(registrationId);
+    // Trigger candidate sync to Attendance & CRMS in background
+    try {
+      await this.candidateSyncQueueService.enqueueCandidateSyncJob({
+        sessionId: reg.sessionId,
+        registrationIds: [reg.id],
+        userId: _userId,
+        triggeredBy: 'candidate_profile_update',
+      });
+    } catch (syncErr: any) {
+      this.logger.error(`Failed to enqueue candidate sync for ${registrationId}: ${syncErr.message}`);
+    }
+
+    return this.getRegistrationById(registrationId);
   }
 
-  async institutionResendCode(registrationId: string, _userId?: string | null) {
+  /**
+   * Resend the provisional code to the candidate.
+   */
+  async resendProvisionalCode(registrationId: string, _userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
@@ -206,7 +241,10 @@ export class RegistrationService {
     };
   }
 
-  async institutionDelete(registrationId: string, userId?: string | null) {
+  /**
+   * Withdraw / delete candidate registration.
+   */
+  async withdrawRegistration(registrationId: string, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
@@ -226,11 +264,17 @@ export class RegistrationService {
     return { success: true, message: 'Registration withdrawn' };
   }
 
-  async institutionStats(query: { session_id?: string; university_id?: string }, _userId?: string | null) {
+  /**
+   * Get registration overview KPIs / statistics.
+   */
+  async getOverviewStats(query: { session_id?: string; university_id?: string }, _userId?: string | null) {
     return this.kpiService.kpiCounts(query.university_id, query.session_id);
   }
 
-  async institutionByUniversity(query: { session_id?: string }, _userId?: string | null) {
+  /**
+   * Get registration breakdown aggregated by university.
+   */
+  async getRegistrationsByUniversity(query: { session_id?: string }, _userId?: string | null) {
     const params = query.session_id ? [query.session_id] : [];
     const sessionClause = query.session_id ? `WHERE r.session_id = $1` : '';
 
@@ -249,7 +293,10 @@ export class RegistrationService {
     return rows;
   }
 
-  async institutionBatchAction(dto: BatchRegistrationActionDto, userId?: string | null) {
+  /**
+   * Perform batch status transitions on multiple registrations.
+   */
+  async batchUpdateRegistrationStatus(dto: BatchRegistrationActionDto, userId?: string | null) {
     const targetStatus = dto.action === 'approve'
       ? RegistrationStatus.APPROVED
       : dto.action === 'reject'
@@ -289,7 +336,10 @@ export class RegistrationService {
     };
   }
 
-  async institutionApprove(registrationId: string, body: { reason?: string }, userId?: string | null) {
+  /**
+   * Approve an individual candidate registration.
+   */
+  async approveRegistration(registrationId: string, body: { reason?: string }, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
@@ -310,7 +360,10 @@ export class RegistrationService {
     return updated;
   }
 
-  async institutionReject(registrationId: string, body: { reason?: string }, userId?: string | null) {
+  /**
+   * Reject an individual candidate registration.
+   */
+  async rejectRegistration(registrationId: string, body: { reason?: string }, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
@@ -330,7 +383,10 @@ export class RegistrationService {
     return updated;
   }
 
-  async institutionWithdraw(registrationId: string, body: { reason?: string }, userId?: string | null) {
+  /**
+   * Withdraw an individual candidate registration directly.
+   */
+  async withdrawRegistrationDirect(registrationId: string, body: { reason?: string }, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
@@ -346,7 +402,10 @@ export class RegistrationService {
     return updated;
   }
 
-  async institutionExportCsv(query: ListRegistrationsQueryDto, _userId?: string | null): Promise<string> {
+  /**
+   * Export candidate registrations to CSV format.
+   */
+  async exportRegistrationsCsv(query: ListRegistrationsQueryDto, _userId?: string | null): Promise<string> {
     const { rows } = await this.regRepo.findAllPaginated({
       sessionId: query.session_id,
       universityId: query.university_id,
@@ -388,7 +447,10 @@ export class RegistrationService {
     return lines.join('\n');
   }
 
-  async numberingPreview(sessionId: string) {
+  /**
+   * Preview simulation of candidate matric numbers for a session.
+   */
+  async previewCandidateNumbering(sessionId: string) {
     const unfinalized = await this.dataSource.query(
       `SELECT r.id, u.jupeb_prefix, s.year_short,
               ROW_NUMBER() OVER (PARTITION BY r.university_id ORDER BY r.approved_at ASC, r.created_at ASC) AS seq
@@ -414,6 +476,9 @@ export class RegistrationService {
     };
   }
 
+  /**
+   * Finalize candidate numbers for approved registrations in a session.
+   */
   async finalizeCandidateNumbers(sessionId: string, userId?: string | null) {
     const unfinalized = await this.dataSource.query(
       `SELECT r.id, u.jupeb_prefix, s.year_short,
@@ -440,6 +505,9 @@ export class RegistrationService {
     };
   }
 
+  /**
+   * Bulk finalize candidate numbers across all closed sessions.
+   */
   async finalizeAllClosedSessions(userId?: string | null) {
     const closedSessions = await this.dataSource.query(
       `SELECT id FROM jupeb_registration_sessions WHERE status = 'closed'`,
@@ -457,7 +525,12 @@ export class RegistrationService {
     };
   }
 
-  async getCodeStatus(userId: string) {
+  // ─────────────────────────────── Student Self-Service (/me/*) ───────────────────────────────
+
+  /**
+   * Get candidate code claim status.
+   */
+  async getStudentCodeStatus(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) return { claimed: false, status: 'none' };
 
@@ -480,7 +553,10 @@ export class RegistrationService {
     };
   }
 
-  async claimCode(code: string, userId: string) {
+  /**
+   * Claim provisional candidate code for the authenticated student account.
+   */
+  async claimProvisionalCode(code: string, userId: string) {
     const reg = await this.regRepo.findByCandidateCode(code);
     if (!reg) throw new NotFoundException('Invalid registration code');
 
@@ -505,21 +581,30 @@ export class RegistrationService {
     return updated;
   }
 
-  async getMeCurrent(userId: string) {
+  /**
+   * Get active candidate registration summary for authenticated student.
+   */
+  async getCurrentStudentRegistration(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No active registration found for user');
-    return this.institutionGetCandidate(reg.id, userId);
+    return this.getRegistrationById(reg.id, userId);
   }
 
-  async getMeProfile(userId: string) {
-    return this.getMeCurrent(userId);
+  /**
+   * Get student registration profile.
+   */
+  async getStudentProfile(userId: string) {
+    return this.getCurrentStudentRegistration(userId);
   }
 
-  async getMeSubmissionPreview(userId: string) {
+  /**
+   * Get registration submission readiness checklist and missing requirements.
+   */
+  async getSubmissionPreview(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
-    const details = await this.institutionGetCandidate(reg.id, userId);
+    const details = await this.getRegistrationById(reg.id, userId);
     const docs = await this.docRepo.findByRegistrationId(reg.id);
 
     const profileCompleted = Boolean(details.first_name && details.last_name && details.email);
@@ -544,7 +629,10 @@ export class RegistrationService {
     };
   }
 
-  async getMeExamResults(userId: string) {
+  /**
+   * Get examination results and subject scores for authenticated candidate.
+   */
+  async getStudentExamResults(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
@@ -564,17 +652,25 @@ export class RegistrationService {
     };
   }
 
-  async getMeSlip(userId: string) {
-    const preview = await this.getMeSubmissionPreview(userId);
-    return preview;
+  /**
+   * Get registration examination slip metadata and summary.
+   */
+  async getRegistrationSlipSummary(userId: string) {
+    return this.getSubmissionPreview(userId);
   }
 
-  async downloadMeSlip(registrationId?: string, _token?: string): Promise<Buffer> {
-    const preview = registrationId ? await this.institutionGetCandidate(registrationId) : {};
+  /**
+   * Render and download registration examination slip as PDF.
+   */
+  async downloadRegistrationSlipPdf(registrationId?: string, _token?: string): Promise<Buffer> {
+    const preview = registrationId ? await this.getRegistrationById(registrationId) : {};
     return this.pdfService.renderRegistrationFormPdf(preview);
   }
 
-  async updateAcademicIntake(dto: { subject_combination_id?: string }, userId: string) {
+  /**
+   * Update student academic intake / subject combination.
+   */
+  async updateSubjectCombination(dto: { subject_combination_id?: string }, userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
@@ -584,13 +680,19 @@ export class RegistrationService {
     return updated;
   }
 
-  async patchMeProfile(dto: PatchCandidateDto, userId: string) {
+  /**
+   * Update student personal profile details.
+   */
+  async updateStudentProfile(dto: PatchCandidateDto, userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
-    return this.institutionPatchCandidate(reg.id, dto, userId);
+    return this.updateCandidateProfile(reg.id, dto, userId);
   }
 
-  async confirmSubjects(dto: ConfirmSubjectsDto, userId: string) {
+  /**
+   * Confirm and lock candidate subject combination selection.
+   */
+  async confirmSubjectCombination(dto: ConfirmSubjectsDto, userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
@@ -610,11 +712,14 @@ export class RegistrationService {
     return updated;
   }
 
-  async submit(userId: string) {
+  /**
+   * Submit registration for institution review.
+   */
+  async submitRegistration(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
-    const preview = await this.getMeSubmissionPreview(userId);
+    const preview = await this.getSubmissionPreview(userId);
     if (!preview.can_submit) {
       throw new UnprocessableEntityException({
         message: 'Cannot submit incomplete registration',
@@ -644,7 +749,10 @@ export class RegistrationService {
     return updated;
   }
 
-  async dashboardAccess(userId: string) {
+  /**
+   * Check whether candidate dashboard features are unlocked.
+   */
+  async getDashboardAccessStatus(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 

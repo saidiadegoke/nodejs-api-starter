@@ -30,6 +30,8 @@ export const AI_QUEUES = {
 
 export const SYNC_QUEUES = {
   CANDIDATE_SYNC: 'candidate-sync',
+  SUBJECT_SYNC: 'subject-sync',
+  INSTITUTION_SYNC: 'institution-sync',
 } as const;
 
 export type SyncQueueName = (typeof SYNC_QUEUES)[keyof typeof SYNC_QUEUES];

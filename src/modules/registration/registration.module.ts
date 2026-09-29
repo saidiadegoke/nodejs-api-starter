@@ -23,6 +23,8 @@ import { RegistrationService } from './services/registration.service';
 import { RegistrationController } from './controllers/registration.controller';
 import { NextOfKinController } from './controllers/next-of-kin.controller';
 
+import { SyncModule } from '../sync';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -31,6 +33,7 @@ import { NextOfKinController } from './controllers/next-of-kin.controller';
       RegistrationStatusHistoryEntity,
       NextOfKinEntity,
     ]),
+    SyncModule,
   ],
   controllers: [RegistrationController, NextOfKinController],
   providers: [

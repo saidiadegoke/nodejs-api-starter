@@ -88,3 +88,7 @@ export async function syncCandidates(payload: any) {
 export async function syncInstitutions(payload: any) {
   return request('POST', '/api/institutions/sync', { data: payload });
 }
+
+export async function syncSubjects(payload: any) {
+  return request('POST', '/api/subjects/sync', { data: payload });
+}

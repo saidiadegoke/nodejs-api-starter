@@ -24,12 +24,15 @@ function parseCsv(text: string): Record<string, string>[] {
   });
 }
 
+import { SubjectSyncQueueService } from '../../sync/services/subject-sync-queue.service';
+
 @Injectable()
 export class SubjectsService {
   private readonly logger: CommodLogger;
 
   constructor(
     private readonly subjectRepo: SubjectRepository,
+    private readonly subjectSyncQueueService: SubjectSyncQueueService,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(SubjectsService.name);
@@ -103,12 +106,19 @@ export class SubjectsService {
       });
     }
 
-    return this.subjectRepo.create({
+    const created = await this.subjectRepo.create({
       code,
       name,
       description: dto.description || null,
       status: 'active',
     });
+
+    this.subjectSyncQueueService.enqueueSubjectSyncJob({
+      subjectIds: [created.id],
+      triggeredBy: 'subject_created',
+    }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
+
+    return created;
   }
 
   async patch(id: string, dto: PatchSubjectDto): Promise<SubjectEntity> {
@@ -128,6 +138,12 @@ export class SubjectsService {
 
     const updated = await this.subjectRepo.updateById(id, fields);
     if (!updated) throw new NotFoundException('Subject not found');
+
+    this.subjectSyncQueueService.enqueueSubjectSyncJob({
+      subjectIds: [id],
+      triggeredBy: 'subject_updated',
+    }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
+
     return updated;
   }
 
@@ -135,6 +151,12 @@ export class SubjectsService {
     await this.getById(id);
     const updated = await this.subjectRepo.setStatus(id, status);
     if (!updated) throw new NotFoundException('Subject not found');
+
+    this.subjectSyncQueueService.enqueueSubjectSyncJob({
+      subjectIds: [id],
+      triggeredBy: 'subject_status_changed',
+    }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
+
     return updated;
   }
 
@@ -142,6 +164,12 @@ export class SubjectsService {
     await this.getById(id);
     const deleted = await this.subjectRepo.softDelete(id);
     if (!deleted) throw new NotFoundException('Subject not found');
+
+    this.subjectSyncQueueService.enqueueSubjectSyncJob({
+      subjectIds: [id],
+      triggeredBy: 'subject_deleted',
+    }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
+
     return deleted;
   }
 
@@ -170,6 +198,13 @@ export class SubjectsService {
         });
         failed += 1;
       }
+    }
+
+    if (succeeded > 0) {
+      this.subjectSyncQueueService.enqueueSubjectSyncJob({
+        syncAll: true,
+        triggeredBy: 'subjects_bulk_created',
+      }).catch((err) => this.logger.error(`Failed to enqueue bulk subject sync: ${err.message}`));
     }
 
     return { total: rows.length, succeeded, failed, outcomes };
