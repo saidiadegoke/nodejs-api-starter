@@ -41,7 +41,7 @@ import {
   JwtAuthGuard,
   PermissionsGuard,
   RequirePermission,
-} from "../../../shared";
+} from "../../../utils";
 
 @ApiTags("Academic Sessions")
 @ApiBearerAuth("JWT")

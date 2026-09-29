@@ -7,7 +7,7 @@ import {
   JoinColumn,
   Unique,
 } from 'typeorm';
-import { UserEntity } from '@modules/users';
+import { UserEntity } from '../../users/entities/user.entity';
 
 @Entity('social_accounts')
 @Unique(['provider', 'providerUserId'])

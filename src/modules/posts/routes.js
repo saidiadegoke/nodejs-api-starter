@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const { body, query, param } = require('express-validator');
 const { isUUID } = require('validator');
-const { validate } = require('../../shared/validations/validator');
-const { requireAuth, requirePermission } = require('../../shared/middleware/rbac.middleware');
-const { optionalAuth } = require('../../shared/middleware/optional-auth.middleware');
+const { validate } = require('../../utils/validations/validator');
+const { requireAuth, requirePermission } = require('../../utils/middleware/rbac.middleware');
+const { optionalAuth } = require('../../utils/middleware/optional-auth.middleware');
 const PostController = require('./controllers/post.controller');
 const PostCommentController = require('./controllers/postComment.controller');
 const {

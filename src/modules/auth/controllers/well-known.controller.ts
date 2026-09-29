@@ -1,8 +1,8 @@
 import { Controller, Get, HttpException, HttpStatus, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiOkResponse } from '@nestjs/swagger';
 import { Response } from 'express';
-import { getSsoConfig } from '../../../shared/config/sso-keys.config';
-import { BypassEnvelope } from '../../../shared';
+import { getSsoConfig } from '../../../utils/config/sso-keys.config';
+import { BypassEnvelope } from '../../../utils';
 import { JwksResponseDto } from '../dto/auth-responses.dto';
 
 @ApiTags('Auth')

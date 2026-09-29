@@ -17,7 +17,7 @@ import {
 import { NextOfKinService } from '../services/next-of-kin.service';
 import { CreateNextOfKinDto } from '../dto/list-registrations-query.dto';
 import { NextOfKinResponseDto } from '../dto/next-of-kin-response.dto';
-import { JwtAuthGuard, PermissionsGuard } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard } from '../../../utils';
 
 @ApiTags('Next of Kin')
 @ApiBearerAuth('JWT')

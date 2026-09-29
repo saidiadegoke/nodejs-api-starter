@@ -1,6 +1,6 @@
-const CountryModel = require('../../../shared/models/country.model');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, NOT_FOUND } = require('../../../shared/constants/statusCodes');
+const CountryModel = require('../../../utils/models/country.model');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { OK, NOT_FOUND } = require('../../../utils/constants/statusCodes');
 
 class CountryController {
   /**

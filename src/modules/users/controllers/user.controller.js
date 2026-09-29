@@ -1,6 +1,6 @@
 const UserService = require('../services/user.service');
-const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
-const { OK, NOT_FOUND, BAD_REQUEST } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError, sendPaginated } = require('../../../utils/utils/response');
+const { OK, NOT_FOUND, BAD_REQUEST } = require('../../../utils/constants/statusCodes');
 
 class UserController {
   static async getAllUsers(req, res) {

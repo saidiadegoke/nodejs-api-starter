@@ -24,7 +24,7 @@ import {
   ListDocumentRequirementsQueryDto,
   DocumentRequirementResponseDto,
 } from '../dtos/document-requirement.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Document Requirements')
 @Controller()

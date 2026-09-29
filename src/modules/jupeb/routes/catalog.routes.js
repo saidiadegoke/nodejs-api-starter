@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
-const { csvUpload } = require('../../../shared/middleware/csv-upload.middleware');
+const { requireAuth, requirePermission } = require('../../../utils/middleware/rbac.middleware');
+const { csvUpload } = require('../../../utils/middleware/csv-upload.middleware');
 const CatalogController = require('../controllers/catalog.controller');
 
 const perm = (action) => [requireAuth, requirePermission(action)];

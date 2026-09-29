@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { StudentDashboardService } from '../services/student-dashboard.service';
 import { StudentDashboardQueryDto, StudentHomeResponseDto } from '../dto';
-import { JwtAuthGuard } from '../../../shared';
+import { JwtAuthGuard } from '../../../utils';
 
 @ApiTags('Student Mobile Dashboard')
 @Controller()

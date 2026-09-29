@@ -6,7 +6,7 @@ import { PaymentItemRepository } from './repositories/payment-item.repository';
 import { PaymentStructureRepository } from './repositories/payment-structure.repository';
 import { PaymentCatalogService } from './services/payment-catalog.service';
 import { PaymentCatalogController } from './controllers/payment-catalog.controller';
-import { SharedModule } from '../../shared';
+import { SharedModule } from '../../utils';
 
 @Module({
   imports: [

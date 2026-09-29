@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../utils/middleware/rbac.middleware');
 const AcademicController = require('../controllers/academic.controller');
 
 const courseWrite = [requireAuth, requirePermission('jupeb.academic.manage')];

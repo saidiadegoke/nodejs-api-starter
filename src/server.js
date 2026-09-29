@@ -1,9 +1,9 @@
 const app = require('./app');
 const { port } = require('./config/env.config');
-const { logger } = require('./shared/utils/logger');
+const { logger } = require('./utils/utils/logger');
 const pool = require('./db/pool');
 const { runSeeds } = require('./db/seed');
-const webSocketService = require('./shared/services/websocket.service');
+const webSocketService = require('./utils/services/websocket.service');
 const http = require('http');
 
 const PORT = port || 9999;

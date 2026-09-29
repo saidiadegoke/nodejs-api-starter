@@ -8,7 +8,7 @@ function httpError(status, message, details = null) {
 }
 
 const institutionScope = require('../jupeb/utils/institution-scope');
-const rbacMiddleware = require('../../shared/middleware/rbac.middleware');
+const rbacMiddleware = require('../../utils/middleware/rbac.middleware');
 
 /**
  * Resolve the authenticated student's latest registration into a normalized

@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 import { OtpCodeRepository } from '../repositories/otp-code.repository';
 import { resolveName, getProvider } from './sms-providers';
 
-const sendEmail = require('../../../shared/utils/sendEmail');
+const sendEmail = require('../../../utils/utils/sendEmail');
 
 const OTP_LENGTH = 6;
 const MAX_ATTEMPTS = 5;

@@ -20,7 +20,7 @@ import {
   PermissionsGuard,
   RequirePermission,
   CurrentUser,
-} from '../../../shared';
+} from '../../../utils';
 import { UsersService } from '../services/users.service';
 import { UserQueryDto, UpdateUserDto } from '../dto/user-query.dto';
 import { UserProfileResponseDto } from '../dto/user-responses.dto';

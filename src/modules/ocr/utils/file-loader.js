@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
-const { s3Client, s3BucketName } = require('../../../shared/config/s3.config');
+const { s3Client, s3BucketName } = require('../../../utils/config/s3.config');
 const FileModel = require('../../files/models/file.model');
 
 /**

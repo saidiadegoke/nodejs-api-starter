@@ -8,7 +8,7 @@ import { AuthRepository } from '../repositories/auth.repository';
 import { UserSessionRepository } from '../repositories/user-session.repository';
 import { jwtSecret, jwtExpiresIn } from '../../../config/env.config';
 
-const sendEmail = require('../../../shared/utils/sendEmail');
+const sendEmail = require('../../../utils/utils/sendEmail');
 const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
 
 function isUuid(str: string): boolean {

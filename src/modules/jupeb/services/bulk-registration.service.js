@@ -10,7 +10,7 @@ const { normalizeNin, hashNin, ninLast4 } = require('../utils/identity-crypto');
 const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
 const { describeSessionWindowFailure } = require('../utils/session-validation');
 const { cleanJupebPrefix } = require('../utils/catalog-validation');
-const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
+const { hasPermission } = require('../../../utils/middleware/rbac.middleware');
 
 function httpError(status, message, details) {
   const err = new Error(message);

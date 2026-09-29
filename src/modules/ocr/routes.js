@@ -1,6 +1,6 @@
 const router = require('express').Router();
-const { requireAuth } = require('../../shared/middleware/rbac.middleware');
-const { uploadSingle } = require('../../shared/middleware/upload.middleware');
+const { requireAuth } = require('../../utils/middleware/rbac.middleware');
+const { uploadSingle } = require('../../utils/middleware/upload.middleware');
 const OcrController = require('./controllers/ocr.controller');
 
 router.get('/health', (req, res) => {

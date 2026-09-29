@@ -1,8 +1,8 @@
 const catalogService = require('../services/catalog.service');
 const AdminAuditService = require('../../admin/services/adminAudit.service');
-const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
-const { NOT_FOUND, INTERNAL_SERVER_ERROR, CREATED } = require('../../../shared/constants/statusCodes');
-const { mapUniqueViolation } = require('../../../shared/utils/pg-unique-violation');
+const { sendSuccess, sendError, sendPaginated } = require('../../../utils/utils/response');
+const { NOT_FOUND, INTERNAL_SERVER_ERROR, CREATED } = require('../../../utils/constants/statusCodes');
+const { mapUniqueViolation } = require('../../../utils/utils/pg-unique-violation');
 
 function sendCatalogError(res, err) {
   if (err && err.status) {

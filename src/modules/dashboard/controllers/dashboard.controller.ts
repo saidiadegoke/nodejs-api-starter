@@ -29,7 +29,7 @@ import {
   SessionTimelineResponseDto,
   RecentRegistrationItemDto,
 } from '../dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Program Analytics & Dashboard')
 @Controller(['dashboard', 'jupeb/dashboard'])

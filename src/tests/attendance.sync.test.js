@@ -141,7 +141,7 @@ describe('Attendance Institution and Student Sync', () => {
 
     it('should resolve candidate_code when passed by admin or institution', async () => {
       const registrationModel = require('../modules/jupeb/models/registration.model');
-      const rbacMiddleware = require('../shared/middleware/rbac.middleware');
+      const rbacMiddleware = require('../utils/middleware/rbac.middleware');
       const institutionScope = require('../modules/jupeb/utils/institution-scope');
 
       const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue({
@@ -191,7 +191,7 @@ describe('Attendance Institution and Student Sync', () => {
 
     it('should throw 403 when a student tries to access another candidate by candidate_code', async () => {
       const registrationModel = require('../modules/jupeb/models/registration.model');
-      const rbacMiddleware = require('../shared/middleware/rbac.middleware');
+      const rbacMiddleware = require('../utils/middleware/rbac.middleware');
 
       const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue({
         id: 'reg-uuid-2',

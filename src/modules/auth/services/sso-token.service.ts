@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { SignJWT, importPKCS8, KeyLike } from 'jose';
-import { getSsoConfig } from '../../../shared/config/sso-keys.config';
+import { getSsoConfig } from '../../../utils/config/sso-keys.config';
 import { DataSource } from 'typeorm';
 
 let cachedPrivateKey: KeyLike | Uint8Array | null = null;

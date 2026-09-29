@@ -9,7 +9,7 @@ import { SubjectsService } from './services/subjects.service';
 import { SubjectCombinationsService } from './services/subject-combinations.service';
 import { SubjectsController } from './controllers/subjects.controller';
 import { SubjectCombinationsController } from './controllers/subject-combinations.controller';
-import { SharedModule } from '../../shared';
+import { SharedModule } from '../../utils';
 
 @Module({
   imports: [

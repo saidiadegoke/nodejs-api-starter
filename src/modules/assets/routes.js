@@ -1,8 +1,8 @@
 const router = require('express').Router();
-const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const { requireAuth } = require('../../utils/middleware/rbac.middleware');
 const { body } = require('express-validator');
-const { validate } = require('../../shared/validations/validator');
-const { uploadSingle } = require('../../shared/middleware/upload.middleware');
+const { validate } = require('../../utils/validations/validator');
+const { uploadSingle } = require('../../utils/middleware/upload.middleware');
 
 const AssetGroupController = require('./controllers/asset-group.controller');
 const AssetController = require('./controllers/asset.controller');

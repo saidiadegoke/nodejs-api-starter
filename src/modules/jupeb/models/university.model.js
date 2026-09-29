@@ -1,5 +1,5 @@
 const pool = require('../../../db/pool');
-const { normalizeStatus } = require('../../../shared/utils/status');
+const { normalizeStatus } = require('../../../utils/utils/status');
 
 class UniversityModel {
   async create({

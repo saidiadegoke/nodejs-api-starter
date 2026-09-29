@@ -22,8 +22,8 @@ import {
   listConfiguredTargets,
   resolveLaunchCallbackUrl,
   SSO_TARGET_APPS,
-} from '../../../shared/config/sso-keys.config';
-import { JwtAuthGuard, CurrentUser, BypassEnvelope } from '../../../shared';
+} from '../../../utils/config/sso-keys.config';
+import { JwtAuthGuard, CurrentUser, BypassEnvelope } from '../../../utils';
 
 @ApiTags('Auth')
 @Controller('sso')

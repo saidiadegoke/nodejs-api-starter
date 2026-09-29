@@ -6,9 +6,9 @@ import { DataSource } from 'typeorm';
 import { AuthService } from '../services/auth.service';
 import { AuthRepository } from '../repositories/auth.repository';
 import { UserSessionRepository } from '../repositories/user-session.repository';
-import { BypassEnvelope } from '../../../shared';
+import { BypassEnvelope } from '../../../utils';
 
-const passport = require('../../../shared/config/passport.config');
+const passport = require('../../../utils/config/passport.config');
 
 @ApiTags('Auth')
 @Controller('auth')

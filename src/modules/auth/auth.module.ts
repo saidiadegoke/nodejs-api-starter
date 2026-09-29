@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { UsersModule } from '@modules/users';
+import { UsersModule } from '../users/users.module';
 import { UserSessionEntity } from './entities/user-session.entity';
 import { PasswordResetEntity } from './entities/password-reset.entity';
 import { OtpCodeEntity } from './entities/otp-code.entity';

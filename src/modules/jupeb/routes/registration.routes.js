@@ -1,7 +1,7 @@
 const router = require('express').Router();
-const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../utils/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
-const { spreadsheetUpload } = require('../../../shared/middleware/spreadsheet-upload.middleware');
+const { spreadsheetUpload } = require('../../../utils/middleware/spreadsheet-upload.middleware');
 const RegistrationController = require('../controllers/registration.controller');
 const NextOfKinController = require('../controllers/next-of-kin.controller');
 

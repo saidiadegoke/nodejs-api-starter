@@ -17,7 +17,7 @@ const {
   formatProvisionalCandidateCode,
   makeInstitutionCode,
 } = require('../utils/registration-numbering');
-const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
+const { hasPermission } = require('../../../utils/middleware/rbac.middleware');
 const {
   assertInstitutionUniversityAccess,
   effectiveInstitutionListUniversityId,

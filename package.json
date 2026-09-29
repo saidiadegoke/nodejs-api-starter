@@ -12,7 +12,7 @@
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "dev": "nodemon src/server.js",
     "migrate": "node src/db/migrate.js",
-    "seed": "node src/db/seed.js",
+    "seed": "ts-node -r tsconfig-paths/register src/database/seeds/run-seed.ts",
     "clear-db": "node scripts/clear-db.js",
     "test": "NODE_ENV=test jest --coverage --runInBand",
     "test:auth": "NODE_ENV=test jest src/tests/auth.api.test.js --runInBand",

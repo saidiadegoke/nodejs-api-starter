@@ -1,12 +1,12 @@
 const PostCommentService = require('../services/postComment.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
 const {
   OK,
   CREATED,
   BAD_REQUEST,
   NOT_FOUND,
   FORBIDDEN,
-} = require('../../../shared/constants/statusCodes');
+} = require('../../../utils/constants/statusCodes');
 
 class PostCommentController {
   static isAdmin(roles) {

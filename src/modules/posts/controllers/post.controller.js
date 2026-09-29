@@ -5,7 +5,7 @@ const PostEngagementService = require('../services/postEngagement.service');
 const PostMediaService = require('../services/postMedia.service');
 const PostMediaModel = require('../models/postMedia.model');
 const PostSeoFeedService = require('../services/postSeoFeed.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
 const {
   OK,
   CREATED,
@@ -13,7 +13,7 @@ const {
   NOT_FOUND,
   FORBIDDEN,
   CONFLICT,
-} = require('../../../shared/constants/statusCodes');
+} = require('../../../utils/constants/statusCodes');
 
 class PostController {
   static isAdmin(roles) {

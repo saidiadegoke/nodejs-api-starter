@@ -40,7 +40,7 @@ import {
   CodeStatusResponseDto,
   SubmissionPreviewResponseDto,
 } from '../dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Registrations & Candidates')
 @ApiBearerAuth('JWT')

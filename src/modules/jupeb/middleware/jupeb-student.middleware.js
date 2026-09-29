@@ -1,4 +1,4 @@
-const { requireAuth, requirePermission, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission, requireRole } = require('../../../utils/middleware/rbac.middleware');
 
 /**
  * Student-facing JUPEB routes (registration claim, finance checkout, submissions).

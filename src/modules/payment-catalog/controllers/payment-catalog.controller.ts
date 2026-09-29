@@ -28,7 +28,7 @@ import {
   PaymentItemResponseDto,
   PaymentStructureResponseDto,
 } from '../dtos/payment-catalog.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Payment Catalog')
 @Controller()

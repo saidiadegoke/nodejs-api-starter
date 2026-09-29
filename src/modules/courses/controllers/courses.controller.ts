@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { CoursesService } from '../services/courses.service';
 import { CreateCourseDto, CourseResponseDto } from '../dtos/course.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Courses')
 @Controller()

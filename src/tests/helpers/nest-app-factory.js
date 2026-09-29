@@ -4,7 +4,7 @@ const helmet = require('helmet');
 const express = require('express');
 const { AppModule } = require('../../app.module');
 const { LoggerFactory } = require('../../logger');
-const { getCorsConfig } = require('../../shared/config/cors.config');
+const { getCorsConfig } = require('../../utils/config/cors.config');
 
 let cachedNestApp = null;
 let cachedExpressInstance = null;
@@ -40,7 +40,7 @@ async function getNestApp() {
   });
 
   const expressRoutes = require('../../routes');
-  const passport = require('../../shared/config/passport.config');
+  const passport = require('../../utils/config/passport.config');
   app.use(passport.initialize());
   app.use('/', expressRoutes);
 

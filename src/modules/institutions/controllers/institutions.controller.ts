@@ -32,7 +32,7 @@ import {
   UniversityResponseDto,
   BulkUploadResultDto,
 } from '../dtos/university-responses.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Institutions & Universities')
 @Controller()

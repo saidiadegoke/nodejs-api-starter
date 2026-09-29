@@ -10,7 +10,7 @@
  */
 const pool = require('../../../db/pool');
 const { resolveCandidateDisplayName } = require('../utils/candidate-name');
-const sendEmail = require('../../../shared/utils/sendEmail');
+const sendEmail = require('../../../utils/utils/sendEmail');
 
 function appName() {
   return process.env.APP_NAME || 'Registration Portal';

@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiOkResponse } from '@nestjs/swagger';
-import { BypassEnvelope } from './shared/decorators/bypass-envelope.decorator';
+import { BypassEnvelope } from './utils/decorators/bypass-envelope.decorator';
 
 @ApiTags('App')
 @Controller()

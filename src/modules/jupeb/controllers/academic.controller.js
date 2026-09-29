@@ -1,6 +1,6 @@
 const academicService = require('../services/academic.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../utils/constants/statusCodes');
 
 class AcademicController {
   static async listCourses(_req, res) {

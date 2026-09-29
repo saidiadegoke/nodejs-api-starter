@@ -11,7 +11,7 @@ import {
   RequestIdMiddleware,
   RequestLogMiddleware,
   SearchAliasMiddleware,
-} from './shared';
+} from './utils';
 import { AppController } from './app.controller';
 import { ApiKeysModule } from './modules/api-keys';
 import { UsersModule } from './modules/users';
@@ -28,6 +28,10 @@ import { SubmissionModule } from './modules/submission';
 import { AcademicModule } from './modules/academic';
 import { FinanceModule } from './modules/finance';
 import { DashboardModule } from './modules/dashboard';
+import { AdminModule } from './modules/admin';
+import { FilesModule } from './modules/files';
+import { NotificationsModule } from './modules/notifications';
+import { SupportModule } from './modules/support';
 
 @Module({
   imports: [
@@ -53,6 +57,10 @@ import { DashboardModule } from './modules/dashboard';
     AcademicModule,
     FinanceModule,
     DashboardModule,
+    AdminModule,
+    FilesModule,
+    NotificationsModule,
+    SupportModule,
   ],
   controllers: [AppController],
   providers: [

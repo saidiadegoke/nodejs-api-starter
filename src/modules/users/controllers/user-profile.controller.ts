@@ -15,7 +15,7 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
-import { JwtAuthGuard, CurrentUser } from '../../../shared';
+import { JwtAuthGuard, CurrentUser } from '../../../utils';
 import { UserProfileService } from '../services/user-profile.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UpdatePreferencesDto } from '../dto/update-preferences.dto';

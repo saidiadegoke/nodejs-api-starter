@@ -1,6 +1,6 @@
 const dashboardService = require('../services/dashboard.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { INTERNAL_SERVER_ERROR } = require('../../../utils/constants/statusCodes');
 
 function pickParams(req) {
   return {

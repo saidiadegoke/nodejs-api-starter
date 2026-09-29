@@ -18,8 +18,8 @@ import {
   ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../../shared/guards/jwt-auth.guard';
-import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../../../utils/guards/jwt-auth.guard';
+import { CurrentUser } from '../../../utils/decorators/current-user.decorator';
 import { FinanceService } from '../services/finance.service';
 import {
   CreateCheckoutDto,

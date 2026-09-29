@@ -47,10 +47,10 @@ import {
   ForgotPasswordResponseDto,
 } from "../dto/auth-responses.dto";
 import { UserProfileResponseDto } from "../../users/dto/user-responses.dto";
-import { JwtAuthGuard, CurrentUser } from "../../../shared";
+import { JwtAuthGuard, CurrentUser } from "../../../utils";
 
-const sendEmail = require("../../../shared/utils/sendEmail");
-const GeoModel = require("../../../shared/models/geo.model");
+const sendEmail = require("../../../utils/utils/sendEmail");
+const GeoModel = require("../../../utils/models/geo.model");
 
 function maskRecipient(value?: string | null): string {
   if (!value) return "***";

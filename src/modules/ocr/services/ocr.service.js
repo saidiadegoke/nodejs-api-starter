@@ -12,7 +12,7 @@ const {
   isUuid
 } = require('../validations/ocr.validation');
 const { hasPermission, getUserRoles } =
-  require('../../../shared/middleware/rbac.middleware');
+  require('../../../utils/middleware/rbac.middleware');
 
 const STAFF_ROLES = new Set(['admin', 'super_admin', 'registrar']);
 

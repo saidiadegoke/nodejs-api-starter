@@ -1,8 +1,8 @@
 const AssetService = require('../services/asset.service');
 const AssetUsageService = require('../services/asset-usage.service');
 const { getAssetInUse } = require('../services/asset-in-use.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN, PAYMENT_REQUIRED } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN, PAYMENT_REQUIRED } = require('../../../utils/constants/statusCodes');
 
 /**
  * Map file record from DB to API response shape

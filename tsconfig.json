@@ -21,10 +21,15 @@
     "paths": {
       "@/*": ["src/*"],
       "@modules/*": ["src/modules/*"],
-      "@shared/*": ["src/shared/*"],
+      "@shared/*": ["src/utils/*"],
       "@infra/*": ["src/infra/*"]
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/infra/bullmq/**/*", "src/infra/redis/**/*"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/infra/bullmq/**/*",
+    "src/infra/redis/**/*"
+  ]
 }

@@ -5,7 +5,7 @@ import { UniversityRepository } from './repositories/university.repository';
 import { InstitutionsService } from './services/institutions.service';
 import { InstitutionAdminProvisionService } from './services/institution-admin-provision.service';
 import { InstitutionsController } from './controllers/institutions.controller';
-import { SharedModule } from '../../shared';
+import { SharedModule } from '../../utils';
 
 @Module({
   imports: [TypeOrmModule.forFeature([UniversityEntity]), SharedModule],

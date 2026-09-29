@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import * as express from 'express';
 import { AppModule } from './app.module';
 import { LoggerFactory } from './logger';
-import { getCorsConfig } from './shared/config/cors.config';
+import { getCorsConfig } from './utils/config/cors.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, new ExpressAdapter(), {

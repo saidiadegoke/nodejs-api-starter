@@ -4,7 +4,7 @@ import { DocumentRequirementEntity } from './entities/document-requirement.entit
 import { DocumentRequirementRepository } from './repositories/document-requirement.repository';
 import { DocumentRequirementsService } from './services/document-requirements.service';
 import { DocumentRequirementsController } from './controllers/document-requirements.controller';
-import { SharedModule } from '../../shared';
+import { SharedModule } from '../../utils';
 
 @Module({
   imports: [TypeOrmModule.forFeature([DocumentRequirementEntity]), SharedModule],

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
-import { UserEntity } from '@modules/users';
+import { UserEntity } from '../../users/entities/user.entity';
 
 export interface UserWithProfile extends Partial<UserEntity> {
   id: string;

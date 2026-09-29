@@ -2,9 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const routes = require('./routes');
-const { errorHandler, notFoundHandler } = require('./shared/middleware/error.middleware');
-const { requestLogMiddleware } = require('./shared/middleware/requestLog.middleware');
-const { logger } = require('./shared/utils/logger');
+const { errorHandler, notFoundHandler } = require('./utils/middleware/error.middleware');
+const { requestLogMiddleware } = require('./utils/middleware/requestLog.middleware');
+const { logger } = require('./utils/utils/logger');
 require('dotenv').config();
 
 const app = express();
@@ -41,7 +41,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Initialize Passport for OAuth
-const passport = require('./shared/config/passport.config');
+const passport = require('./utils/config/passport.config');
 app.use(passport.initialize());
 
 // Request ID for correlating logs (dashboard / monitoring)

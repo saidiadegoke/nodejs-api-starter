@@ -1,6 +1,6 @@
 const OcrService = require('../services/ocr.service');
 const OcrResultModel = require('../models/ocr-result.model');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
 const { OLEVEL_SUBJECTS } = require('../constants/olevel-subjects');
 
 function serializeJob(job, result, viewerIsStaff) {

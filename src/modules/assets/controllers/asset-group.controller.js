@@ -1,6 +1,6 @@
 const AssetGroupService = require('../services/asset-group.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { OK, CREATED, BAD_REQUEST, NOT_FOUND, FORBIDDEN } = require('../../../utils/constants/statusCodes');
 
 /**
  * Map asset group from DB to API response shape

@@ -1,7 +1,7 @@
 const pool = require('../../../db/pool');
 const resultEntriesModel = require('../models/result-entries.model');
 const registrationModel = require('../models/registration.model');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { getUserRoles } = require('../../../utils/middleware/rbac.middleware');
 const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
 
 function httpError(status, message, details = null) {

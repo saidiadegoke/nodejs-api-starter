@@ -31,7 +31,7 @@ import {
   SubjectResponseDto,
   BulkSubjectResultDto,
 } from '../dtos/subject-responses.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Subjects')
 @Controller()

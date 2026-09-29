@@ -14,7 +14,7 @@ import {
   ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
-import { JwtAuthGuard, CurrentUser } from '../../../shared';
+import { JwtAuthGuard, CurrentUser } from '../../../utils';
 import { UserActivityService } from '../services/user-activity.service';
 import { UserActivityListResponseDto } from '../dto/user-responses.dto';
 

@@ -30,7 +30,7 @@ import {
   BiometricResponseDto,
 } from '../dto';
 import { RegistrationPhotoResponseDto } from '../dto/biometric-response.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../shared';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
 @ApiTags('Identity & Biometrics')
 @ApiBearerAuth('JWT')
