@@ -65,6 +65,9 @@ export class ProfileEntity {
   @Column({ name: 'jupeb_university_id', type: 'uuid', nullable: true })
   jupebUniversityId: string | null;
 
+  @Column({ name: 'viewing_jupeb_session_id', type: 'uuid', nullable: true })
+  viewingJupebSessionId: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

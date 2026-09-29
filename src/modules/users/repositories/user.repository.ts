@@ -216,6 +216,17 @@ export class UserRepository {
     return (res.affected || 0) > 0;
   }
 
+  async findUserRoles(userId: string): Promise<Array<{ role: string }>> {
+    const query = `
+      SELECT r.name as role
+      FROM user_roles ur
+      JOIN roles r ON ur.role_id = r.id
+      WHERE ur.user_id = $1
+        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+    `;
+    return await this.dataSource.query(query, [userId]);
+  }
+
   async getStats(userId: string) {
     const query = `
       SELECT

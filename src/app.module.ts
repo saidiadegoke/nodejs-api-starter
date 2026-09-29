@@ -16,6 +16,18 @@ import { AppController } from './app.controller';
 import { ApiKeysModule } from './modules/api-keys';
 import { UsersModule } from './modules/users';
 import { AuthModule } from './modules/auth';
+import { InstitutionsModule } from './modules/institutions';
+import { SubjectsModule } from './modules/subjects';
+import { CoursesModule } from './modules/courses';
+import { DocumentRequirementsModule } from './modules/document-requirements';
+import { PaymentCatalogModule } from './modules/payment-catalog';
+import { SessionsModule } from './modules/sessions';
+import { IdentityModule } from './modules/identity';
+import { RegistrationModule } from './modules/registration';
+import { SubmissionModule } from './modules/submission';
+import { AcademicModule } from './modules/academic';
+import { FinanceModule } from './modules/finance';
+import { DashboardModule } from './modules/dashboard';
 
 @Module({
   imports: [
@@ -29,6 +41,18 @@ import { AuthModule } from './modules/auth';
     ApiKeysModule,
     UsersModule,
     AuthModule,
+    InstitutionsModule,
+    SubjectsModule,
+    CoursesModule,
+    DocumentRequirementsModule,
+    PaymentCatalogModule,
+    SessionsModule,
+    IdentityModule,
+    RegistrationModule,
+    SubmissionModule,
+    AcademicModule,
+    FinanceModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [
