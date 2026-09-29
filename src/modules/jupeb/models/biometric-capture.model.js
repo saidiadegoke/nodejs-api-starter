@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 class BiometricCaptureModel {
   async create(data) {

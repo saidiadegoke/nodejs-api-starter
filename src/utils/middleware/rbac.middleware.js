@@ -1,4 +1,4 @@
-const pool = require('../../db/pool');
+const pool = require('../../database/pool');
 const { sendError } = require('../utils/response');
 const { FORBIDDEN, UNAUTHORIZED } = require('../constants/statusCodes');
 

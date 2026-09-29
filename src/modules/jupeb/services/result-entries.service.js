@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const resultEntriesModel = require('../models/result-entries.model');
 const registrationModel = require('../models/registration.model');
 const { getUserRoles } = require('../../../utils/middleware/rbac.middleware');

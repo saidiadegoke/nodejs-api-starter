@@ -1,6 +1,6 @@
 const request = require('supertest');
 const { getAppUnderTest } = require('./helpers/app-under-test');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const {
   closeAllOpenJupebSessions,
   nextJupebTestPrefix,
@@ -198,7 +198,7 @@ describe('GET /auth/code-status (M.9 — public, no auth)', () => {
     expect(reg.status).toBe(201);
 
     // Suspend the new user
-    const pool = require('../db/pool');
+    const pool = require('../database/pool');
     await pool.query(
       `UPDATE users SET status = 'suspended' WHERE LOWER(email) = LOWER($1)`,
       [email]

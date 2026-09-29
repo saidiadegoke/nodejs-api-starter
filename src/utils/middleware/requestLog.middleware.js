@@ -1,6 +1,6 @@
 const AdminErrorLogModel = require('../../modules/admin/models/adminErrorLog.model');
 const { logger } = require('../utils/logger');
-const pool = require('../../db/pool');
+const pool = require('../../database/pool');
 
 const SLOW_THRESHOLD_MS = 3000;
 

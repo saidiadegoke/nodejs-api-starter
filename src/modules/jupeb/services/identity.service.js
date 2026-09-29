@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const ninVerificationModel = require('../models/nin-verification.model');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');

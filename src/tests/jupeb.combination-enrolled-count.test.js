@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const subjectCombinationModel = require('../modules/jupeb/models/subject-combination.model');
 const catalogService = require('../modules/jupeb/services/catalog.service');
 

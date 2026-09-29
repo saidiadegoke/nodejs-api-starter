@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const registrationModel = require('../models/registration.model');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const universityModel = require('../models/university.model');

@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const documentRequirementModel = require('../models/document-requirement.model');
 const registrationDocumentModel = require('../models/registration-document.model');
 const registrationModel = require('../models/registration.model');

@@ -1,7 +1,7 @@
 // Admin module tests (error-logs, settings, audit) using Supertest
 const request = require('supertest');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('Admin API Tests', () => {
   let userToken;      // regular user

@@ -6,7 +6,7 @@
  * tolerate fuzzy input (case, hyphens, "State"/"LGA" suffixes).
  */
 
-const pool = require('../../db/pool');
+const pool = require('../../database/pool');
 
 const NIGERIA_ISO2 = 'NG';
 

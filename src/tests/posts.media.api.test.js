@@ -6,7 +6,7 @@ const request = require('supertest');
 const bcrypt = require('bcryptjs');
 const { randomUUID } = require('crypto');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('Posts media & og_image_file_id', () => {
   const suffix = `${Date.now()}_${randomUUID().slice(0, 8)}`;

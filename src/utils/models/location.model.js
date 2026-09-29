@@ -5,7 +5,7 @@
  * across the platform (addresses, orders, tracking, etc.)
  */
 
-const pool = require('../../db/pool');
+const pool = require('../../database/pool');
 
 class LocationModel {
   /**

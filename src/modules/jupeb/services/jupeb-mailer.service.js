@@ -8,7 +8,7 @@
  *
  * Templates live under src/shared/emails/ and use {{key}} placeholders.
  */
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const { resolveCandidateDisplayName } = require('../utils/candidate-name');
 const sendEmail = require('../../../utils/utils/sendEmail');
 

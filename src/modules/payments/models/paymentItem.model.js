@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 /**
  * payment_items — the admin-managed catalog of *what* a payer pays for

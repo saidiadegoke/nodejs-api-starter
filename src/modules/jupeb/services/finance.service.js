@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const registrationModel = require('../models/registration.model');
 const sessionModel = require('../models/session.model');
 const paymentModel = require('../../payments/models/payment.model');

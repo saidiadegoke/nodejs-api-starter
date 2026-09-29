@@ -1,5 +1,5 @@
 const sessionModel = require('../models/session.model');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const registrationService = require('./registration.service');
 const sessionContext = require('./session-context.service');
 const {

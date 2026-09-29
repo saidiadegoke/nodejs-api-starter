@@ -830,14 +830,17 @@ export class AuthService {
     userId: string,
     { templateFile = 'email-verification.html' }: { templateFile?: string } = {}
   ): Promise<{ token?: string }> {
-    const pool = require('../../../db/pool');
-    const rows = await pool.query(
+    const { AppDataSource } = require('../../../database/data-source');
+    if (!AppDataSource.isInitialized) {
+      await AppDataSource.initialize();
+    }
+    const rows = await AppDataSource.query(
       `SELECT u.id, u.email, u.email_verified, p.first_name
          FROM users u LEFT JOIN profiles p ON p.user_id = u.id
         WHERE u.id = $1 LIMIT 1`,
       [userId]
     );
-    const user = rows.rows[0];
+    const user = rows[0];
     if (!user) {
       const err: any = new HttpException('User not found', HttpStatus.NOT_FOUND);
       err.error_code = 'user_not_found';
@@ -858,7 +861,7 @@ export class AuthService {
     const tokenHash = AuthService._hashToken(rawToken);
     const expiresAt = new Date(Date.now() + AuthService._verificationTtlMs());
 
-    await pool.query(
+    await AppDataSource.query(
       `UPDATE users
           SET email_verification_token_hash = $1,
               email_verification_expires_at = $2,
@@ -915,15 +918,18 @@ export class AuthService {
     }
 
     const tokenHash = AuthService._hashToken(rawToken.trim());
-    const pool = require('../../../db/pool');
-    const rows = await pool.query(
+    const { AppDataSource } = require('../../../database/data-source');
+    if (!AppDataSource.isInitialized) {
+      await AppDataSource.initialize();
+    }
+    const rows = await AppDataSource.query(
       `SELECT id, email, email_verified, email_verification_expires_at
          FROM users
         WHERE email_verification_token_hash = $1
         LIMIT 1`,
       [tokenHash]
     );
-    const user = rows.rows[0];
+    const user = rows[0];
     if (!user) {
       const err: any = new HttpException('Invalid verification token', HttpStatus.BAD_REQUEST);
       err.error_code = 'invalid_token';
@@ -941,7 +947,7 @@ export class AuthService {
       throw err;
     }
 
-    await pool.query(
+    await AppDataSource.query(
       `UPDATE users
           SET email_verified = TRUE,
               email_verified_at = NOW(),

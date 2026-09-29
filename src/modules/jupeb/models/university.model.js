@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const { normalizeStatus } = require('../../../utils/utils/status');
 
 class UniversityModel {

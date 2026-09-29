@@ -1,5 +1,5 @@
 const axios = require('axios');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const registrationKpi = require('../services/registration-kpi.service');
 
 class RegistrationModel {

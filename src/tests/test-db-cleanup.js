@@ -3,7 +3,7 @@
  * Use this to clean up test database directly when API cleanup fails
  */
 
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 const cleanupTestDatabase = async () => {
   console.log('🗑️  Cleaning up test database...\n');

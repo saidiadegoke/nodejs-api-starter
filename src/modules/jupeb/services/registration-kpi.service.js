@@ -2,7 +2,7 @@
  * Shared registration KPI counts for institution overview stats and the
  * program dashboard stat-cards — single SQL definition to avoid drift.
  */
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 const PENDING_STATUSES = [
   'provisional',

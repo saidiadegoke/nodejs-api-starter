@@ -1,6 +1,6 @@
 const request = require('supertest');
 const { getAppUnderTest } = require('./helpers/app-under-test');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const {
   closeAllOpenJupebSessions,
   nextJupebTestPrefix,

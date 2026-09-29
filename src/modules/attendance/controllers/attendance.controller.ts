@@ -59,7 +59,7 @@ export class AttendanceController {
     return this.attendanceService.getTimetable(req.user?.user_id, query);
   }
 
-  @Post('check-in/:classId?')
+  @Post(['check-in', 'check-in/:classId'])
   @ApiOperation({ summary: 'Check in for class session' })
   async checkIn(
     @Param('classId') classId: string,
@@ -72,7 +72,7 @@ export class AttendanceController {
     return this.attendanceService.checkIn(req.user?.user_id, effectiveClassId, payload);
   }
 
-  @Post('check-out/:classId?')
+  @Post(['check-out', 'check-out/:classId'])
   @ApiOperation({ summary: 'Check out of class session' })
   async checkOut(
     @Param('classId') classId: string,

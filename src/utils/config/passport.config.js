@@ -9,7 +9,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const FacebookStrategy = require('passport-facebook').Strategy;
 const GitHubStrategy = require('passport-github2').Strategy;
 const TwitterStrategy = require('passport-twitter').Strategy;
-const pool = require('../../db/pool');
+const pool = require('../../database/pool');
 
 // Serialize user for session
 passport.serializeUser((user, done) => {

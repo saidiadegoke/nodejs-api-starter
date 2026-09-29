@@ -1,6 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const PaymentMethod = require('../models/paymentMethod.model');
 const PaymentService = require('./payment.service');
 const sendEmail = require('../../../utils/utils/sendEmail');

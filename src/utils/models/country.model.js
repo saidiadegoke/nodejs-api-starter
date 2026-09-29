@@ -4,7 +4,7 @@
  * Model for managing countries reference data
  */
 
-const pool = require('../../db/pool');
+const pool = require('../../database/pool');
 
 class CountryModel {
   /**

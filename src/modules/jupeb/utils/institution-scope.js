@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const { getUserRoles, hasPermission } = require('../../../utils/middleware/rbac.middleware');
 
 function httpError(status, message, details = null) {
