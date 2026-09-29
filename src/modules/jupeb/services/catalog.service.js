@@ -9,8 +9,8 @@ const subjectModel = require('../models/subject.model');
 const { cleanJupebPrefix, validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
-const crmsProviders = require('../../integrations/crms');
-const attendanceProviders = require('../../integrations/attendance');
+const crmsProviders = require('../../../integrations/crms');
+const attendanceProviders = require('../../../integrations/attendance');
 const { normalizeStatus } = require('../../../utils/utils/status');
 
 const NIGERIAN_STATES = [

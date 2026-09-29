@@ -8,16 +8,8 @@ import { DataSource } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
 import { StudentDashboardQueryDto, StudentHomeResponseDto } from '../dto';
 
-// Dynamic lazy imports for legacy attendance/crms integrations
-let attendanceProviders: any;
-let crmsProviders: any;
-try {
-  attendanceProviders = require('../../integrations/attendance');
-  crmsProviders = require('../../integrations/crms');
-} catch {
-  attendanceProviders = { get: () => ({}) };
-  crmsProviders = { get: () => ({}) };
-}
+import * as attendanceProviders from '../../../integrations/attendance';
+import * as crmsProviders from '../../../integrations/crms';
 
 @Injectable()
 export class StudentDashboardService {

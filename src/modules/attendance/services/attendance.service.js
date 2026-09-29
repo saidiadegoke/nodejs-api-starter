@@ -1,6 +1,6 @@
-const attendanceProviders = require('../../integrations/attendance');
-const crmsProviders = require('../../integrations/crms');
-const { resolveStudentContext } = require('../../integrations/student-context');
+const attendanceProviders = require('../../../integrations/attendance');
+const crmsProviders = require('../../../integrations/crms');
+const { resolveStudentContext } = require('../../../integrations/student-context');
 const NotificationModel = require('../../notifications/models/notification.model');
 
 function httpError(status, message, details = null) {

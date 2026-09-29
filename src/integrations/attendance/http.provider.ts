@@ -1,12 +1,10 @@
-const axios = require('axios');
-const { notConfigured, normalizeUpstreamError } = require('../errors');
+import axios, { AxiosInstance } from 'axios';
+import { notConfigured, normalizeUpstreamError } from '../errors';
 
-const name = 'http';
+export const name = 'http';
 
-/** @type {{ token: string } | null} */
-let tokenCache = null;
-/** @type {Promise<string> | null} */
-let tokenPromise = null;
+let tokenCache: { token: string } | null = null;
+let tokenPromise: Promise<string> | null = null;
 
 function getConfig() {
   return {
@@ -25,7 +23,7 @@ function assertConfigured() {
   return getConfig();
 }
 
-function authClient() {
+function authClient(): AxiosInstance {
   const { baseUrl, adminSecret, timeoutMs } = assertConfigured();
   return axios.create({
     baseURL: baseUrl,
@@ -38,12 +36,12 @@ function authClient() {
   });
 }
 
-function clearTokenCache() {
+export function clearTokenCache() {
   tokenCache = null;
   tokenPromise = null;
 }
 
-async function generateAccessToken() {
+export async function generateAccessToken(): Promise<string> {
   const { applicationName } = assertConfigured();
   const http = authClient();
   const res = await http.post('/api/auth/generate-token', { applicationName });
@@ -55,10 +53,10 @@ async function generateAccessToken() {
   return token;
 }
 
-async function refreshAccessToken() {
+export async function refreshAccessToken(): Promise<string> {
   const { applicationName } = assertConfigured();
   const http = authClient();
-  const body = { applicationName };
+  const body: any = { applicationName };
   if (tokenCache?.token) {
     body.token = tokenCache.token;
   }
@@ -75,7 +73,7 @@ async function refreshAccessToken() {
   return token;
 }
 
-async function ensureAccessToken({ forceRefresh = false } = {}) {
+export async function ensureAccessToken({ forceRefresh = false }: { forceRefresh?: boolean } = {}): Promise<string> {
   assertConfigured();
   if (!forceRefresh && tokenCache?.token) {
     return tokenCache.token;
@@ -102,13 +100,9 @@ async function ensureAccessToken({ forceRefresh = false } = {}) {
   return tokenPromise;
 }
 
-async function dataClient() {
+async function dataClient(): Promise<AxiosInstance> {
   const { baseUrl, applicationName, timeoutMs } = assertConfigured();
   const token = await ensureAccessToken();
-  console.info('token', token);
-  console.info('baseUrl', baseUrl);
-  console.info('applicationName', applicationName);
-  console.info('timeoutMs', timeoutMs);
   return axios.create({
     baseURL: baseUrl,
     timeout: timeoutMs,
@@ -121,32 +115,25 @@ async function dataClient() {
   });
 }
 
-function compactParams(obj = {}) {
+function compactParams(obj: Record<string, any> = {}): Record<string, any> {
   return Object.fromEntries(
-    Object.entries(obj).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    Object.entries(obj).filter(([, v]) => v !== undefined && v !== null && v !== ''),
   );
 }
 
 const IDENTITY_PARAM_KEYS = new Set(['student_id', 'registration_id', 'candidate_code']);
 
-/** Filters only — identity must come from buildUpstreamIdentity, never from callers. */
-function filterParams(params = {}) {
+function filterParams(params: Record<string, any> = {}): Record<string, any> {
   return compactParams(
-    Object.fromEntries(Object.entries(params).filter(([k]) => !IDENTITY_PARAM_KEYS.has(k)))
+    Object.fromEntries(Object.entries(params).filter(([k]) => !IDENTITY_PARAM_KEYS.has(k))),
   );
 }
 
-/**
- * Build upstream identity query params.
- * Attendance matches on candidate_code alone. Sending CRP registration UUIDs
- * alongside candidate_code makes upstream return 404 ("couldn't find a student").
- */
-function buildUpstreamIdentity(studentContext = {}) {
+export function buildUpstreamIdentity(studentContext: Record<string, any> = {}): Record<string, any> {
   const candidateCode = studentContext.candidate_code;
   if (candidateCode) {
     return compactParams({
       candidate_code: candidateCode,
-      // Only when the client explicitly overrode these for attendance.
       student_id: studentContext.explicit_student_id,
       registration_id: studentContext.explicit_registration_id,
     });
@@ -158,7 +145,7 @@ function buildUpstreamIdentity(studentContext = {}) {
   });
 }
 
-async function request(method, path, { params, data, studentContext } = {}, { retried = false } = {}) {
+async function request(method: string, path: string, { params, data, studentContext }: { params?: any; data?: any; studentContext?: any } = {}, { retried = false } = {}): Promise<any> {
   try {
     const http = await dataClient();
     const cleaned = {
@@ -172,8 +159,8 @@ async function request(method, path, { params, data, studentContext } = {}, { re
       data,
     });
     return res.data?.data !== undefined ? res.data.data : res.data;
-  } catch (err) {
-    if (err.details?.error_code === 'provider_not_configured') throw err;
+  } catch (err: any) {
+    if (err?.details?.error_code === 'provider_not_configured') throw err;
 
     if (!retried && err?.response?.status === 401) {
       await ensureAccessToken({ forceRefresh: true });
@@ -184,29 +171,23 @@ async function request(method, path, { params, data, studentContext } = {}, { re
   }
 }
 
-async function getHomeSummary(studentContext, filters = {}) {
-  console.info('studentContext', studentContext);
-  console.info('filters', filters);
+export async function getHomeSummary(studentContext: any, filters = {}) {
   return request('GET', '/api/students/me/home', { studentContext, params: filters });
 }
 
-async function getSummary(studentContext, filters = {}) {
-  console.info('studentContext', studentContext);
-  console.info('filters', filters);
+export async function getSummary(studentContext: any, filters = {}) {
   return request('GET', '/api/students/me/summary', { studentContext, params: filters });
 }
 
-async function getClasses(studentContext, filters = {}) {
-  console.info('studentContext', studentContext);
-  console.info('filters', filters);
+export async function getClasses(studentContext: any, filters = {}) {
   return request('GET', '/api/students/me/classes', { studentContext, params: filters });
 }
 
-async function getHistory(studentContext, filters = {}) {
+export async function getHistory(studentContext: any, filters = {}) {
   return request('GET', '/api/students/me/history', { studentContext, params: filters });
 }
 
-async function getCourseSessions(studentContext, courseCode, filters = {}) {
+export async function getCourseSessions(studentContext: any, courseCode: string, filters = {}) {
   const encoded = encodeURIComponent(courseCode);
   return request('GET', `/api/students/me/classes/${encoded}/sessions`, {
     studentContext,
@@ -214,18 +195,18 @@ async function getCourseSessions(studentContext, courseCode, filters = {}) {
   });
 }
 
-async function getCourses(studentContext, filters = {}) {
+export async function getCourses(studentContext: any, filters = {}) {
   return request('GET', `/api/students/me/courses`, {
     studentContext,
     params: filters,
   });
 }
 
-async function getTimetable(studentContext, filters = {}) {
+export async function getTimetable(studentContext: any, filters = {}) {
   return request('GET', '/api/students/me/timetable', { studentContext, params: filters });
 }
 
-async function checkIn(studentContext, classId, payload = {}) {
+export async function checkIn(studentContext: any, classId: string, payload: any = {}) {
   const data = {
     student_id: studentContext?.student_id || payload.student_id,
     registration_id: studentContext?.attendance_registration_code || payload.registration_id,
@@ -248,7 +229,7 @@ async function checkIn(studentContext, classId, payload = {}) {
   });
 }
 
-async function checkOut(studentContext, classId, payload = {}) {
+export async function checkOut(studentContext: any, classId: string, payload: any = {}) {
   const data = {
     student_id: studentContext?.student_id || payload.student_id,
     registration_id: studentContext?.attendance_registration_code || payload.registration_id,
@@ -271,48 +252,19 @@ async function checkOut(studentContext, classId, payload = {}) {
   });
 }
 
-async function syncStudents(payload) {
+export async function syncStudents(payload: any) {
   try {
-    console.info('payload', payload);
-    return request('POST', '/api/auth/sync-students', { data: payload });
-  } catch (error) {
-    console.log('payload', payload);
-    console.log('error', error.response.data);
-    console.error('Error syncing students:', error);
+    return await request('POST', '/api/auth/sync-students', { data: payload });
+  } catch (error: any) {
     throw error;
   }
 }
 
-async function syncInstitutions(payload) {
+export async function syncInstitutions(payload: any) {
   try {
     const data = Array.isArray(payload) ? { institutions: payload } : payload;
-    console.info('[AttendanceSync] syncInstitutions payload', data);
-    return request('POST', '/api/auth/sync-institutions', { data });
-  } catch (error) {
-    console.error('[AttendanceSync] Error syncing institutions:', error.message || error);
-    if (error.response && error.response.data) {
-      console.error('[AttendanceSync] Provider response error body:', error.response.data);
-    }
+    return await request('POST', '/api/auth/sync-institutions', { data });
+  } catch (error: any) {
     throw error;
   }
 }
-
-module.exports = {
-  name,
-  getHomeSummary,
-  getSummary,
-  getClasses,
-  getHistory,
-  getCourseSessions,
-  getCourses,
-  getTimetable,
-  checkIn,
-  checkOut,
-  syncStudents,
-  syncInstitutions,
-  // Test helpers
-  _clearTokenCache: clearTokenCache,
-  _getTokenCache: () => tokenCache,
-  _buildUpstreamIdentity: buildUpstreamIdentity,
-};
-

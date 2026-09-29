@@ -28,8 +28,8 @@ const jupebMailer = require('./jupeb-mailer.service');
 const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
-const attendanceProviders = require('../../integrations/attendance');
-const crmsProviders = require('../../integrations/crms');
+const attendanceProviders = require('../../../integrations/attendance');
+const crmsProviders = require('../../../integrations/crms');
 
 function httpError(status, message, details = null) {
   const err = new Error(message);

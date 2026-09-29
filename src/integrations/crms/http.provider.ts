@@ -1,7 +1,7 @@
-const axios = require('axios');
-const { notConfigured, normalizeUpstreamError } = require('../errors');
+import axios, { AxiosInstance } from 'axios';
+import { notConfigured, normalizeUpstreamError } from '../errors';
 
-const name = 'http';
+export const name = 'http';
 
 function getConfig() {
   return {
@@ -11,7 +11,7 @@ function getConfig() {
   };
 }
 
-function client() {
+function client(): AxiosInstance {
   const { baseUrl, apiKey, timeoutMs } = getConfig();
   if (!baseUrl || !apiKey) {
     throw notConfigured('crms');
@@ -28,10 +28,10 @@ function client() {
   });
 }
 
-async function request(method, path, { params, data, studentContext } = {}) {
+async function request(method: string, path: string, { params, data, studentContext }: { params?: any; data?: any; studentContext?: any } = {}): Promise<any> {
   try {
     const http = client();
-    const config = {
+    const config: any = {
       method,
       url: path,
       data,
@@ -49,24 +49,24 @@ async function request(method, path, { params, data, studentContext } = {}) {
     const res = await http.request(config);
     if (!res || !res.data) return null;
     return res.data?.data !== undefined ? res.data.data : res.data;
-  } catch (err) {
-    if (err.details?.error_code === 'provider_not_configured') throw err;
+  } catch (err: any) {
+    if (err?.details?.error_code === 'provider_not_configured') throw err;
     throw normalizeUpstreamError('crms', err);
   }
 }
 
-async function getCourses(studentContext) {
+export async function getCourses(studentContext: any) {
   return request('GET', '/v1/students/me/courses', { studentContext });
 }
 
-async function getResults(studentContext) {
+export async function getResults(studentContext: any) {
   try {
     return await request('GET', '/v1/students/me/results', { studentContext });
-  } catch (err) {
+  } catch (err: any) {
     if (err?.details?.upstream_status === 404 || err?.statusCode === 404 || err?.status === 404) {
       try {
         return await request('GET', '/api/students/me/results', { studentContext });
-      } catch (fallbackErr) {
+      } catch (fallbackErr: any) {
         if (fallbackErr?.details?.upstream_status === 404 || fallbackErr?.statusCode === 404 || fallbackErr?.status === 404) {
           return await request('GET', '/students/me/results', { studentContext });
         }
@@ -77,23 +77,14 @@ async function getResults(studentContext) {
   }
 }
 
-async function getHomeSummary(studentContext) {
+export async function getHomeSummary(studentContext: any) {
   return request('GET', '/v1/students/me/home-summary', { studentContext });
 }
 
-async function syncCandidates(payload) {
+export async function syncCandidates(payload: any) {
   return request('POST', '/api/candidates/sync', { data: payload });
 }
 
-async function syncInstitutions(payload) {
+export async function syncInstitutions(payload: any) {
   return request('POST', '/api/institutions/sync', { data: payload });
 }
-
-module.exports = {
-  name,
-  getCourses,
-  getResults,
-  getHomeSummary,
-  syncCandidates,
-  syncInstitutions,
-};

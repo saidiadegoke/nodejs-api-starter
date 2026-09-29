@@ -33,6 +33,9 @@ import { FilesModule } from './modules/files';
 import { NotificationsModule } from './modules/notifications';
 import { SupportModule } from './modules/support';
 import { MailModule } from './modules/mail';
+import { AttendanceModule } from './modules/attendance';
+import { CrmsModule } from './modules/crms';
+import { OcrModule } from './modules/ocr';
 
 @Module({
   imports: [
@@ -63,6 +66,9 @@ import { MailModule } from './modules/mail';
     NotificationsModule,
     SupportModule,
     MailModule,
+    AttendanceModule,
+    CrmsModule,
+    OcrModule,
   ],
   controllers: [AppController],
   providers: [

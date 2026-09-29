@@ -1,5 +1,5 @@
-const attendanceProviders = require('../modules/integrations/attendance');
-const httpProvider = require('../modules/integrations/attendance/http.provider');
+const attendanceProviders = require('../integrations/attendance');
+const httpProvider = require('../integrations/attendance/http.provider');
 const AttendanceService = require('../modules/attendance/services/attendance.service');
 const catalogService = require('../modules/jupeb/services/catalog.service');
 const axios = require('axios');

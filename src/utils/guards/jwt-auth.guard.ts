@@ -4,10 +4,12 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
 import { Request } from 'express';
 import { AllConfigType } from '../../config/config.type';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 export interface AuthenticatedUser {
   user_id: string;
@@ -18,9 +20,20 @@ export interface AuthenticatedUser {
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly configService: ConfigService<AllConfigType>) {}
+  constructor(
+    private readonly configService: ConfigService<AllConfigType>,
+    private readonly reflector: Reflector,
+  ) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest<Request & { user?: AuthenticatedUser }>();
     const authHeader = request.headers.authorization;
 

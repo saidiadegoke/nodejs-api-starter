@@ -1,5 +1,5 @@
-const crmsProviders = require('../../integrations/crms');
-const { resolveStudentContext } = require('../../integrations/student-context');
+const crmsProviders = require('../../../integrations/crms');
+const { resolveStudentContext } = require('../../../integrations/student-context');
 const resultsReleaseService = require('../../jupeb/services/results-release.service');
 
 class CrmsService {

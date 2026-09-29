@@ -49,7 +49,7 @@ export async function runMigrations(): Promise<{ executed: number; total: number
     console.log(`📊 Found ${executedMigrations.size} previously executed migration(s)\n`);
 
     // Get all migration files from src/db/migrations (existing 37 migrations untouched)
-    const migrationsPath = path.join(__dirname, '../db/migrations');
+    const migrationsPath = path.join(__dirname, 'migrations');
     const files = fs
       .readdirSync(migrationsPath)
       .filter((file) => file.endsWith('.sql'))

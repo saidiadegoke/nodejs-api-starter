@@ -1,5 +1,5 @@
-const crmsProviders = require('../modules/integrations/crms');
-const httpProvider = require('../modules/integrations/crms/http.provider');
+const crmsProviders = require('../integrations/crms');
+const httpProvider = require('../integrations/crms/http.provider');
 const CrmsService = require('../modules/crms/services/crms.service');
 const catalogService = require('../modules/jupeb/services/catalog.service');
 const registrationService = require('../modules/jupeb/services/registration.service');

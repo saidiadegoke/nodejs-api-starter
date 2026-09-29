@@ -1,30 +1,28 @@
-// Attendance provider registry.
-// Set ATTENDANCE_PROVIDER=http (default: http).
+import * as http from './http.provider';
 
-const http = require('./http.provider');
-
-const PROVIDERS = {
+const PROVIDERS: Record<string, typeof http> = {
   [http.name]: http,
 };
 
 const DEFAULT_PROVIDER = 'http';
 
-function list() {
+export function list(): string[] {
   return Object.keys(PROVIDERS);
 }
 
-function resolveName() {
+export function resolveName(): string {
   const raw = process.env.ATTENDANCE_PROVIDER;
   const name = (raw || DEFAULT_PROVIDER).toLowerCase();
   return PROVIDERS[name] ? name : DEFAULT_PROVIDER;
 }
 
-function get(name) {
-  const provider = PROVIDERS[name || resolveName()];
+export function get(name?: string): typeof http {
+  const providerName = name || resolveName();
+  const provider = PROVIDERS[providerName];
   if (!provider) {
     throw new Error(`Unknown attendance provider: ${name}`);
   }
   return provider;
 }
 
-module.exports = { list, get, resolveName, DEFAULT_PROVIDER };
+export { http };
