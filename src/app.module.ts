@@ -32,6 +32,7 @@ import { AdminModule } from './modules/admin';
 import { FilesModule } from './modules/files';
 import { NotificationsModule } from './modules/notifications';
 import { SupportModule } from './modules/support';
+import { MailModule } from './modules/mail';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { SupportModule } from './modules/support';
     FilesModule,
     NotificationsModule,
     SupportModule,
+    MailModule,
   ],
   controllers: [AppController],
   providers: [

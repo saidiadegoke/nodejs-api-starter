@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DataSource } from 'typeorm';
 import { AuthRepository } from '../repositories/auth.repository';
 import { UserSessionRepository } from '../repositories/user-session.repository';
-import { jwtSecret, jwtExpiresIn } from '../../../config/env.config';
+import { jwtConfig } from '../../../config/jwt.config';
 
 const sendEmail = require('../../../utils/utils/sendEmail');
 const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
@@ -30,10 +30,13 @@ export class AuthService {
     let phoneCode = '+234'; // Default to Nigeria
     if (countryId) {
       try {
-        const pool = require('../../../db/pool');
-        const rows = await pool.query(`SELECT phone_code FROM countries WHERE id = $1 LIMIT 1`, [countryId]);
-        if (rows.rows[0]?.phone_code) {
-          phoneCode = rows.rows[0].phone_code;
+        const { AppDataSource } = require('../../../database/data-source');
+        if (!AppDataSource.isInitialized) {
+          await AppDataSource.initialize();
+        }
+        const rows = await AppDataSource.query(`SELECT phone_code FROM countries WHERE id = $1 LIMIT 1`, [countryId]);
+        if (rows[0]?.phone_code) {
+          phoneCode = rows[0].phone_code;
         }
       } catch {
         // fallback
@@ -720,14 +723,15 @@ export class AuthService {
   }
 
   static generateAccessToken(userId: string, roles: any[] = []): string {
+    const config = (jwtConfig as any)();
     return jwt.sign(
       {
         user_id: userId,
         roles: this.rolesClaimForToken(roles),
         type: 'access',
       },
-      jwtSecret,
-      { expiresIn: jwtExpiresIn }
+      config.secret,
+      { expiresIn: config.expiresIn as jwt.SignOptions['expiresIn'] }
     );
   }
 
@@ -736,17 +740,15 @@ export class AuthService {
   }
 
   static generateRefreshToken(userId: string): string {
-    const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || jwtSecret;
-    const JWT_REFRESH_EXPIRES = (process.env.JWT_REFRESH_EXPIRES_IN || '30d') as jwt.SignOptions['expiresIn'];
-
+    const config = (jwtConfig as any)();
     return jwt.sign(
       {
         user_id: userId,
         type: 'refresh',
         session_id: uuidv4(),
       },
-      JWT_REFRESH_SECRET,
-      { expiresIn: JWT_REFRESH_EXPIRES }
+      config.refreshSecret,
+      { expiresIn: config.refreshExpiresIn as jwt.SignOptions['expiresIn'] }
     );
   }
 
@@ -756,7 +758,8 @@ export class AuthService {
 
   static verifyAccessToken(token: string): any {
     try {
-      return jwt.verify(token, jwtSecret);
+      const config = (jwtConfig as any)();
+      return jwt.verify(token, config.secret);
     } catch {
       throw new HttpException('Invalid or expired token', HttpStatus.UNAUTHORIZED);
     }
@@ -768,8 +771,8 @@ export class AuthService {
 
   async refreshToken(refreshToken: string): Promise<any> {
     try {
-      const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || jwtSecret;
-      const payload: any = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+      const config = (jwtConfig as any)();
+      const payload: any = jwt.verify(refreshToken, config.refreshSecret);
 
       if (payload.type !== 'refresh') {
         throw new HttpException('Invalid token type', HttpStatus.UNAUTHORIZED);
