@@ -70,30 +70,7 @@ class AuthModel {
   }
 
   /**
-   * Find a user by any of the supported login identifiers:
-   *   - email                                          (case-insensitive)
-   *   - phone
-   *   - jupeb_registrations.provisional_candidate_code (interim reg no.)
-   *   - jupeb_registrations.jupeb_candidate_number     (final matric no.)
-   *
-   * Lockdown rule: once a user has been assigned a `jupeb_candidate_number`
-   * on any of their registrations, that matric becomes the ONLY identifier
-   * that resolves to them. Email, phone, and provisional reg-codes stop
-   * working — login attempts via those return the same "no such user"
-   * response as a wrong identifier. This mirrors how real Nigerian
-   * institutions hand off from interim portals to matric-only access.
-   *
-   * Re-entry exception: a student who already has a matric (from a prior
-   * session) needs email / phone / code login to claim a NEW session's
-   * code. We detect re-entry as "the user has an in-progress registration
-   * without a matric yet" — i.e. some row with
-   * `jupeb_candidate_number IS NULL` and a non-terminal status. While
-   * such a row exists, the lockdown is released and any identifier
-   * (including the prior matric) resolves the user.
-   *
-   * The JUPEB join is wrapped in a fallback so this still works in
-   * environments where `jupeb_registrations` hasn't been migrated (e.g.
-   * unit-test setup running against an empty DB).
+   * Find a user by any of the supported login identifiers
    */
   static async findByIdentifier(identifier) {
     if (identifier === undefined || identifier === null || identifier === '') return undefined;
@@ -123,9 +100,6 @@ class AuthModel {
       if (result.rows[0]) return result.rows[0];
       return undefined;
     } catch (err) {
-      // Fall back to the original email/phone-only query when the JUPEB
-      // tables aren't present (e.g. fresh schema without migration 002).
-      // `42P01` = undefined table.
       if (err && err.code === '42P01') {
         const result = await pool.query(
           `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
@@ -214,4 +188,3 @@ class AuthModel {
 }
 
 module.exports = AuthModel;
-

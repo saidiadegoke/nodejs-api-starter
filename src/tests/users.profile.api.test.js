@@ -1,11 +1,16 @@
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
-const app = require('../app');
+const { getAppUnderTest } = require('./helpers/app-under-test');
 const pool = require('../db/pool');
 
 describe('Users profile API', () => {
+  let app;
   const password = 'Profile@12';
   const passwordHash = bcrypt.hashSync(password, 10);
+
+  beforeAll(async () => {
+    app = await getAppUnderTest();
+  });
 
   async function createUser(email) {
     const phone = `+2348${String(Date.now()).slice(-9)}`;

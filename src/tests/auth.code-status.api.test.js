@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../app');
+const { getAppUnderTest } = require('./helpers/app-under-test');
 const pool = require('../db/pool');
 const {
   closeAllOpenJupebSessions,
@@ -9,9 +9,11 @@ const {
 } = require('./jupeb-session-test-helpers');
 
 describe('GET /auth/code-status (M.9 — public, no auth)', () => {
+  let app;
   let registrationMigrated = false;
 
   beforeAll(async () => {
+    app = await getAppUnderTest();
     try {
       await pool.query('SELECT 1 FROM jupeb_registrations LIMIT 1');
       registrationMigrated = true;
@@ -39,6 +41,7 @@ describe('GET /auth/code-status (M.9 — public, no auth)', () => {
           name: `${tag} CodeStatus University`,
           short_name: `${tag}CSU`,
           jupeb_prefix: nextJupebTestPrefix(),
+          email: `codestatus-${tag.toLowerCase()}-${Date.now()}-${i}@example.com`,
         });
       if (uniRes.status === 201) break;
     }
@@ -57,15 +60,15 @@ describe('GET /auth/code-status (M.9 — public, no auth)', () => {
     }
     let sessRes;
     for (let i = 0; i < 5; i += 1) {
-      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      const { academicYear, yearShort } = nextJupebAcademicSession();
       sessRes = await request(app)
         .post('/sessions')
         .set('Authorization', `Bearer ${token}`)
         .send({
           academic_year: academicYear,
           year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00.000Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00.000Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
         });
       if (sessRes.status === 201) break;
     }

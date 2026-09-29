@@ -1,0 +1,5 @@
+node_modules/
+dist/
+coverage/
+src/infra/bullmq/
+src/infra/redis/

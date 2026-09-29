@@ -1,4 +1,5 @@
 // Test setup and global configuration
+require('reflect-metadata');
 const path = require('path');
 const fs = require('fs');
 

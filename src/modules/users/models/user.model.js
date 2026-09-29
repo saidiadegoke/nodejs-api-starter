@@ -1,358 +1,199 @@
 const pool = require('../../../db/pool');
-const bcrypt = require('bcryptjs');
-const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
-const { normalizeStatus } = require('../../../shared/utils/status');
 
-const USER_LIST_COLUMNS = `
-    u.id,
-    u.email,
-    u.phone,
-    u.status,
-    u.email_verified,
-    u.phone_verified,
-    u.last_login_at,
-    u.created_at,
-    u.updated_at,
-    p.first_name,
-    p.last_name,
-    p.display_name,
-    p.jupeb_university_id,
-    ju.code AS jupeb_university_code,
-    ju.short_name AS jupeb_university_short_name,
-    ju.name AS jupeb_university_name,
-    COALESCE(
-      (
-        SELECT array_agg(r.name ORDER BY r.name)
-        FROM user_roles ur
-        JOIN roles r ON ur.role_id = r.id
-        WHERE ur.user_id = u.id
-          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-      ),
-      ARRAY[]::text[]
-    ) AS roles`;
-
-const USER_LIST_FROM = `
-  FROM users u
-  LEFT JOIN profiles p ON u.id = p.user_id
-  LEFT JOIN jupeb_universities ju ON p.jupeb_university_id = ju.id AND ju.deleted_at IS NULL`;
-
-const USER_LIST_SELECT = `
-  SELECT
-    ${USER_LIST_COLUMNS}
-  ${USER_LIST_FROM}
-`;
-
-class User {
-  static _buildListFilters({
-    q = null,
-    universityId = null,
-    excludeGlobalRoleNames = [],
-    excludeRoleNames = [],
-    excludeInstitutionRoles = false,
-    role = null,
-  } = {}) {
-    const values = [];
-    const conditions = ['u.deleted_at IS NULL'];
-    let idx = 1;
-    if (q) {
-      const pattern = `%${q}%`;
-      conditions.push(`(
-        u.email ILIKE $${idx}
-        OR p.first_name ILIKE $${idx}
-        OR p.last_name ILIKE $${idx}
-        OR p.display_name ILIKE $${idx}
-      )`);
-      values.push(pattern);
-      idx += 1;
-    }
-    if (universityId) {
-      conditions.push(`p.jupeb_university_id = $${idx}`);
-      values.push(universityId);
-      idx += 1;
-    }
-    if (role) {
-      conditions.push(`EXISTS (
-        SELECT 1
-          FROM user_roles ur_r
-          JOIN roles r_r ON ur_r.role_id = r_r.id
-         WHERE ur_r.user_id = u.id
-           AND r_r.name = $${idx}
-           AND (ur_r.expires_at IS NULL OR ur_r.expires_at > NOW())
-      )`);
-      values.push(role);
-      idx += 1;
-    }
-    if (excludeGlobalRoleNames && excludeGlobalRoleNames.length) {
-      conditions.push(`NOT EXISTS (
-        SELECT 1
-          FROM user_roles ur_ex
-          JOIN roles r_ex ON ur_ex.role_id = r_ex.id
-         WHERE ur_ex.user_id = u.id
-           AND r_ex.owner_jupeb_university_id IS NULL
-           AND r_ex.name = ANY($${idx}::text[])
-           AND (ur_ex.expires_at IS NULL OR ur_ex.expires_at > NOW())
-      )`);
-      values.push(excludeGlobalRoleNames);
-      idx += 1;
-    }
-    if (excludeRoleNames && excludeRoleNames.length) {
-      conditions.push(`NOT EXISTS (
-        SELECT 1
-          FROM user_roles ur_ex2
-          JOIN roles r_ex2 ON ur_ex2.role_id = r_ex2.id
-         WHERE ur_ex2.user_id = u.id
-           AND r_ex2.name = ANY($${idx}::text[])
-           AND (ur_ex2.expires_at IS NULL OR ur_ex2.expires_at > NOW())
-      )`);
-      values.push(excludeRoleNames);
-      idx += 1;
-    }
-    if (excludeInstitutionRoles) {
-      conditions.push(`NOT EXISTS (
-        SELECT 1
-          FROM user_roles ur_inst
-          JOIN roles r_inst ON ur_inst.role_id = r_inst.id
-         WHERE ur_inst.user_id = u.id
-           AND r_inst.owner_jupeb_university_id IS NOT NULL
-           AND (ur_inst.expires_at IS NULL OR ur_inst.expires_at > NOW())
-      )`);
-    }
-    return { whereSql: conditions.join(' AND '), values, nextIdx: idx };
-  }
-
-  /**
-   * Paginated user list with total count in a single query.
-   */
-  static async findAllPaginated({
-    limit,
-    offset,
-    q = null,
-    universityId = null,
-    excludeGlobalRoleNames = [],
-    excludeRoleNames = [],
-    excludeInstitutionRoles = false,
-    role = null,
-  }) {
-    const { whereSql, values, nextIdx } = User._buildListFilters({
-      q,
-      universityId,
-      excludeGlobalRoleNames,
-      excludeRoleNames,
-      excludeInstitutionRoles,
-      role,
-    });
-    const limitIdx = nextIdx;
-    const offsetIdx = nextIdx + 1;
-    values.push(limit, offset);
-    const result = await pool.query(
-      `SELECT
-        ${USER_LIST_COLUMNS},
-        COUNT(*) OVER()::int AS _total
-       ${USER_LIST_FROM}
-       WHERE ${whereSql}
-       ORDER BY u.created_at DESC
-       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-      values
-    );
-    const total = result.rows.length ? result.rows[0]._total : 0;
-    const rows = result.rows.map(({ _total, ...row }) => row);
-    return { rows, total };
-  }
-
-  /**
-   * Find all users (non-deleted) with profile and role names
-   */
-  static async findAll(
-    limit = 10,
-    offset = 0,
-    q = null,
-    universityId = null,
-    excludeGlobalRoleNames = [],
-    excludeRoleNames = [],
-    excludeInstitutionRoles = false,
-    role = null
-  ) {
-    const { rows } = await User.findAllPaginated({
-      limit,
-      offset,
-      q,
-      universityId,
-      excludeGlobalRoleNames,
-      excludeRoleNames,
-      excludeInstitutionRoles,
-      role,
-    });
-    return rows;
-  }
-
-  /**
-   * Count total non-deleted users
-   */
-  static async count(
-    q = null,
-    universityId = null,
-    excludeGlobalRoleNames = [],
-    excludeRoleNames = [],
-    excludeInstitutionRoles = false,
-    role = null
-  ) {
-    const { whereSql, values } = User._buildListFilters({
-      q,
-      universityId,
-      excludeGlobalRoleNames,
-      excludeRoleNames,
-      excludeInstitutionRoles,
-      role,
-    });
-    const result = await pool.query(
-      `SELECT COUNT(*)::int AS c
-         FROM users u
-         LEFT JOIN profiles p ON u.id = p.user_id
-        WHERE ${whereSql}`,
-      values
-    );
-    return result.rows[0].c;
-  }
-
-  /**
-   * Find user by ID with profile and roles
-   */
+class UserModel {
   static async findById(id) {
     const result = await pool.query(
-      `${USER_LIST_SELECT}
-       WHERE u.id = $1 AND u.deleted_at IS NULL`,
+      `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url,
+              p.bio, p.date_of_birth, p.gender, p.address, p.position, p.professional_title,
+              p.country_id, p.state_id, p.city_id
+         FROM users u
+         LEFT JOIN profiles p ON u.id = p.user_id
+        WHERE u.id = $1 AND u.deleted_at IS NULL`,
       [id]
     );
     return result.rows[0];
   }
 
-  /**
-   * Find user by email
-   */
   static async findByEmail(email) {
     const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL',
+      `SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`,
       [email]
     );
     return result.rows[0];
   }
 
-  /**
-   * Create new user
-   */
-  static async create(userData) {
-    const {
-      email,
-      username,
-      password_hash,
-      full_name,
-      phone,
-      role,
-      password,
-    } = userData;
-    if (!role) {
-      throw new Error('Role is required');
-    }
-    const resolvedPasswordHash = password_hash || (password ? await bcrypt.hash(password, 10) : null);
+  static async findByPhone(phone) {
     const result = await pool.query(
-      'INSERT INTO users (email, username, password_hash, full_name, phone, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, username, full_name, phone, role, created_at',
-      [email, username, resolvedPasswordHash, full_name, phone, role]
+      `SELECT * FROM users WHERE phone = $1 AND deleted_at IS NULL`,
+      [phone]
     );
-    const user = result.rows[0];
-    if (email && password) {
-      setImmediate(() => {
-        jupebMailer.sendUserCredentials({
-          email: user.email,
-          password,
-          firstName: full_name ? String(full_name).trim().split(/\s+/)[0] : 'User',
-          role,
-        });
-      });
-    }
-    return user;
+    return result.rows[0];
   }
 
-  /**
-   * Update user fields across users + profiles tables, then return
-   * the full enriched user object via USER_LIST_SELECT.
-   */
-  static async update(id, userData) {
+  static async find(options = {}) {
+    const { page = 1, limit = 20, search = '', role, status, sortBy = 'created_at', sortOrder = 'DESC' } = options;
+    const offset = (page - 1) * limit;
+    const conditions = ['u.deleted_at IS NULL'];
+    const values = [];
+    let idx = 1;
+
+    if (search) {
+      conditions.push(`(
+        u.email ILIKE $${idx} OR 
+        u.phone ILIKE $${idx} OR 
+        p.first_name ILIKE $${idx} OR 
+        p.last_name ILIKE $${idx} OR 
+        p.display_name ILIKE $${idx}
+      )`);
+      values.push(`%${search}%`);
+      idx++;
+    }
+
+    if (status) {
+      conditions.push(`u.status = $${idx}`);
+      values.push(status);
+      idx++;
+    }
+
+    if (role) {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id = u.id AND r.name = $${idx}
+      )`);
+      values.push(role);
+      idx++;
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const safeSort = ['created_at', 'email', 'status'].includes(sortBy) ? sortBy : 'created_at';
+    const safeOrder = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    const sql = `
+      SELECT u.id, u.email, u.phone, u.status, u.email_verified, u.phone_verified,
+             u.created_at, u.updated_at, u.last_login_at,
+             p.first_name, p.last_name, p.display_name, p.profile_photo_url,
+             p.position, p.professional_title,
+             COALESCE(
+               json_agg(DISTINCT jsonb_build_object('id', r.id, 'name', r.name, 'display_name', r.display_name))
+               FILTER (WHERE r.id IS NOT NULL), '[]'
+             ) as roles
+      FROM users u
+      LEFT JOIN profiles p ON u.id = p.user_id
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON ur.role_id = r.id
+      ${whereClause}
+      GROUP BY u.id, p.id
+      ORDER BY u.${safeSort} ${safeOrder}
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `;
+    values.push(limit, offset);
+
+    const result = await pool.query(sql, values);
+    return result.rows;
+  }
+
+  static async count(options = {}) {
+    const { search = '', role, status } = options;
+    const conditions = ['u.deleted_at IS NULL'];
+    const values = [];
+    let idx = 1;
+
+    if (search) {
+      conditions.push(`(
+        u.email ILIKE $${idx} OR 
+        u.phone ILIKE $${idx} OR 
+        p.first_name ILIKE $${idx} OR 
+        p.last_name ILIKE $${idx} OR 
+        p.display_name ILIKE $${idx}
+      )`);
+      values.push(`%${search}%`);
+      idx++;
+    }
+
+    if (status) {
+      conditions.push(`u.status = $${idx}`);
+      values.push(status);
+      idx++;
+    }
+
+    if (role) {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id = u.id AND r.name = $${idx}
+      )`);
+      values.push(role);
+      idx++;
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sql = `
+      SELECT COUNT(DISTINCT u.id)::int as total
+      FROM users u
+      LEFT JOIN profiles p ON u.id = p.user_id
+      ${whereClause}
+    `;
+
+    const result = await pool.query(sql, values);
+    return result.rows[0].total;
+  }
+
+  static async update(id, data) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const { email, phone, status, first_name, last_name, display_name, position, professional_title } = data;
 
-      const userFields = {};
-      if (userData.email !== undefined) userFields.email = userData.email;
-      if (userData.phone !== undefined) userFields.phone = userData.phone;
-      if (userData.status !== undefined) {
-        const norm = normalizeStatus(userData.status);
-        userFields.status = norm !== null && norm !== undefined ? norm : userData.status;
-      } else if (userData.is_active !== undefined) {
-        userFields.status = userData.is_active ? 'active' : 'inactive';
-      }
+      if (email !== undefined || phone !== undefined || status !== undefined) {
+        const userUpdates = [];
+        const userValues = [id];
+        let idx = 2;
+        if (email !== undefined) { userUpdates.push(`email = $${idx++}`); userValues.push(email); }
+        if (phone !== undefined) { userUpdates.push(`phone = $${idx++}`); userValues.push(phone); }
+        if (status !== undefined) { userUpdates.push(`status = $${idx++}`); userValues.push(status); }
+        userUpdates.push(`updated_at = NOW()`);
 
-      if (Object.keys(userFields).length) {
-        const sets = [];
-        const vals = [];
-        let i = 1;
-        for (const [k, v] of Object.entries(userFields)) {
-          sets.push(`${k} = $${i++}`);
-          vals.push(v);
-        }
-        sets.push('updated_at = CURRENT_TIMESTAMP');
-        vals.push(id);
         await client.query(
-          `UPDATE users SET ${sets.join(', ')} WHERE id = $${i} AND deleted_at IS NULL`,
-          vals
+          `UPDATE users SET ${userUpdates.join(', ')} WHERE id = $1`,
+          userValues
         );
       }
 
-      const profileFields = {};
-      if (userData.first_name !== undefined) profileFields.first_name = userData.first_name;
-      if (userData.last_name !== undefined) profileFields.last_name = userData.last_name;
-      if (userData.display_name !== undefined) profileFields.display_name = userData.display_name;
+      if (first_name !== undefined || last_name !== undefined || display_name !== undefined || position !== undefined || professional_title !== undefined) {
+        const profileUpdates = [];
+        const profileValues = [id];
+        let idx = 2;
+        if (first_name !== undefined) { profileUpdates.push(`first_name = $${idx++}`); profileValues.push(first_name); }
+        if (last_name !== undefined) { profileUpdates.push(`last_name = $${idx++}`); profileValues.push(last_name); }
+        if (display_name !== undefined) { profileUpdates.push(`display_name = $${idx++}`); profileValues.push(display_name); }
+        if (position !== undefined) { profileUpdates.push(`position = $${idx++}`); profileValues.push(position); }
+        if (professional_title !== undefined) { profileUpdates.push(`professional_title = $${idx++}`); profileValues.push(professional_title); }
+        profileUpdates.push(`updated_at = NOW()`);
 
-      if (Object.keys(profileFields).length) {
-        const sets = [];
-        const vals = [];
-        let i = 1;
-        for (const [k, v] of Object.entries(profileFields)) {
-          sets.push(`${k} = $${i++}`);
-          vals.push(v);
-        }
-        sets.push('updated_at = CURRENT_TIMESTAMP');
-        vals.push(id);
         await client.query(
-          `UPDATE profiles SET ${sets.join(', ')} WHERE user_id = $${i}`,
-          vals
+          `UPDATE profiles SET ${profileUpdates.join(', ')} WHERE user_id = $1`,
+          profileValues
         );
       }
 
       await client.query('COMMIT');
-
-      const result = await pool.query(
-        `${USER_LIST_SELECT} WHERE u.id = $1 AND u.deleted_at IS NULL`,
-        [id]
-      );
-      return result.rows[0];
-    } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
-      throw e;
+      return await UserModel.findById(id);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
     } finally {
       client.release();
     }
   }
 
-  /**
-   * Delete user
-   */
   static async delete(id) {
-    const result = await pool.query(
-      'UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+    await pool.query(
+      `UPDATE users SET deleted_at = NOW(), status = 'deleted', updated_at = NOW() WHERE id = $1`,
       [id]
     );
-    return result.rows[0];
+    return true;
   }
 }
 
-module.exports = User;
+module.exports = UserModel;

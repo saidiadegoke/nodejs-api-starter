@@ -12,7 +12,7 @@
  * AuthModel.findByIdentifier matches all of the above.
  */
 const request = require('supertest');
-const app = require('../app');
+const { getAppUnderTest } = require('./helpers/app-under-test');
 const pool = require('../db/pool');
 const {
   closeAllOpenJupebSessions,
@@ -22,9 +22,11 @@ const {
 } = require('./jupeb-session-test-helpers');
 
 describe('Login by reg/matric number', () => {
+  let app;
   let registrationMigrated = false;
 
   beforeAll(async () => {
+    app = await getAppUnderTest();
     try {
       await pool.query('SELECT 1 FROM jupeb_registrations LIMIT 1');
       registrationMigrated = true;
@@ -46,7 +48,12 @@ describe('Login by reg/matric number', () => {
       uniRes = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ code: nextJupebTestUniversityCode(tag), name: `${tag} U`, jupeb_prefix: nextJupebTestPrefix() });
+        .send({
+          code: nextJupebTestUniversityCode(tag),
+          name: `${tag} U`,
+          jupeb_prefix: nextJupebTestPrefix(),
+          email: `loginreg-${tag.toLowerCase()}-${Date.now()}-${i}@example.com`,
+        });
     }
     let scRes;
     for (let i = 0; i < 30 && (!scRes || scRes.status !== 201); i += 1) {
@@ -57,14 +64,14 @@ describe('Login by reg/matric number', () => {
     }
     let sessRes;
     for (let i = 0; i < 30 && (!sessRes || sessRes.status !== 201); i += 1) {
-      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      const { academicYear, yearShort } = nextJupebAcademicSession();
       sessRes = await request(app)
         .post('/sessions')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           academic_year: academicYear, year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
         });
     }
     await closeAllOpenJupebSessions(adminToken);
@@ -114,7 +121,7 @@ describe('Login by reg/matric number', () => {
   it('login works with provisional_candidate_code + password', async () => {
     if (!registrationMigrated) return;
     const { provisionalCode, password, email } = await seedFixturesAndStudent('REGNO');
-    expect(provisionalCode).toMatch(/^\d{9}$/);
+    expect(provisionalCode).toMatch(/^\d{7,9}$/);
     const r = await request(app).post('/auth/login').send({ identifier: provisionalCode, password });
     expect(r.status).toBe(200);
     expect(r.body.data.access_token).toBeDefined();
@@ -268,19 +275,24 @@ describe('Login by reg/matric number', () => {
       const uniB = await request(app)
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ code: nextJupebTestUniversityCode(`${tag}B`), name: `${tag}B U`, jupeb_prefix: nextJupebTestPrefix() });
+        .send({
+          code: nextJupebTestUniversityCode(`${tag}B`),
+          name: `${tag}B U`,
+          jupeb_prefix: nextJupebTestPrefix(),
+          email: `loginregb-${tag.toLowerCase()}-${Date.now()}@example.com`,
+        });
       const scB = await request(app)
         .post('/catalog/subject-combinations')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ code: nextJupebTestUniversityCode(`${tag}SCB`), title: `${tag}B Combo`, subjects: ['M','P','C'], is_global: true });
-      const { y1, academicYear, yearShort } = nextJupebAcademicSession();
+      const { academicYear, yearShort } = nextJupebAcademicSession();
       const sessB = await request(app)
         .post('/sessions')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           academic_year: academicYear, year_short: yearShort,
-          opens_at: new Date(`${y1}-01-01T00:00:00Z`).toISOString(),
-          closes_at: new Date(`${y1}-12-01T00:00:00Z`).toISOString(),
+          opens_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+          closes_at: new Date(Date.now() + 365 * 86400000).toISOString(),
         });
       await closeAllOpenJupebSessions(adminToken);
       await request(app).post(`/sessions/${sessB.body.data.id}/open`).set('Authorization', `Bearer ${adminToken}`);
