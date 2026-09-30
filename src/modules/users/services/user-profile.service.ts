@@ -53,6 +53,7 @@ export class UserProfileService {
     );
     const roles = rolesRes.map((r: any) => r.name);
     user.roles = roles;
+    user.permissions = await this.getMyPermissions(userId);
 
     return withPersonalInfoFields(user, roles);
   }

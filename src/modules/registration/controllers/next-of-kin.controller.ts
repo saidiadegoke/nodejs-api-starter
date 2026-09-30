@@ -22,7 +22,7 @@ import { JwtAuthGuard, PermissionsGuard } from '../../../utils';
 @ApiTags('Next of Kin')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
-@Controller('me/next-of-kin')
+@Controller(['registration/me/next-of-kin', 'jupeb/registration/me/next-of-kin', 'me/next-of-kin'])
 export class NextOfKinController {
   constructor(private readonly nokService: NextOfKinService) {}
 

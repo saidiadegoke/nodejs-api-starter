@@ -45,7 +45,7 @@ import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../util
 @ApiTags('Registrations & Candidates')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
-@Controller()
+@Controller(['registration', 'jupeb/registration'])
 export class RegistrationController {
   constructor(
     private readonly registrationService: RegistrationService,

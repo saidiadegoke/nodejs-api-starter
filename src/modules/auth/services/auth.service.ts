@@ -639,13 +639,7 @@ export class AuthService {
       // jupeb absent
     }
 
-    let permissions: string[] = [];
-    try {
-      const { getUserPermissions } = require('../../../shared/middleware/rbac.middleware');
-      permissions = await getUserPermissions(user.id);
-    } catch {
-      // fallback
-    }
+    const permissions = await this.getUserPermissions(user.id);
 
     return {
       access_token: accessToken,
@@ -798,6 +792,36 @@ export class AuthService {
       await this.sessionRepo.revokeSession(sessionId);
     }
     return true;
+  }
+
+  async getUserPermissions(userId: string): Promise<string[]> {
+    try {
+      const res = await this.dataSource.query(
+        `SELECT DISTINCT p.name FROM (
+          SELECT p.id, p.name FROM user_permissions up
+          JOIN permissions p ON up.permission_id = p.id
+          WHERE up.user_id = $1 AND up.granted = true
+          AND (up.expires_at IS NULL OR up.expires_at > NOW())
+          UNION
+          SELECT p.id, p.name FROM user_roles ur
+          JOIN role_permissions rp ON ur.role_id = rp.role_id
+          JOIN permissions p ON rp.permission_id = p.id
+          WHERE ur.user_id = $1
+          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+          AND NOT EXISTS (
+            SELECT 1 FROM user_permissions up2
+            WHERE up2.user_id = $1 
+            AND up2.permission_id = p.id
+            AND up2.granted = false
+          )
+        ) p
+        ORDER BY p.name ASC`,
+        [userId],
+      );
+      return res.map((r: any) => r.name);
+    } catch {
+      return [];
+    }
   }
 
   static _verificationTtlMs(): number {
