@@ -1,6 +1,6 @@
 const StudentDashboardService = require('../services/student-dashboard.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { OK, INTERNAL_SERVER_ERROR } = require('../../../utils/constants/statusCodes');
 
 function statusOf(err) {
   return err.status || err.statusCode || INTERNAL_SERVER_ERROR;

@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const AdminAuditService = require('../modules/admin/services/adminAudit.service');
 const { buildCatalogUniversityPayload } = require('./jupeb-session-test-helpers');
 

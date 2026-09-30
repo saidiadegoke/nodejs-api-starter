@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 const RETURNING_COLUMNS = `
   id, nin_hash, nin_last4, provider, provider_reference, idempotency_key, status,

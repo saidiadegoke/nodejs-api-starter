@@ -1,8 +1,13 @@
 // Auth Module Unit Tests using Supertest
 const request = require('supertest');
-const app = require('../app');
+const { getAppUnderTest } = require('./helpers/app-under-test');
 
 describe('Auth API Tests', () => {
+  let app;
+  beforeAll(async () => {
+    app = await getAppUnderTest();
+  });
+
   const testUser = {
     phone: `+234${Math.floor(8000000000 + Math.random() * 1000000000)}`,
     email: `test${Date.now()}@example.com`,

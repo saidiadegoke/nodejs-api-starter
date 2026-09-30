@@ -1,6 +1,6 @@
 const institutionUserScopeService = require('../services/institution-user-scope.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, INTERNAL_SERVER_ERROR, UNPROCESSABLE_ENTITY } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { OK, INTERNAL_SERVER_ERROR, UNPROCESSABLE_ENTITY } = require('../../../utils/constants/statusCodes');
 
 class InstitutionScopeController {
   /** PATCH body: { jupeb_university_id: uuid | null } */

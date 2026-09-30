@@ -2,7 +2,7 @@ const request = require('supertest');
 const fs = require('fs');
 const path = require('path');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const AuthService = require('../modules/auth/services/auth.service');
 
 describe('Support API Module', () => {

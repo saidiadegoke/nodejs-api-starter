@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const paymentController = require('../controllers/payment.controller');
 const validationMiddleware = require('../middleware/validation.middleware');
-const { authenticate } = require('../../../shared/middleware/authenticate.middleware');
-const { optionalAuth } = require('../../../shared/middleware/optional-auth.middleware');
-const { requirePermission } = require('../../../shared/middleware/rbac.middleware');
-const { uploadSingle } = require('../../../shared/middleware/upload.middleware');
+const { authenticate } = require('../../../utils/middleware/authenticate.middleware');
+const { optionalAuth } = require('../../../utils/middleware/optional-auth.middleware');
+const { requirePermission } = require('../../../utils/middleware/rbac.middleware');
+const { uploadSingle } = require('../../../utils/middleware/upload.middleware');
 
 router.post(
   '/create',

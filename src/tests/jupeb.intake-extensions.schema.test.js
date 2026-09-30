@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('migration 011 — intake extensions', () => {
   let baseMigrated = false;

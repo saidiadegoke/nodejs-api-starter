@@ -1,6 +1,6 @@
 const request = require('supertest');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('biometric skip', () => {
   let migrated = false;

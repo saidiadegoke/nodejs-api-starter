@@ -1,5 +1,5 @@
 const nextOfKinService = require('../services/next-of-kin.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
 
 function handle(res, fn) {
   return Promise.resolve()

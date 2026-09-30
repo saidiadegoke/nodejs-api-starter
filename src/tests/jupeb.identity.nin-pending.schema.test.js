@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('migration 010 — NIN pending columns', () => {
   let baseMigrated = false;

@@ -1,8 +1,8 @@
 const router = require('express').Router();
 const WebhookController = require('./controllers/webhook.controller');
 const { body, param } = require('express-validator');
-const { validate } = require('../../shared/validations/validator');
-const { requireAuth } = require('../../shared/middleware/rbac.middleware');
+const { validate } = require('../../utils/validations/validator');
+const { requireAuth } = require('../../utils/middleware/rbac.middleware');
 
 /** GET /webhooks — list your webhooks */
 router.get('/', requireAuth, WebhookController.list);

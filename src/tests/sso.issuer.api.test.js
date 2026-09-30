@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const { generateKeyPair, exportPKCS8, exportJWK, decodeJwt, decodeProtectedHeader } = require('jose');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const { nextJupebTestPrefix } = require('./jupeb-session-test-helpers');
 const { resetPrivateKeyCacheForTests } = require('../modules/auth/services/sso-token.service');
 const { buildHandoffClaims } = require('../modules/auth/services/sso-token.service');

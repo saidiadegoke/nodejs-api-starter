@@ -1,6 +1,6 @@
 const WebhookService = require('../services/webhook.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { OK, CREATED, BAD_REQUEST, NOT_FOUND } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { OK, CREATED, BAD_REQUEST, NOT_FOUND } = require('../../../utils/constants/statusCodes');
 
 class WebhookController {
   static async list(req, res) {

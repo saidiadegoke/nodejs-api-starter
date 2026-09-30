@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { requireAuth, requireRole } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requireRole } = require('../../../utils/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
 const ResultsReleaseController = require('../controllers/results-release.controller');
 const StudentDashboardController = require('../controllers/student-dashboard.controller');

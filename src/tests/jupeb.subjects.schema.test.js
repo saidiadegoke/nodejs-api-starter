@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('migration 013 — jupeb_subjects table', () => {
   let dbReady = false;

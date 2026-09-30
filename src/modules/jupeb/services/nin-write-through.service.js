@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const nextOfKinModel = require('../models/next-of-kin.model');
 
 /**

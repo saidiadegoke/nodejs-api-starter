@@ -1,7 +1,7 @@
 // Webhooks module tests using Supertest
 const request = require('supertest');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('Webhooks API Tests', () => {
   let token;

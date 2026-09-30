@@ -1,4 +1,5 @@
 // Test setup and global configuration
+require('reflect-metadata');
 const path = require('path');
 const fs = require('fs');
 
@@ -53,7 +54,7 @@ beforeAll(async () => {
   // 409 tests with bounded retry loops. Best-effort: silently no-ops on a
   // fresh DB or when the table hasn't been migrated yet.
   try {
-    const pool = require('../db/pool');
+    const pool = require('../database/pool');
     const { warmJupebPrefixCache } = require('./jupeb-session-test-helpers');
     await warmJupebPrefixCache(pool);
   } catch { /* ignore */ }
@@ -62,7 +63,7 @@ beforeAll(async () => {
 // Global afterAll
 afterAll(async () => {
   try {
-    const pool = require('../db/pool');
+    const pool = require('../database/pool');
     const { cleanupTestCatalogArtifacts } = require('./jupeb-session-test-helpers');
     await cleanupTestCatalogArtifacts(pool);
   } catch { /* ignore */ }

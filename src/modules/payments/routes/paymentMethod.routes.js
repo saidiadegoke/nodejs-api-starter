@@ -2,8 +2,8 @@ const express = require('express');
 const router = express.Router();
 const PaymentMethod = require('../models/paymentMethod.model');
 const validationMiddleware = require('../middleware/validation.middleware');
-const { authenticate } = require('../../../shared/middleware/authenticate.middleware');
-const { requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { authenticate } = require('../../../utils/middleware/authenticate.middleware');
+const { requirePermission } = require('../../../utils/middleware/rbac.middleware');
 
 router.get(
   '/admin/all',

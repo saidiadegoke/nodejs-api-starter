@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 const PENDING_PAYMENT_STATUSES = [
   'pending',

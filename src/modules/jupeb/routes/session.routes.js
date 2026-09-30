@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../utils/middleware/rbac.middleware');
 const SessionController = require('../controllers/session.controller');
 
 const sessionRead = [requireAuth];

@@ -1,8 +1,8 @@
 const registrationService = require('../services/registration.service');
 const bulkRegistrationService = require('../services/bulk-registration.service');
 const AdminAuditService = require('../../admin/services/adminAudit.service');
-const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
-const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError, sendPaginated } = require('../../../utils/utils/response');
+const { CREATED, INTERNAL_SERVER_ERROR } = require('../../../utils/constants/statusCodes');
 
 function summarizeFailures(items = []) {
   const byCode = items.reduce((acc, f) => {

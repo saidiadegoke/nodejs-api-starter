@@ -1,7 +1,7 @@
 const request = require('supertest');
 const XLSX = require('xlsx');
 const app = require('../app');
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const {
   closeAllOpenJupebSessions,
   nextJupebTestUniversityCode,

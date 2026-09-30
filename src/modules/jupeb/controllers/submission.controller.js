@@ -1,7 +1,7 @@
 const submissionService = require('../services/submission.service');
 const AdminAuditService = require('../../admin/services/adminAudit.service');
-const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
-const { CREATED, INTERNAL_SERVER_ERROR, CONFLICT } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError, sendPaginated } = require('../../../utils/utils/response');
+const { CREATED, INTERNAL_SERVER_ERROR, CONFLICT } = require('../../../utils/constants/statusCodes');
 
 class SubmissionController {
   static async listRequirementsAdmin(req, res) {

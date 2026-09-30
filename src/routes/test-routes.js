@@ -17,8 +17,8 @@ const {
   requireOwnerOrAdmin,
   getUserRoles,
   getUserPermissions
-} = require('../shared/middleware/rbac.middleware');
-const { sendSuccess } = require('../shared/utils/response');
+} = require('../utils/middleware/rbac.middleware');
+const { sendSuccess } = require('../utils/utils/response');
 
 /** Current user's roles */
 router.get('/users/me/roles', requireAuth, async (req, res) => {
@@ -44,7 +44,7 @@ router.get('/users/me/permissions', requireAuth, async (req, res) => {
 router.post('/users/me/check-permission', requireAuth, async (req, res) => {
   try {
     const { permission } = req.body;
-    const { hasPermission } = require('../shared/middleware/rbac.middleware');
+    const { hasPermission } = require('../utils/middleware/rbac.middleware');
     const has = await hasPermission(req.user.user_id, permission);
     sendSuccess(res, { permission, has_permission: has }, 'Permission check completed');
   } catch (error) {

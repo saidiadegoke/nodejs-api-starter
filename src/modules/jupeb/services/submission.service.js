@@ -1,8 +1,8 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const documentRequirementModel = require('../models/document-requirement.model');
 const registrationDocumentModel = require('../models/registration-document.model');
 const registrationModel = require('../models/registration.model');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { getUserRoles } = require('../../../utils/middleware/rbac.middleware');
 const { mimeAllowed, sizeAllowed } = require('../utils/submission-validation');
 
 function httpError(status, message) {

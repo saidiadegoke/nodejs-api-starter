@@ -5,15 +5,9 @@ const YAML = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
 
-const authRoutes = require('../modules/auth/routes');
-const users = require('../modules/users/routes');
-const filesRoutes = require('../modules/files/routes');
-const notificationsRoutes = require('../modules/notifications/routes');
 const sharedRoutes = require('../modules/shared/routes');
 const websocketRoutes = require('../modules/websocket/routes');
 const assetsRoutes = require('../modules/assets/routes');
-const adminRoutes = require('../modules/admin/routes');
-const apiKeysRoutes = require('../modules/api-keys/routes');
 const webhooksRoutes = require('../modules/webhooks/routes');
 const paymentsRoutes = require('../modules/payments/routes');
 const postsRoutes = require('../modules/posts/routes');
@@ -21,10 +15,6 @@ const jupebRoutes = require('../modules/jupeb/routes');
 const ocrRoutes = require('../modules/ocr/routes');
 const attendanceRoutes = require('../modules/attendance/routes');
 const crmsRoutes = require('../modules/crms/routes');
-const supportRoutes = require('../modules/support/routes/support.routes');
-const auditRoutes = require('../modules/admin/audit.routes');
-const ssoRoutes = require('../modules/auth/routes/sso.routes');
-const wellKnownRoutes = require('../modules/auth/routes/well-known.routes');
 const testRoutes = require('./test-routes');
 
 /**
@@ -122,25 +112,15 @@ router.get('/', (req, res) => {
  * e.g. `/catalog`, `/registration` — they must be registered before `/admin` so `PATCH /admin/users/.../jupeb-university` is handled here.
  */
 router.use('/', jupebRoutes);
-router.use('/', wellKnownRoutes);
-router.use('/sso', ssoRoutes);
-router.use('/auth', authRoutes);
-router.use('/users', users);
-router.use('/files', filesRoutes);
-router.use('/notifications', notificationsRoutes);
 router.use('/attendance', attendanceRoutes);
 router.use('/crms', crmsRoutes);
 router.use('/shared', sharedRoutes);
 router.use('/websocket', websocketRoutes);
 router.use('/assets', assetsRoutes);
-router.use('/audit', auditRoutes);
-router.use('/admin', adminRoutes);
-router.use('/api-keys', apiKeysRoutes);
 router.use('/webhooks', webhooksRoutes);
 router.use('/payments', paymentsRoutes);
 router.use('/posts', postsRoutes);
 router.use('/ocr', ocrRoutes);
-router.use('/support', supportRoutes);
 
 /**
  * Swagger API Documentation

@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 class RegistrationResultModel {
   async upsertRow({ registration_id, course_id, grade, plus_one_awarded, entered_by }) {

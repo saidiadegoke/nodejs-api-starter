@@ -1,4 +1,4 @@
-const { normalizeStatus } = require('../shared/utils/status');
+const { normalizeStatus } = require('../utils/utils/status');
 const catalogService = require('../modules/jupeb/services/catalog.service');
 const universityModel = require('../modules/jupeb/models/university.model');
 const UserService = require('../modules/users/services/user.service');

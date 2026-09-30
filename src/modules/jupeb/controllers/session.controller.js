@@ -1,13 +1,13 @@
 const sessionService = require('../services/session.service');
 const sessionContext = require('../services/session-context.service');
 const AdminAuditService = require('../../admin/services/adminAudit.service');
-const { sendSuccess, sendError, sendPaginated } = require('../../../shared/utils/response');
+const { sendSuccess, sendError, sendPaginated } = require('../../../utils/utils/response');
 const {
   CREATED,
   NOT_FOUND,
   CONFLICT,
   INTERNAL_SERVER_ERROR,
-} = require('../../../shared/constants/statusCodes');
+} = require('../../../utils/constants/statusCodes');
 
 class SessionController {
   static async exportCsv(req, res) {

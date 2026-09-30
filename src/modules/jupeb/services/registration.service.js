@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const registrationModel = require('../models/registration.model');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const universityModel = require('../models/university.model');
@@ -17,7 +17,7 @@ const {
   formatProvisionalCandidateCode,
   makeInstitutionCode,
 } = require('../utils/registration-numbering');
-const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
+const { hasPermission } = require('../../../utils/middleware/rbac.middleware');
 const {
   assertInstitutionUniversityAccess,
   effectiveInstitutionListUniversityId,
@@ -28,8 +28,8 @@ const jupebMailer = require('./jupeb-mailer.service');
 const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const submissionService = require('./submission.service');
-const attendanceProviders = require('../../integrations/attendance');
-const crmsProviders = require('../../integrations/crms');
+const attendanceProviders = require('../../../integrations/attendance');
+const crmsProviders = require('../../../integrations/crms');
 
 function httpError(status, message, details = null) {
   const err = new Error(message);

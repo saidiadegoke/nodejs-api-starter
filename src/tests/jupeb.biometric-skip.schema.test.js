@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 
 describe('migration 012 — biometric skip schema', () => {
   let baseMigrated = false;
