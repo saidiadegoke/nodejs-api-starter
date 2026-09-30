@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { RegistrationStatus } from '../../../shared/enums';
+import { SessionStatus } from '../../sessions/entities/academic-session.entity';
 
-export const PENDING_STATUSES = [
-  'provisional',
-  'code_issued',
-  'claimed',
-  'pending_student_confirm',
-  'pending_documents',
-  'pending_institution_review',
+export const PENDING_STATUSES: RegistrationStatus[] = [
+  RegistrationStatus.PROVISIONAL,
+  RegistrationStatus.CODE_ISSUED,
+  RegistrationStatus.CLAIMED,
+  RegistrationStatus.PENDING_STUDENT_CONFIRM,
+  RegistrationStatus.PENDING_DOCUMENTS,
+  RegistrationStatus.PENDING_INSTITUTION_REVIEW,
 ];
 
 export function deltaPct(current: number, previous?: number | null): number | null {
@@ -49,23 +51,23 @@ export class RegistrationKpiService {
     const sql = `
       SELECT
         COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE r.status = 'approved')::int AS approved,
+        COUNT(*) FILTER (WHERE r.status = '${RegistrationStatus.APPROVED}')::int AS approved,
         COUNT(*) FILTER (WHERE r.status = ANY($${pendingIdx}::text[]))::int AS pending,
-        COUNT(*) FILTER (WHERE r.status = 'rejected')::int AS rejected,
+        COUNT(*) FILTER (WHERE r.status = '${RegistrationStatus.REJECTED}')::int AS rejected,
         COUNT(*) FILTER (
-          WHERE r.status <> 'withdrawn' AND EXISTS (
+          WHERE r.status <> '${RegistrationStatus.WITHDRAWN}' AND EXISTS (
             SELECT 1 FROM jupeb_biometric_captures bc
             WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
           )
         )::int AS biometric,
         COUNT(*) FILTER (
-          WHERE r.status <> 'withdrawn' AND NOT EXISTS (
+          WHERE r.status <> '${RegistrationStatus.WITHDRAWN}' AND NOT EXISTS (
             SELECT 1 FROM jupeb_biometric_captures bc
             WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
           )
         )::int AS without_biometric,
         COUNT(DISTINCT CASE
-          WHEN r.status <> 'withdrawn' AND r.subject_combination_id IS NOT NULL
+          WHEN r.status <> '${RegistrationStatus.WITHDRAWN}' AND r.subject_combination_id IS NOT NULL
           THEN r.subject_combination_id
         END)::int AS total_subject_combinations
       FROM jupeb_registrations r
@@ -92,7 +94,7 @@ export class RegistrationKpiService {
       return r[0] || null;
     }
     const open = await this.dataSource.query(
-      `SELECT * FROM jupeb_registration_sessions WHERE status = 'open' ORDER BY opens_at DESC LIMIT 1`,
+      `SELECT * FROM jupeb_registration_sessions WHERE status = '${SessionStatus.OPEN}' ORDER BY opens_at DESC LIMIT 1`,
     );
     if (open[0]) return open[0];
     const fallback = await this.dataSource.query(

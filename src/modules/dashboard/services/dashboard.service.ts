@@ -22,16 +22,18 @@ import {
   MetricValueDto,
 } from '../dto';
 
+import { RegistrationStatus } from '../../../shared/enums';
+
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const PENDING_STATUSES = [
-  'provisional',
-  'code_issued',
-  'claimed',
-  'pending_student_confirm',
-  'pending_documents',
-  'pending_institution_review',
+  RegistrationStatus.PROVISIONAL,
+  RegistrationStatus.CODE_ISSUED,
+  RegistrationStatus.CLAIMED,
+  RegistrationStatus.PENDING_STUDENT_CONFIRM,
+  RegistrationStatus.PENDING_DOCUMENTS,
+  RegistrationStatus.PENDING_INSTITUTION_REVIEW,
 ];
 
 function isUuid(value: any): boolean {

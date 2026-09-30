@@ -6,6 +6,7 @@ import {
   RegistrationStatusHistoryEntity,
   NextOfKinEntity,
 } from './entities';
+import { NinVerificationEntity } from '../identity/entities/nin-verification.entity';
 import {
   RegistrationRepository,
   RegistrationDocumentRepository,
@@ -32,6 +33,7 @@ import { SyncModule } from '../sync';
       RegistrationDocumentEntity,
       RegistrationStatusHistoryEntity,
       NextOfKinEntity,
+      NinVerificationEntity,
     ]),
     SyncModule,
   ],

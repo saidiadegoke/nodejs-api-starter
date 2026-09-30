@@ -7,6 +7,7 @@ import { DataSource } from 'typeorm';
 import { AuthRepository } from '../repositories/auth.repository';
 import { UserSessionRepository } from '../repositories/user-session.repository';
 import { jwtConfig } from '../../../config/jwt.config';
+import { RegistrationStatus, RegistrationNextStep } from '../../../shared/enums';
 
 const sendEmail = require('../../../utils/utils/sendEmail');
 const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
@@ -151,7 +152,7 @@ export class AuthService {
       throw err;
     }
 
-    if (reg.status !== 'code_issued' || reg.user_id) {
+    if (reg.status !== RegistrationStatus.CODE_ISSUED || reg.user_id) {
       const err: any = new HttpException('This code is no longer available', HttpStatus.CONFLICT);
       err.error_code = reg.user_id ? 'code_already_claimed' : 'code_unavailable';
       throw err;
@@ -318,7 +319,7 @@ export class AuthService {
         err.details = { expires_at: reg.institution_code_expires_at };
         throw err;
       }
-      if (reg.status !== 'code_issued' || reg.user_id) {
+      if (reg.status !== RegistrationStatus.CODE_ISSUED || reg.user_id) {
         await queryRunner.rollbackTransaction();
         const err: any = new HttpException('This code is no longer available', HttpStatus.CONFLICT);
         err.error_code = reg.user_id ? 'code_already_claimed' : 'code_unavailable';
@@ -526,7 +527,7 @@ export class AuthService {
           provisional_candidate_code: reg.provisional_candidate_code,
           jupeb_candidate_number: reg.jupeb_candidate_number,
           claimed_at: new Date(),
-          next_step: 'confirm_subjects',
+          next_step: RegistrationNextStep.CONFIRM_SUBJECTS,
         },
       };
     } catch (err) {
@@ -585,7 +586,7 @@ export class AuthService {
         const r = regRes[0];
         let docsStats: any = null;
         let bioStats: any = null;
-        if (r.status === 'pending_documents') {
+        if (r.status === RegistrationStatus.PENDING_DOCUMENTS) {
           const [docsRes, bioRes, reqRes] = await Promise.all([
             this.dataSource.query(
               `SELECT COUNT(*)::int AS uploaded
@@ -665,38 +666,45 @@ export class AuthService {
     };
   }
 
-  static _computeNextStep(reg: any, docs: any = null, bio: any = null): string | null {
-    const status = reg && reg.status;
+  static _computeNextStep(
+    reg: any,
+    docs: any = null,
+    bio: any = null,
+  ): RegistrationNextStep | null {
+    const status = reg && (reg.status as RegistrationStatus);
     switch (status) {
-      case 'code_issued':
-        return 'claim_code';
-      case 'claimed':
-        return 'confirm_subjects';
-      case 'pending_student_confirm':
-        return 'confirm_subjects';
-      case 'pending_documents': {
+      case RegistrationStatus.CODE_ISSUED:
+        return RegistrationNextStep.CLAIM_CODE;
+      case RegistrationStatus.CLAIMED:
+      case RegistrationStatus.PENDING_STUDENT_CONFIRM:
+        return RegistrationNextStep.CONFIRM_SUBJECTS;
+      case RegistrationStatus.PENDING_DOCUMENTS: {
         if (docs !== null && bio !== null) {
           const docsComplete = docs.required === 0 || docs.uploaded >= docs.required;
           const bioComplete = bio.captured > 0;
-          if (docsComplete && bioComplete) return 'submit_for_review';
-          if (docsComplete) return 'upload_biometrics';
+          if (docsComplete && bioComplete) return RegistrationNextStep.SUBMIT_FOR_REVIEW;
+          if (docsComplete) return RegistrationNextStep.UPLOAD_BIOMETRICS;
         }
-        return 'upload_documents';
+        return RegistrationNextStep.UPLOAD_DOCUMENTS;
       }
-      case 'pending_institution_review':
-        return 'await_review';
-      case 'approved':
-        return 'view_dashboard';
-      case 'rejected':
-        return 'view_rejection';
-      case 'withdrawn':
-        return 'restart';
+      case RegistrationStatus.PENDING_INSTITUTION_REVIEW:
+        return RegistrationNextStep.AWAIT_REVIEW;
+      case RegistrationStatus.APPROVED:
+        return RegistrationNextStep.VIEW_DASHBOARD;
+      case RegistrationStatus.REJECTED:
+        return RegistrationNextStep.VIEW_REJECTION;
+      case RegistrationStatus.WITHDRAWN:
+        return RegistrationNextStep.RESTART;
       default:
         return null;
     }
   }
 
-  _computeNextStep(reg: any, docs: any = null, bio: any = null): string | null {
+  _computeNextStep(
+    reg: any,
+    docs: any = null,
+    bio: any = null,
+  ): RegistrationNextStep | null {
     return AuthService._computeNextStep(reg, docs, bio);
   }
 

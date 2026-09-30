@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { RegistrationNextStep } from '../../../shared/enums';
 
 export class AuthUserDto {
   @ApiProperty({ example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479', description: 'User unique UUID' })
@@ -63,8 +64,12 @@ export class AuthRegistrationDto {
   @ApiProperty({ example: false, description: 'Whether dashboard access is unlocked' })
   dashboard_unlocked!: boolean;
 
-  @ApiPropertyOptional({ example: 'confirm_subjects', description: 'Computed next wizard step' })
-  next_step?: string | null;
+  @ApiPropertyOptional({
+    enum: RegistrationNextStep,
+    example: RegistrationNextStep.CONFIRM_SUBJECTS,
+    description: 'Computed next wizard step',
+  })
+  next_step?: RegistrationNextStep | null;
 }
 
 export class LoginResponseDto {

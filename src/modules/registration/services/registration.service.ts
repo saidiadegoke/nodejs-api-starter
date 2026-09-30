@@ -14,6 +14,7 @@ import { RegistrationKpiService } from './registration-kpi.service';
 import { RegistrationEventsService } from './registration-events.service';
 import { RegistrationFormPdfService } from './registration-form-pdf.service';
 import { RegistrationEntity, RegistrationStatus } from '../entities/registration.entity';
+import { SessionStatus } from '../../sessions/entities/academic-session.entity';
 import {
   CreateRegistrationDto,
   PatchRegistrationDto,
@@ -281,7 +282,7 @@ export class RegistrationService {
     const rows = await this.dataSource.query(
       `SELECT u.id AS university_id, u.name AS university_name, u.code AS university_code,
               COUNT(r.id)::int AS total_candidates,
-              COUNT(CASE WHEN r.status = 'approved' THEN 1 END)::int AS approved_candidates
+              COUNT(CASE WHEN r.status = '${RegistrationStatus.APPROVED}' THEN 1 END)::int AS approved_candidates
        FROM jupeb_universities u
        LEFT JOIN jupeb_registrations r ON r.university_id = u.id ${sessionClause}
        WHERE u.deleted_at IS NULL
@@ -457,7 +458,7 @@ export class RegistrationService {
        FROM jupeb_registrations r
        JOIN jupeb_universities u ON u.id = r.university_id
        JOIN jupeb_registration_sessions s ON s.id = r.session_id
-       WHERE r.session_id = $1 AND r.status = 'approved' AND r.jupeb_candidate_number IS NULL`,
+       WHERE r.session_id = $1 AND r.status = '${RegistrationStatus.APPROVED}' AND r.jupeb_candidate_number IS NULL`,
       [sessionId],
     );
 
@@ -486,7 +487,7 @@ export class RegistrationService {
        FROM jupeb_registrations r
        JOIN jupeb_universities u ON u.id = r.university_id
        JOIN jupeb_registration_sessions s ON s.id = r.session_id
-       WHERE r.session_id = $1 AND r.status = 'approved' AND r.jupeb_candidate_number IS NULL`,
+       WHERE r.session_id = $1 AND r.status = '${RegistrationStatus.APPROVED}' AND r.jupeb_candidate_number IS NULL`,
       [sessionId],
     );
 
@@ -510,7 +511,7 @@ export class RegistrationService {
    */
   async finalizeAllClosedSessions(userId?: string | null) {
     const closedSessions = await this.dataSource.query(
-      `SELECT id FROM jupeb_registration_sessions WHERE status = 'closed'`,
+      `SELECT id FROM jupeb_registration_sessions WHERE status = '${SessionStatus.CLOSED}'`,
     );
 
     let total = 0;
