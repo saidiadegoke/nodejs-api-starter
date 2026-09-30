@@ -697,10 +697,14 @@ export class RegistrationService {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
-    const updated = await this.regRepo.updateById(reg.id, {
-      subjectCombinationId: dto.subject_combination_id,
+    const updatePayload: any = {
       status: RegistrationStatus.PENDING_DOCUMENTS,
-    });
+    };
+    if (dto?.subject_combination_id) {
+      updatePayload.subjectCombinationId = dto.subject_combination_id;
+    }
+
+    const updated = await this.regRepo.updateById(reg.id, updatePayload);
 
     await this.historyRepo.create({
       registrationId: reg.id,

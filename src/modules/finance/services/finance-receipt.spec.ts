@@ -1,0 +1,179 @@
+import { FinanceService } from './finance.service';
+import { UploadPaymentReceiptDto, ConfirmPaymentDto } from '../dto';
+import {
+  Currency,
+  PaymentMethod,
+  PaymentStatus,
+  PaymentType,
+} from '../../../shared/enums';
+
+describe('FinanceService - Receipt Upload and Confirmation', () => {
+  let service: FinanceService;
+  let mockPaymentRepo: any;
+  let mockReconRepo: any;
+  let mockPaymentItemRepo: any;
+  let mockPaymentStructureRepo: any;
+  let mockSessionRepo: any;
+  let mockScopeService: any;
+  let mockUserRepo: any;
+  let mockFilesService: any;
+  let mockDataSource: any;
+  let mockLoggerFactory: any;
+
+  beforeEach(() => {
+    mockPaymentRepo = {
+      create: jest.fn().mockImplementation((data) => ({
+        id: 'pay-uuid-1',
+        ...data,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })),
+      findById: jest.fn(),
+      findByPaymentId: jest.fn(),
+      updateById: jest.fn().mockImplementation((id, data) => ({
+        id,
+        paymentId: 'PAY-1234',
+        amount: data.amount || 500000,
+        currency: Currency.NGN,
+        status: data.status,
+        metadata: data.metadata,
+        updatedAt: new Date(),
+      })),
+    };
+
+    mockReconRepo = {
+      create: jest.fn().mockResolvedValue({ id: 'recon-uuid-1' }),
+    };
+
+    mockPaymentItemRepo = {
+      findById: jest.fn().mockResolvedValue({ id: 'item-1', code: 'fee_affiliation', name: 'Affiliation Fee' }),
+      findByCode: jest.fn(),
+    };
+
+    mockPaymentStructureRepo = {
+      findById: jest.fn().mockResolvedValue({ id: 'struct-1', code: 'full', name: 'Full Payment' }),
+      findByCode: jest.fn(),
+    };
+
+    mockSessionRepo = {
+      findActive: jest.fn().mockResolvedValue({ id: 'session-1', academicYear: '2026/2027' }),
+    };
+
+    mockScopeService = {
+      effectiveUniversityId: jest.fn().mockResolvedValue('uni-1'),
+      assertUniversityAccess: jest.fn().mockResolvedValue(undefined),
+    };
+
+    mockUserRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'admin-user-1',
+        first_name: 'Finance',
+        last_name: 'Officer',
+        email: 'finance@jupeb.edu.ng',
+      }),
+    };
+
+    mockFilesService = {
+      uploadFile: jest.fn().mockResolvedValue({
+        id: 'file-uuid-1',
+        file_url: 'https://storage.example.com/receipt.pdf',
+      }),
+    };
+
+    mockDataSource = {
+      query: jest.fn().mockResolvedValue([]),
+    };
+
+    mockLoggerFactory = {
+      create: () => ({
+        log: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+      }),
+    };
+
+    service = new FinanceService(
+      {} as any,
+      mockSessionRepo,
+      mockPaymentRepo,
+      mockReconRepo,
+      mockPaymentItemRepo,
+      mockPaymentStructureRepo,
+      {} as any,
+      mockScopeService,
+      mockUserRepo,
+      mockFilesService,
+      mockDataSource,
+      mockLoggerFactory,
+    );
+  });
+
+  describe('uploadInstitutionPaymentReceipt', () => {
+    it('should upload file and create pending payment record with metadata', () => {
+      const dto: UploadPaymentReceiptDto = {
+        payment_item_id: 'item-1',
+        payment_structure_id: 'struct-1',
+        amount: 500000,
+        description: 'Payment for 2026/2027 affiliation fee',
+      };
+      const mockFile = { buffer: Buffer.from('fake-pdf'), originalname: 'receipt.pdf' };
+
+      return service.uploadInstitutionPaymentReceipt('inst-user-1', dto, mockFile).then((res) => {
+        expect(res.success).toBe(true);
+        expect(mockFilesService.uploadFile).toHaveBeenCalledWith(mockFile, 'inst-user-1', 'payment_receipts');
+        expect(mockPaymentRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            amount: 500000,
+            currency: Currency.NGN,
+            type: PaymentType.INSTITUTION_RECEIPT_UPLOAD,
+            status: PaymentStatus.PENDING_VERIFICATION,
+            paymentMethod: PaymentMethod.OFFLINE_RECEIPT,
+            jupebUniversityId: 'uni-1',
+            metadata: expect.objectContaining({
+              receipt_url: 'https://storage.example.com/receipt.pdf',
+              description: 'Payment for 2026/2027 affiliation fee',
+            }),
+          }),
+        );
+      });
+    });
+  });
+
+  describe('confirmPayment', () => {
+    it('should verify payment and create reconciliation record', () => {
+      mockPaymentRepo.findById.mockResolvedValue({
+        id: 'pay-uuid-1',
+        paymentId: 'PAY-1234',
+        amount: 500000,
+        currency: Currency.NGN,
+        status: PaymentStatus.PENDING_VERIFICATION,
+        jupebUniversityId: 'uni-1',
+        metadata: {},
+      });
+
+      const dto: ConfirmPaymentDto = {
+        status: PaymentStatus.SUCCESSFUL,
+        notes: 'Verified against bank statement',
+        confirmed_amount: 500000,
+      };
+
+      return service.confirmPayment('pay-uuid-1', dto, 'admin-user-1').then((res) => {
+        expect(res.success).toBe(true);
+        expect(mockPaymentRepo.updateById).toHaveBeenCalledWith(
+          'pay-uuid-1',
+          expect.objectContaining({
+            status: PaymentStatus.SUCCESSFUL,
+            amount: 500000,
+          }),
+        );
+        expect(mockReconRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            paymentId: 'pay-uuid-1',
+            statusSnapshot: PaymentStatus.SUCCESSFUL,
+            capturedAmount: 500000,
+          }),
+        );
+      });
+    });
+  });
+});

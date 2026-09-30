@@ -35,23 +35,29 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request & { user?: AuthenticatedUser }>();
-    const authHeader = request.headers.authorization;
+    const authHeader =
+      request.headers.authorization || (request.headers as any)['Authorization'];
 
     let token: string | undefined;
 
-    if (authHeader) {
-      const match = authHeader.match(/^Bearer\s+(.*)$/i);
-      if (match) {
-        token = match[1].trim();
-      }
+    if (typeof authHeader === 'string' && authHeader.trim()) {
+      token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
     }
 
     if (!token && typeof request.headers['x-access-token'] === 'string') {
       token = request.headers['x-access-token'].trim();
     }
 
+    if (!token && typeof request.headers['x-auth-token'] === 'string') {
+      token = request.headers['x-auth-token'].trim();
+    }
+
     if (!token && typeof (request as any).cookies?.access_token === 'string') {
       token = (request as any).cookies.access_token.trim();
+    }
+
+    if (!token && typeof (request as any).cookies?.token === 'string') {
+      token = (request as any).cookies.token.trim();
     }
 
     if (!token) {
@@ -78,8 +84,11 @@ export class JwtAuthGuard implements CanActivate {
       };
 
       return true;
-    } catch {
-      throw new UnauthorizedException('Invalid or expired token');
+    } catch (err: any) {
+      if (err?.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Token has expired');
+      }
+      throw new UnauthorizedException(`Invalid or expired token: ${err?.message || 'Unauthorized'}`);
     }
   }
 }

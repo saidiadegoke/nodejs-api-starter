@@ -368,7 +368,9 @@ export class PasswordResetService {
       );
       await queryRunner.commitTransaction();
     } catch (err) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw err;
     } finally {
       await queryRunner.release();

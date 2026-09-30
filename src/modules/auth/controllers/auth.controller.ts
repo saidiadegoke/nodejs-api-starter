@@ -1007,7 +1007,9 @@ export class AuthController {
         institutionsDeleted: uniIds.length,
       };
     } catch (err) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw err;
     } finally {
       await queryRunner.release();

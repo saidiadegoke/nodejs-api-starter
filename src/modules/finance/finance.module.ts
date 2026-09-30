@@ -9,6 +9,7 @@ import { SessionsModule } from '../sessions/sessions.module';
 import { PaymentCatalogModule } from '../payment-catalog/payment-catalog.module';
 import { InstitutionsModule } from '../institutions/institutions.module';
 import { UsersModule } from '../users/users.module';
+import { FilesModule } from '../files/files.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { UsersModule } from '../users/users.module';
     PaymentCatalogModule,
     InstitutionsModule,
     UsersModule,
+    FilesModule,
   ],
   controllers: [FinanceController],
   providers: [

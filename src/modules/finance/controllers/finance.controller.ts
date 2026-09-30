@@ -2,13 +2,17 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
   UseGuards,
   HttpStatus,
   HttpCode,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
@@ -17,13 +21,20 @@ import {
   ApiBearerAuth,
   ApiParam,
   ApiQuery,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../utils/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../../utils/guards/permissions.guard';
+import { RequirePermission } from '../../../utils/decorators/require-permission.decorator';
 import { CurrentUser } from '../../../utils/decorators/current-user.decorator';
+import { Public } from '../../../utils/decorators/public.decorator';
 import { FinanceService } from '../services/finance.service';
 import {
   CreateCheckoutDto,
   CreateInstitutionCheckoutDto,
+  UploadPaymentReceiptDto,
+  ConfirmPaymentDto,
   ReconcilePaymentDto,
   ListMyPaymentsQueryDto,
   ListAdminPaymentsQueryDto,
@@ -46,6 +57,7 @@ export class FinanceController {
   constructor(private readonly financeService: FinanceService) {}
 
   @Get('payment-methods')
+  @Public()
   @ApiOperation({
     summary: 'List available payment methods',
     description: 'Retrieves active payment gateways and payment methods available for checkout.',
@@ -161,6 +173,96 @@ export class FinanceController {
     @Body() body: CreateInstitutionCheckoutDto,
   ) {
     return this.financeService.createInstitutionCheckout(userId, body);
+  }
+
+  @Post([
+    'institution/upload-receipt',
+    'institution/payments/upload-receipt',
+    'institution/upload-payment-document',
+  ])
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @ApiBody({
+    description: 'Institution payment document and receipt details',
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Payment receipt document (PDF, PNG, JPEG, JPG)',
+        },
+        payment_item_id: {
+          type: 'string',
+          description: 'Selected payment type UUID or code',
+          example: 'fee_affiliation',
+        },
+        payment_structure_id: {
+          type: 'string',
+          description: 'Selected payment structure UUID or code',
+          example: 'struct_full',
+        },
+        amount: {
+          type: 'number',
+          description: 'Amount in NGN',
+          example: 500000,
+        },
+        description: {
+          type: 'string',
+          description: 'Payment description / notes',
+          example: 'Affiliation fee 2026/2027 payment',
+        },
+        university_id: { type: 'string' },
+        session_id: { type: 'string' },
+        receipt_url: { type: 'string' },
+        receipt_file_id: { type: 'string' },
+        transaction_ref: { type: 'string' },
+        bank_name: { type: 'string' },
+        payment_date: { type: 'string' },
+      },
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload institution payment receipt',
+    description:
+      'Allows university institution user to upload bank payment receipt with fee type, structure, and amount for verification.',
+  })
+  @ApiCreatedResponse({ description: 'Receipt submitted for finance verification' })
+  async uploadInstitutionReceipt(
+    @CurrentUser('user_id') userId: string,
+    @Body() body: UploadPaymentReceiptDto,
+    @UploadedFile() file?: any,
+  ) {
+    return this.financeService.uploadInstitutionPaymentReceipt(userId, body, file);
+  }
+
+  @Post([
+    'admin/payments/:paymentId/confirm',
+    'payments/:paymentId/confirm',
+    'admin/payments/:paymentId/status',
+  ])
+  @Patch([
+    'admin/payments/:paymentId/confirm',
+    'payments/:paymentId/confirm',
+    'admin/payments/:paymentId/status',
+  ])
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('jupeb.finance.manage', 'payments.verify')
+  @ApiOperation({
+    summary: 'Finance Officer: Confirm or update payment status',
+    description:
+      'Finance officer verifies bank receipt, approves/rejects payment, and sets final reconciled amount and notes.',
+  })
+  @ApiParam({ name: 'paymentId', description: 'Payment ID (e.g. PAY-...) or internal UUID', type: String })
+  @ApiOkResponse({ description: 'Payment status updated/confirmed successfully' })
+  async confirmPayment(
+    @Param('paymentId') paymentId: string,
+    @Body() body: ConfirmPaymentDto,
+    @CurrentUser('user_id') userId: string,
+  ) {
+    return this.financeService.confirmPayment(paymentId, body, userId);
   }
 
   @Post('institution/payments/:paymentId/cancel')

@@ -78,13 +78,13 @@ export class ClaimCodeDto {
 }
 
 export class ConfirmSubjectsDto {
-  @ApiProperty({
-    description: 'Confirmed subject combination UUID',
+  @ApiPropertyOptional({
+    description: 'Confirmed subject combination UUID (optional if maintaining pre-assigned combination)',
     example: 'c1b07384-d113-40f4-8a4e-379e4971c260',
   })
+  @IsOptional()
   @IsUUID('4')
-  @IsNotEmpty()
-  subject_combination_id: string;
+  subject_combination_id?: string;
 }
 
 export class BatchRegistrationActionDto {

@@ -15,9 +15,18 @@ import { PaymentStructureRepository } from '../../payment-catalog/repositories/p
 import { UniversityRepository } from '../../institutions/repositories/university.repository';
 import { InstitutionUserScopeService } from '../../registration/services/institution-user-scope.service';
 import { UserRepository } from '../../users/repositories/user.repository';
+import { FilesService } from '../../files/services/files.service';
+import {
+  Currency,
+  PaymentMethod,
+  PaymentStatus,
+  PaymentType,
+} from '../../../shared/enums';
 import {
   CreateCheckoutDto,
   CreateInstitutionCheckoutDto,
+  UploadPaymentReceiptDto,
+  ConfirmPaymentDto,
   ReconcilePaymentDto,
   ListMyPaymentsQueryDto,
   ListAdminPaymentsQueryDto,
@@ -47,6 +56,7 @@ export class FinanceService {
     private readonly universityRepo: UniversityRepository,
     private readonly scopeService: InstitutionUserScopeService,
     private readonly userRepo: UserRepository,
+    private readonly filesService: FilesService,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
@@ -109,11 +119,11 @@ export class FinanceService {
     const payment = await this.paymentRepo.create({
       paymentId,
       amount,
-      currency: session?.registrationFeeCurrency || 'NGN',
-      type: 'registration_fee',
-      paymentType: 'fee',
-      status: 'pending',
-      paymentMethod: dto.payment_method || 'paystack',
+      currency: session?.registrationFeeCurrency || Currency.NGN,
+      type: PaymentType.REGISTRATION_FEE,
+      paymentType: PaymentType.FEE,
+      status: PaymentStatus.PENDING,
+      paymentMethod: (dto.payment_method as PaymentMethod) || PaymentMethod.PAYSTACK,
       paymentMethodId: dto.payment_method_id || null,
       transactionRef,
       userId,
@@ -437,11 +447,11 @@ export class FinanceService {
     const payment = await this.paymentRepo.create({
       paymentId,
       amount,
-      currency: 'NGN',
-      type: 'institution_bulk_fee',
-      paymentType: 'institution_fee',
-      status: 'pending',
-      paymentMethod: dto.payment_method || 'direct_transfer',
+      currency: Currency.NGN,
+      type: PaymentType.INSTITUTION_BULK_FEE,
+      paymentType: PaymentType.INSTITUTION_FEE,
+      status: PaymentStatus.PENDING,
+      paymentMethod: (dto.payment_method as PaymentMethod) || PaymentMethod.DIRECT_TRANSFER,
       paymentMethodId: dto.payment_method_id || null,
       transactionRef,
       userId,
@@ -472,7 +482,7 @@ export class FinanceService {
     if (payment.jupebUniversityId) {
       await this.scopeService.assertUniversityAccess(userId, payment.jupebUniversityId);
     }
-    return this.paymentRepo.updateById(paymentId, { status: 'cancelled' });
+    return this.paymentRepo.updateById(paymentId, { status: PaymentStatus.CANCELLED });
   }
 
   async listInstitutionPayments(query: ListInstitutionPaymentsQueryDto, userId: string) {
@@ -542,4 +552,193 @@ export class FinanceService {
   ) {
     return this.listAdminPayments({ ...query, university_id: universityId }, actorUserId);
   }
+
+  /**
+   * Institution endpoint: Upload payment receipt / document for fee settlement
+   */
+  async uploadInstitutionPaymentReceipt(
+    userId: string,
+    dto: UploadPaymentReceiptDto,
+    file?: any,
+  ) {
+    const universityId = await this.scopeService.effectiveUniversityId(userId, dto.university_id);
+    if (!universityId) {
+      throw new UnprocessableEntityException('university_id is required or user is not associated with an institution');
+    }
+    await this.scopeService.assertUniversityAccess(userId, universityId);
+
+    let sessionId = dto.session_id;
+    if (!sessionId) {
+      const activeSession = await this.sessionRepo.findActive();
+      sessionId = activeSession?.id;
+    }
+
+    let receiptUrl = dto.receipt_url || null;
+    let receiptFileId = dto.receipt_file_id || null;
+
+    if (file && file.buffer) {
+      const uploaded = await this.filesService.uploadFile(file, userId, 'payment_receipts');
+      receiptUrl = uploaded.file_url;
+      receiptFileId = uploaded.id;
+    }
+
+    let paymentItem: any = null;
+    if (dto.payment_item_id) {
+      paymentItem = await this.paymentItemRepo.findById(dto.payment_item_id);
+      if (!paymentItem) {
+        paymentItem = await this.paymentItemRepo.findByCode(dto.payment_item_id);
+      }
+    }
+
+    let paymentStructure: any = null;
+    if (dto.payment_structure_id) {
+      paymentStructure = await this.paymentStructureRepo.findById(dto.payment_structure_id);
+      if (!paymentStructure) {
+        paymentStructure = await this.paymentStructureRepo.findByCode(dto.payment_structure_id);
+      }
+    }
+
+    const paymentId = generatePaymentId();
+    const transactionRef = dto.transaction_ref || `TXN-REC-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    const payment = await this.paymentRepo.create({
+      paymentId,
+      amount: dto.amount,
+      currency: Currency.NGN,
+      type: PaymentType.INSTITUTION_RECEIPT_UPLOAD,
+      paymentType: paymentItem?.code || PaymentType.INSTITUTION_FEE,
+      status: PaymentStatus.PENDING_VERIFICATION,
+      paymentMethod: PaymentMethod.OFFLINE_RECEIPT,
+      transactionRef,
+      userId,
+      paymentItemId: paymentItem?.id || dto.payment_item_id || null,
+      paymentStructureId: paymentStructure?.id || dto.payment_structure_id || null,
+      jupebUniversityId: universityId,
+      jupebSessionId: sessionId || null,
+      metadata: {
+        receipt_url: receiptUrl,
+        receipt_file_id: receiptFileId,
+        description: dto.description || null,
+        bank_name: dto.bank_name || null,
+        payment_date: dto.payment_date || new Date().toISOString(),
+        payment_item_name: paymentItem?.name || null,
+        payment_structure_name: paymentStructure?.name || null,
+        uploaded_by: userId,
+        uploaded_at: new Date().toISOString(),
+      },
+    });
+
+    this.logger.log(
+      `Institution uploaded payment receipt ${payment.paymentId} for university ${universityId} (amount: ₦${dto.amount})`,
+    );
+
+    return {
+      success: true,
+      message: 'Payment receipt uploaded successfully and submitted for finance verification',
+      data: {
+        id: payment.id,
+        payment_id: payment.paymentId,
+        amount: Number(payment.amount),
+        currency: payment.currency,
+        status: payment.status,
+        transaction_ref: payment.transactionRef,
+        university_id: payment.jupebUniversityId,
+        session_id: payment.jupebSessionId,
+        payment_item_id: payment.paymentItemId,
+        payment_item_name: paymentItem?.name || null,
+        payment_structure_id: payment.paymentStructureId,
+        payment_structure_name: paymentStructure?.name || null,
+        receipt_url: receiptUrl,
+        receipt_file_id: receiptFileId,
+        description: dto.description || null,
+        created_at: payment.createdAt,
+      },
+    };
+  }
+
+  /**
+   * Finance officer endpoint: Update / Confirm payment receipt
+   */
+  async confirmPayment(
+    paymentIdOrUuid: string,
+    dto: ConfirmPaymentDto,
+    actorUserId: string,
+  ) {
+    let payment = await this.paymentRepo.findById(paymentIdOrUuid);
+    if (!payment) {
+      payment = await this.paymentRepo.findByPaymentId(paymentIdOrUuid);
+    }
+    if (!payment) {
+      throw new NotFoundException(`Payment not found for identifier: ${paymentIdOrUuid}`);
+    }
+
+    const rawStatus = dto.status || PaymentStatus.SUCCESSFUL;
+    const targetStatus = rawStatus === PaymentStatus.CONFIRMED ? PaymentStatus.SUCCESSFUL : rawStatus;
+    const confirmedAmount =
+      dto.confirmed_amount !== undefined ? dto.confirmed_amount : Number(payment.amount);
+
+    const actor = await this.userRepo.findById(actorUserId);
+    const actorName = actor
+      ? `${actor.first_name || ''} ${actor.last_name || ''}`.trim() || actor.email
+      : actorUserId;
+
+    const updatedMetadata = {
+      ...(payment.metadata || {}),
+      confirmed_by: actorUserId,
+      confirmed_by_name: actorName,
+      confirmed_at: new Date().toISOString(),
+      confirmation_notes: dto.notes || null,
+      reconciliation_ref: dto.reconciliation_ref || null,
+      original_amount: Number(payment.amount),
+      verified_amount: confirmedAmount,
+    };
+
+    const updatedPayment = await this.paymentRepo.updateById(payment.id, {
+      status: targetStatus,
+      amount: confirmedAmount,
+      metadata: updatedMetadata,
+    });
+
+    if (targetStatus === PaymentStatus.SUCCESSFUL) {
+      try {
+        await this.reconRepo.create({
+          registrationId: payment.registrationId || payment.jupebUniversityId || payment.id,
+          paymentId: payment.id,
+          statusSnapshot: targetStatus,
+          capturedAmount: confirmedAmount,
+          currency: payment.currency || Currency.NGN,
+          gatewayReference: dto.reconciliation_ref || payment.transactionRef || payment.paymentId,
+          reconciledBy: actorUserId,
+          reconciledAt: new Date(),
+        });
+      } catch (err: any) {
+        this.logger.warn(
+          `Could not create reconciliation entry for payment ${payment.id}: ${err.message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Payment ${payment.paymentId} confirmed by finance officer ${actorName} -> status: ${targetStatus}`,
+    );
+
+    return {
+      success: true,
+      message: `Payment ${targetStatus === PaymentStatus.SUCCESSFUL ? 'confirmed' : targetStatus} successfully`,
+      data: {
+        id: updatedPayment?.id || payment.id,
+        payment_id: updatedPayment?.paymentId || payment.paymentId,
+        amount: Number(updatedPayment?.amount || confirmedAmount),
+        currency: updatedPayment?.currency || payment.currency,
+        status: targetStatus,
+        transaction_ref: updatedPayment?.transactionRef || payment.transactionRef,
+        notes: dto.notes || null,
+        reconciliation_ref: dto.reconciliation_ref || null,
+        confirmed_by: actorName,
+        confirmed_at: updatedMetadata.confirmed_at,
+        updated_at: updatedPayment?.updatedAt || new Date(),
+      },
+    };
+  }
 }
+

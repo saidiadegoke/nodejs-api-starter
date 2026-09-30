@@ -145,7 +145,9 @@ export class InstitutionAdminProvisionService {
             lastName: existing.last_name || null,
           };
         } catch (err) {
-          await queryRunner.rollbackTransaction();
+          if (queryRunner.isTransactionActive) {
+            await queryRunner.rollbackTransaction();
+          }
           throw err;
         } finally {
           await queryRunner.release();
@@ -202,7 +204,9 @@ export class InstitutionAdminProvisionService {
         lastName,
       };
     } catch (err) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw err;
     } finally {
       await queryRunner.release();

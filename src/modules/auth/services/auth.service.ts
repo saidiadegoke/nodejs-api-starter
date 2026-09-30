@@ -304,7 +304,6 @@ export class AuthService {
       );
       const reg = lock[0];
       if (!reg) {
-        await queryRunner.rollbackTransaction();
         const err: any = new HttpException('Registration code not found', HttpStatus.NOT_FOUND);
         err.error_code = 'code_not_found';
         throw err;
@@ -313,14 +312,12 @@ export class AuthService {
         reg.institution_code_expires_at &&
         new Date(reg.institution_code_expires_at).getTime() < Date.now()
       ) {
-        await queryRunner.rollbackTransaction();
         const err: any = new HttpException('This institution code has expired', HttpStatus.GONE);
         err.error_code = 'code_expired';
         err.details = { expires_at: reg.institution_code_expires_at };
         throw err;
       }
       if (reg.status !== RegistrationStatus.CODE_ISSUED || reg.user_id) {
-        await queryRunner.rollbackTransaction();
         const err: any = new HttpException('This code is no longer available', HttpStatus.CONFLICT);
         err.error_code = reg.user_id ? 'code_already_claimed' : 'code_unavailable';
         throw err;
@@ -350,7 +347,6 @@ export class AuthService {
         || null;
 
       if (!email && !phone) {
-        await queryRunner.rollbackTransaction();
         const err: any = new HttpException('email or phone is required', HttpStatus.UNPROCESSABLE_ENTITY);
         err.error_code = 'identifier_required';
         throw err;
@@ -372,7 +368,6 @@ export class AuthService {
           [email]
         );
         if (dup.length) {
-          await queryRunner.rollbackTransaction();
           const err: any = new HttpException('Email already in use', HttpStatus.CONFLICT);
           err.error_code = 'email_in_use';
           throw err;
@@ -384,7 +379,6 @@ export class AuthService {
           [phone]
         );
         if (dup.length) {
-          await queryRunner.rollbackTransaction();
           const err: any = new HttpException('Phone already in use', HttpStatus.CONFLICT);
           err.error_code = 'phone_in_use';
           throw err;
@@ -531,7 +525,9 @@ export class AuthService {
         },
       };
     } catch (err) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw err;
     } finally {
       await queryRunner.release();

@@ -50,11 +50,32 @@ async function bootstrap() {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        name: 'JWT',
+        name: 'Authorization',
+        description: 'Enter JWT access token',
+        in: 'header',
+      },
+      'JWT',
+    )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
         description: 'Enter JWT access token',
         in: 'header',
       },
       'JWT-auth',
+    )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
+        description: 'Enter JWT access token',
+        in: 'header',
+      },
     )
     .addTag('Auth', 'Authentication, registration wizards, OTP, and password recovery')
     .addTag('Users', 'User management, profile updates, preferences, and activity auditing')
@@ -63,8 +84,13 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
-  SwaggerModule.setup('api/docs', app, document);
+  const swaggerCustomOptions = {
+    swaggerOptions: {
+      persistAuthorization: true,
+    },
+  };
+  SwaggerModule.setup('docs', app, document, swaggerCustomOptions);
+  SwaggerModule.setup('api/docs', app, document, swaggerCustomOptions);
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
