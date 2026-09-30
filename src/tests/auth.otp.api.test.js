@@ -1,14 +1,16 @@
 const request = require('supertest');
-const app = require('../app');
-const pool = require('../db/pool');
+const { getAppUnderTest } = require('./helpers/app-under-test');
+const pool = require('../database/pool');
 const AuthService = require('../modules/auth/services/auth.service');
 const otpService = require('../modules/auth/services/otp.service');
 
 describe('OTP — /auth/resend-otp + /auth/verify-phone', () => {
+  let app;
   let migrated = false;
   const cleanupUserIds = [];
 
   beforeAll(async () => {
+    app = await getAppUnderTest();
     try {
       await pool.query('SELECT 1 FROM otp_codes LIMIT 1');
       migrated = true;

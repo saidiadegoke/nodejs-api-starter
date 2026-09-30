@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const { resolveRegistrationSession } = require('./registration-kpi.service');
 const { evaluateSessionWindows } = require('../utils/session-validation');
 

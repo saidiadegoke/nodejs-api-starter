@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const registrationModel = require('../models/registration.model');
 const sessionModel = require('../models/session.model');
 const paymentModel = require('../../payments/models/payment.model');
@@ -16,7 +16,7 @@ const {
 const registrationKpi = require('./registration-kpi.service');
 const sessionContext = require('./session-context.service');
 const universityModel = require('../models/university.model');
-const { hasPermission } = require('../../../shared/middleware/rbac.middleware');
+const { hasPermission } = require('../../../utils/middleware/rbac.middleware');
 
 const PAYMENT_METHOD_GROUP_UI = {
   bank_transfer: { label: 'Bank Transfer', subtitle: 'Transfer to JUPEB account' },

@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 class RegistrationScoreModel {
   async upsertSnapshot({ registration_id, passed_courses_count, failed_courses_count, plus_one_total }) {

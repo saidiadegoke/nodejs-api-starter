@@ -38,7 +38,7 @@ class PaymentController {
       let userId = req.user?.user_id;
       let userEmail = null;
       if (userId) {
-        const pool = require('../../../db/pool');
+        const pool = require('../../../database/pool');
         const r = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
         userEmail = r.rows[0]?.email || null;
       }
@@ -389,7 +389,7 @@ class PaymentController {
         return res.status(403).json({ success: false, message: 'Access denied' });
       }
       if (!payment.user_id && anonymousEmail) {
-        const pool = require('../../../db/pool');
+        const pool = require('../../../database/pool');
         const r = await pool.query('SELECT email FROM users WHERE id = $1', [uid]);
         if ((r.rows[0]?.email || '') !== anonymousEmail) {
           return res.status(403).json({ success: false, message: 'Access denied' });
@@ -416,7 +416,7 @@ class PaymentController {
         return res.status(403).json({ success: false, message: 'Access denied' });
       }
       if (!payment.user_id && anonymousEmail) {
-        const pool = require('../../../db/pool');
+        const pool = require('../../../database/pool');
         const r = await pool.query('SELECT email FROM users WHERE id = $1', [uid]);
         if ((r.rows[0]?.email || '') !== anonymousEmail) {
           return res.status(403).json({ success: false, message: 'Access denied' });

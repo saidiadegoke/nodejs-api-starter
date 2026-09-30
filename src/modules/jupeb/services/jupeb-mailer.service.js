@@ -8,9 +8,9 @@
  *
  * Templates live under src/shared/emails/ and use {{key}} placeholders.
  */
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const { resolveCandidateDisplayName } = require('../utils/candidate-name');
-const sendEmail = require('../../../shared/utils/sendEmail');
+const sendEmail = require('../../../utils/utils/sendEmail');
 
 function appName() {
   return process.env.APP_NAME || 'Registration Portal';

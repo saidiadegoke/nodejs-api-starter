@@ -1,6 +1,6 @@
 const resultEntriesService = require('../services/result-entries.service');
 const AdminAuditService = require('../../admin/services/adminAudit.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
 
 function handle(res, fn) {
   return Promise.resolve()

@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const { effectiveInstitutionListUniversityId } = require('../utils/institution-scope');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const {

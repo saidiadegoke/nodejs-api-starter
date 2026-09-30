@@ -1,6 +1,6 @@
-const attendanceProviders = require('../modules/integrations/attendance');
-const httpProvider = require('../modules/integrations/attendance/http.provider');
-const AttendanceService = require('../modules/attendance/services/attendance.service');
+const attendanceProviders = require('../integrations/attendance');
+const httpProvider = require('../integrations/attendance/http.provider');
+const AttendanceService = require('../modules/attendance/services/attendance.service').AttendanceService || require('../modules/attendance/services/attendance.service');
 const catalogService = require('../modules/jupeb/services/catalog.service');
 const axios = require('axios');
 
@@ -141,7 +141,7 @@ describe('Attendance Institution and Student Sync', () => {
 
     it('should resolve candidate_code when passed by admin or institution', async () => {
       const registrationModel = require('../modules/jupeb/models/registration.model');
-      const rbacMiddleware = require('../shared/middleware/rbac.middleware');
+      const rbacMiddleware = require('../utils/middleware/rbac.middleware');
       const institutionScope = require('../modules/jupeb/utils/institution-scope');
 
       const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue({
@@ -191,7 +191,7 @@ describe('Attendance Institution and Student Sync', () => {
 
     it('should throw 403 when a student tries to access another candidate by candidate_code', async () => {
       const registrationModel = require('../modules/jupeb/models/registration.model');
-      const rbacMiddleware = require('../shared/middleware/rbac.middleware');
+      const rbacMiddleware = require('../utils/middleware/rbac.middleware');
 
       const findByCandidateSpy = jest.spyOn(registrationModel, 'findByCandidateCode').mockResolvedValue({
         id: 'reg-uuid-2',

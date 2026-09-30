@@ -3,9 +3,9 @@
  * Used when creating an institution (catalog); login email = institution email.
  */
 const crypto = require('crypto');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const AuthModel = require('../../auth/models/auth.model');
-const UserUniversityModel = require('../../../shared/models/user-university.model');
+const UserUniversityModel = require('../../../utils/models/user-university.model');
 const jupebMailer = require('./jupeb-mailer.service');
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;

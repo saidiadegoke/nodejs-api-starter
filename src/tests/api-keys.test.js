@@ -1,30 +1,48 @@
-// API Keys module tests using Supertest
+const bcrypt = require('bcryptjs');
 const request = require('supertest');
-const app = require('../app');
-const pool = require('../db/pool');
+const { getAppUnderTest } = require('./helpers/app-under-test');
+const pool = require('../database/pool');
 
 describe('API Keys API Tests', () => {
+  let app;
   let token;
   let userId;
   let createdUserIds = [];
   let createdKeyIds = [];
 
   beforeAll(async () => {
+    app = await getAppUnderTest();
     const suffix = `${Date.now()}${Math.floor(Math.random() * 100000)}`;
-    const phone = `+234${String(Date.now() % 1000000000).padStart(10, '0').slice(-10)}`;
-    const payload = {
-      email: `apikeys_${suffix}@example.com`,
-      phone,
-      password: 'Test@123456',
-      first_name: 'Api',
-      last_name: 'Keys',
-      role: 'user',
-    };
-    const res = await request(app).post('/auth/register').send(payload);
-    if (res.status !== 201) throw new Error(`register failed: ${res.status} ${JSON.stringify(res.body)}`);
-    token = res.body.data.access_token;
-    userId = res.body.data.user.user_id;
+    const email = `apikeys_${suffix}@example.com`;
+    const phone = `+2348${String(Date.now()).slice(-9)}`;
+    const rawPassword = 'Test@123456';
+    const passwordHash = bcrypt.hashSync(rawPassword, 10);
+
+    const userRes = await pool.query(
+      `INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status)
+       VALUES ($1, $2, true, true, $3, 'active')
+       RETURNING id`,
+      [email, phone, passwordHash]
+    );
+    userId = userRes.rows[0].id;
     createdUserIds.push(userId);
+
+    await pool.query(
+      `INSERT INTO profiles (user_id, first_name, last_name, display_name)
+       VALUES ($1, 'Api', 'Keys', 'Api Keys')
+       ON CONFLICT (user_id) DO NOTHING`,
+      [userId]
+    );
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ identifier: email, password: rawPassword });
+
+    if (loginRes.status !== 200 || !loginRes.body.data?.access_token) {
+      throw new Error(`login failed: ${loginRes.status} ${JSON.stringify(loginRes.body)}`);
+    }
+
+    token = loginRes.body.data.access_token;
   });
 
   afterAll(async () => {

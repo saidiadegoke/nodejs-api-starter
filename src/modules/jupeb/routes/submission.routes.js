@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { requireAuth, requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { requireAuth, requirePermission } = require('../../../utils/middleware/rbac.middleware');
 const { jupebStudentMiddleware } = require('../middleware/jupeb-student.middleware');
 const SubmissionController = require('../controllers/submission.controller');
 const ResultEntriesController = require('../controllers/result-entries.controller');

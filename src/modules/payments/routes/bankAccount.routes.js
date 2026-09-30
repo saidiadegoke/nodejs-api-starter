@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const BankAccount = require('../models/bankAccount.model');
-const { authenticate } = require('../../../shared/middleware/authenticate.middleware');
-const { requirePermission } = require('../../../shared/middleware/rbac.middleware');
+const { authenticate } = require('../../../utils/middleware/authenticate.middleware');
+const { requirePermission } = require('../../../utils/middleware/rbac.middleware');
 
 router.get(
   '/admin/all',

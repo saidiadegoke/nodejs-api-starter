@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const ninVerificationModel = require('../models/nin-verification.model');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
@@ -8,7 +8,7 @@ const { emitNinResolved } = require('./nin-events.service');
 const FileService = require('../../files/services/file.service');
 const FileModel = require('../../files/models/file.model');
 const { normalizeNin, hashNin, ninLast4, validateBiometricPayload } = require('../utils/identity-crypto');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { getUserRoles } = require('../../../utils/middleware/rbac.middleware');
 const { assertInstitutionUniversityAccess } = require('../utils/institution-scope');
 
 function httpError(status, message) {

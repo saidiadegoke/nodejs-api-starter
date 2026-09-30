@@ -8,7 +8,7 @@ const {
   gradeToPlusOneAwarded,
   aggregateScoresFromResults,
 } = require('../utils/academic-scoring');
-const { getUserRoles } = require('../../../shared/middleware/rbac.middleware');
+const { getUserRoles } = require('../../../utils/middleware/rbac.middleware');
 
 function httpError(status, message) {
   const err = new Error(message);

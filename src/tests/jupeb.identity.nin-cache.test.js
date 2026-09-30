@@ -1,4 +1,4 @@
-const pool = require('../db/pool');
+const pool = require('../database/pool');
 const ninVerificationModel = require('../modules/jupeb/models/nin-verification.model');
 const { hashNin, ninLast4 } = require('../modules/jupeb/utils/identity-crypto');
 

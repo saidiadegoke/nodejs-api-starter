@@ -1,6 +1,6 @@
 const request = require('supertest');
-const app = require('../app');
-const pool = require('../db/pool');
+const { getAppUnderTest } = require('./helpers/app-under-test');
+const pool = require('../database/pool');
 const {
   closeAllOpenJupebSessions,
   nextJupebTestPrefix,
@@ -12,9 +12,11 @@ const {
 //   POST /auth/register-with-code  → preview only (no claim, no token)
 //   POST /auth/complete-registration → mints account + claims the code
 describe('Code preview + claim wizard', () => {
+  let app;
   let registrationMigrated = false;
 
   beforeAll(async () => {
+    app = await getAppUnderTest();
     try {
       await pool.query('SELECT 1 FROM jupeb_registrations LIMIT 1');
       registrationMigrated = true;

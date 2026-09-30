@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const universityModel = require('../models/university.model');
 const {
   provisionInstitutionAdminOnUniversityCreate,
@@ -9,9 +9,9 @@ const subjectModel = require('../models/subject.model');
 const { cleanJupebPrefix, validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
-const crmsProviders = require('../../integrations/crms');
-const attendanceProviders = require('../../integrations/attendance');
-const { normalizeStatus } = require('../../../shared/utils/status');
+const crmsProviders = require('../../../integrations/crms');
+const attendanceProviders = require('../../../integrations/attendance');
+const { normalizeStatus } = require('../../../utils/utils/status');
 
 const NIGERIAN_STATES = [
   'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
@@ -44,7 +44,7 @@ function isUuid(value) {
   );
 }
 
-const { enrichUniqueViolationError } = require('../../../shared/utils/pg-unique-violation');
+const { enrichUniqueViolationError } = require('../../../utils/utils/pg-unique-violation');
 
 function httpError(status, message, details) {
   const err = new Error(message);

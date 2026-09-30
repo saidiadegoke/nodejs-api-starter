@@ -1,6 +1,6 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const universityModel = require('../models/university.model');
-const UserUniversityModel = require('../../../shared/models/user-university.model');
+const UserUniversityModel = require('../../../utils/models/user-university.model');
 
 function httpError(status, message) {
   const err = new Error(message);

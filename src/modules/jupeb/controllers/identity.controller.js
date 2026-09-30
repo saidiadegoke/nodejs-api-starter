@@ -1,6 +1,6 @@
 const identityService = require('../services/identity.service');
-const { sendSuccess, sendError } = require('../../../shared/utils/response');
-const { INTERNAL_SERVER_ERROR, CONFLICT } = require('../../../shared/constants/statusCodes');
+const { sendSuccess, sendError } = require('../../../utils/utils/response');
+const { INTERNAL_SERVER_ERROR, CONFLICT } = require('../../../utils/constants/statusCodes');
 
 class IdentityController {
   static async verifyNin(req, res) {

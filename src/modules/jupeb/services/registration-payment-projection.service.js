@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 const paymentModel = require('../../payments/models/payment.model');
 const { mapPaymentStatusToJupebProjection } = require('../utils/finance-projection');
 const WebhookService = require('../../webhooks/services/webhook.service');

@@ -1,4 +1,4 @@
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 class SubjectModel {
   async create({ code, name, description = null, status = 'active' }) {

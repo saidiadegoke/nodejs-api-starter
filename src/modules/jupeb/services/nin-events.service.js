@@ -1,7 +1,7 @@
 const NotificationService = require('../../notifications/services/notification.service');
 const WebhookService = require('../../webhooks/services/webhook.service');
 const ninVerificationModel = require('../models/nin-verification.model');
-const pool = require('../../../db/pool');
+const pool = require('../../../database/pool');
 
 async function findLinkedRegistrationUserIds(verificationId) {
   const r = await pool.query(
