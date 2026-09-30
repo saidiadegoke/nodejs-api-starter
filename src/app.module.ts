@@ -2,7 +2,15 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ValidationPipe, UnprocessableEntityException } from '@nestjs/common';
-import { appConfig, databaseConfig, jwtConfig } from './config';
+import {
+  appConfig,
+  databaseConfig,
+  jwtConfig,
+  fileStorageConfig,
+  redisConfig,
+  mailConfig,
+  integrationsConfig,
+} from './config';
 import { DatabaseModule } from './database';
 import {
   SharedModule,
@@ -43,7 +51,15 @@ import { SyncModule } from './modules/sync';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, jwtConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        jwtConfig,
+        fileStorageConfig,
+        redisConfig,
+        mailConfig,
+        integrationsConfig,
+      ],
       envFilePath: process.env.NODE_ENV === 'test' ? ['.env.test', '.env'] : ['.env'],
     }),
     DatabaseModule,
