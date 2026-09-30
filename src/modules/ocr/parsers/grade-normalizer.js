@@ -40,7 +40,7 @@ function normalizeGrade(rawGrade, examType = 'waec') {
   if (!rawGrade || typeof rawGrade !== 'string') {
     return { normalized: null, isCredit: false, isPass: false, warning: 'empty grade' };
   }
-  const grade = rawGrade.trim().toUpperCase().replace(/\s+/g, '');
+  const grade = rawGrade.trim().toUpperCase().replace(/[()[\],.:;\-_]/g, '').replace(/\s+/g, '');
 
   if (examType === 'gce') {
     if (GCE_MAP[grade]) {

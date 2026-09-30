@@ -21,8 +21,8 @@ async function streamToBuffer(stream: any): Promise<Buffer> {
   });
 }
 
-async function loadFromS3(s3Key: string): Promise<Buffer> {
-  const command = new GetObjectCommand({ Bucket: s3BucketName, Key: s3Key });
+async function loadFromS3(s3Key: string, bucket?: string): Promise<Buffer> {
+  const command = new GetObjectCommand({ Bucket: bucket || s3BucketName, Key: s3Key });
   const response = await s3Client.send(command);
   const body = response.Body;
   if (!body) throw new Error('Empty S3 body');
@@ -52,19 +52,28 @@ export async function loadFileBuffer(dataSource: DataSource, fileId: string) {
     throw err;
   }
 
+  const meta = typeof file.metadata === 'string' ? JSON.parse(file.metadata) : (file.metadata || {});
+  const bucket = meta.s3_bucket || s3BucketName;
+
   let buffer: Buffer;
   if (file.provider === 's3' && s3Client) {
-    buffer = await loadFromS3(file.provider_path);
-  } else if (file.file_url) {
+    try {
+      buffer = await loadFromS3(file.provider_path, bucket);
+    } catch (s3Err) {
+      if (file.file_url && /^https?:\/\//i.test(file.file_url)) {
+        buffer = await loadFromUrl(file.file_url);
+      } else {
+        throw s3Err;
+      }
+    }
+  } else if (file.file_url && /^https?:\/\//i.test(file.file_url)) {
     buffer = await loadFromUrl(file.file_url);
   } else {
-    const err: any = new Error(`Cannot load buffer for provider ${file.provider}`);
+    const err: any = new Error(`Cannot load buffer for file ${fileId}`);
     err.code = 'OCR_FILE_NOT_FOUND';
     err.status = 404;
     throw err;
   }
-
-  const meta = typeof file.metadata === 'string' ? JSON.parse(file.metadata) : (file.metadata || {});
 
   return {
     buffer,

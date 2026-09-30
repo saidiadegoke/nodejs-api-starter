@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
   UnprocessableEntityException,
   ForbiddenException,
 } from '@nestjs/common';
@@ -287,15 +286,13 @@ export class IdentityService {
       throw new UnprocessableEntityException(val.error);
     }
 
-    // Check existing active capture of same type
+    // If an active capture of same type exists, mark it as replaced
     const existingCaptures = await this.biometricRepo.findByRegistrationId(dto.registration_id);
-    const activeSameType = existingCaptures.find(
+    const activeSameType = existingCaptures.filter(
       (c) => c.captureType === dto.capture_type && !c.replacedAt,
     );
-    if (activeSameType) {
-      throw new ConflictException(
-        `An active ${dto.capture_type} capture already exists for this registration. Use replace instead.`,
-      );
+    for (const ex of activeSameType) {
+      await this.biometricRepo.markReplaced(ex.id);
     }
 
     const capture = await this.biometricRepo.create({

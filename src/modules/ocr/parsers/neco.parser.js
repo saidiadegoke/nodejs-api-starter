@@ -7,13 +7,27 @@ const {
   extractDiet
 } = require('../utils/text-cleanup');
 
-const NECO_GRADES = ['A1', 'B2', 'B3', 'C4', 'C5', 'C6', 'D7', 'E8', 'F9'];
-const isGrade = (t) => NECO_GRADES.includes((t || '').toUpperCase());
+const NECO_GRADES = new Set(['A1', 'B2', 'B3', 'C4', 'C5', 'C6', 'D7', 'E8', 'F9', 'A', 'B', 'C', 'D', 'E', 'F']);
+
+const IGNORE_PATTERNS = [
+  /^(SUBJECT|GRADE|REMARK|POINT|SCORE|SERIAL|S\/N|NO\.|EXAMINATION|CANDIDATE|CENTRE|DATE|OFFICIAL|STATEMENT|COUNCIL|NATIONAL EXAM|RESULT SLIP|PROVISIONAL RESULT)/i,
+  /^(TOTAL|CREDITS?|PASSES?|PAGE|PRINTED|REGISTRAR|SECRETARY|DATE OF BIRTH)/i,
+  /^[=\-_|~.+*#]+$/,
+];
+
+const isGrade = (t) => {
+  const clean = (t || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
+  return NECO_GRADES.has(clean) || /^[A-F][1-9]?$/.test(clean);
+};
+
+const cleanGradeToken = (t) => (t || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
 
 function parseSubjectRow(line) {
-  // NECO often prints "SUBJECT  SCORE  GRADE", e.g.
-  //   "ENGLISH LANGUAGE   72   B2"
-  const tokens = line.split(/\s+/);
+  // NECO often prints "SUBJECT  SCORE  GRADE", e.g. "ENGLISH LANGUAGE   72   B2" or with pipes
+  const sanitized = line.replace(/[|:;~_]/g, ' ').replace(/\.{2,}/g, ' ');
+  const tokens = sanitized.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return null;
+
   let gradeIdx = -1;
   for (let i = tokens.length - 1; i >= 0; i -= 1) {
     if (isGrade(tokens[i])) {
@@ -21,9 +35,10 @@ function parseSubjectRow(line) {
       break;
     }
   }
-  if (gradeIdx <= 0) return null;
+  if (gradeIdx < 1) return null;
 
-  const grade = tokens[gradeIdx].toUpperCase();
+  const rawGrade = tokens[gradeIdx];
+  const grade = cleanGradeToken(rawGrade);
   let score = null;
   let nameTokens = tokens.slice(0, gradeIdx);
 
@@ -37,19 +52,23 @@ function parseSubjectRow(line) {
     }
   }
 
-  let code = null;
-  if (/^\d{2,4}$/.test(nameTokens[0] || '')) {
-    code = nameTokens.shift();
+  // Strip row index (e.g. "1.", "01", "101")
+  if (/^\d{1,4}[.)\]]?$/.test(nameTokens[0] || '')) {
+    nameTokens.shift();
   }
 
-  const name = nameTokens.join(' ').replace(/[:\-]+\s*$/, '').trim();
-  if (!name || name.length < 3) return null;
+  const name = nameTokens.join(' ').replace(/[:\-+*#|~.]+\s*$/, '').trim();
+  if (!name || name.length < 2) return null;
+
+  for (const pat of IGNORE_PATTERNS) {
+    if (pat.test(name)) return null;
+  }
 
   const norm = normalizeGrade(grade, 'neco');
   return {
     subject: {
       name: name.toUpperCase(),
-      code,
+      code: null,
       grade,
       grade_normalized: norm.normalized,
       score

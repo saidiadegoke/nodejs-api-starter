@@ -1,8 +1,9 @@
 import {
   Injectable,
+  Inject,
+  forwardRef,
   NotFoundException,
   ForbiddenException,
-  ConflictException,
   UnprocessableEntityException,
   InternalServerErrorException,
 } from '@nestjs/common';
@@ -12,6 +13,7 @@ import { RegistrationRepository } from '../../registration/repositories/registra
 import { RegistrationDocumentRepository } from '../../registration/repositories/registration-document.repository';
 import { DocumentRequirementRepository } from '../../document-requirements/repositories/document-requirement.repository';
 import { UserRepository } from '../../users/repositories/user.repository';
+import { OcrService } from '../../ocr/services/ocr.service';
 import {
   RegistrationDocumentStatus,
 } from '../../registration/entities/registration-document.entity';
@@ -50,6 +52,8 @@ export class SubmissionService {
     private readonly docRepo: RegistrationDocumentRepository,
     private readonly reqRepo: DocumentRequirementRepository,
     private readonly userRepo: UserRepository,
+    @Inject(forwardRef(() => OcrService))
+    private readonly ocrService: OcrService,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
@@ -253,13 +257,7 @@ export class SubmissionService {
     if (source && sitting) {
       const sameTuple = await this.docRepo.findCurrentBySourceSitting(reg.id, source, sitting);
       if (sameTuple) {
-        throw new ConflictException({
-          message: 'Result already uploaded for this source and sitting. PATCH /me/documents/:id to replace.',
-          details: {
-            error_code: 'duplicate_source_sitting',
-            existing_document_id: sameTuple.id,
-          },
-        });
+        await this.docRepo.markReplaced(sameTuple.id);
       }
     } else {
       const existing = await this.docRepo.findCurrentSubmittedOrAccepted(reg.id, requirement_id);
@@ -278,7 +276,14 @@ export class SubmissionService {
       institutionType: body.institution_type,
     });
 
-    return document;
+    const ocrJob = await this.dispatchOcrForDocument({
+      document,
+      requirement: reqRow,
+      userId,
+      registrationId: reg.id,
+    });
+
+    return ocrJob ? { ...document, ocr_job: ocrJob } : document;
   }
 
   async patchMeDocument(userId: string, documentId: string, body: PatchDocumentDto) {
@@ -311,7 +316,52 @@ export class SubmissionService {
       institutionType: body.institution_type !== undefined ? body.institution_type : row.institutionType,
     });
 
-    return document;
+    const ocrJob = await this.dispatchOcrForDocument({
+      document,
+      requirement: reqRow,
+      userId,
+      registrationId: reg.id,
+    });
+
+    return ocrJob ? { ...document, ocr_job: ocrJob } : document;
+  }
+
+  private async dispatchOcrForDocument({
+    document,
+    requirement,
+    userId,
+    registrationId,
+  }: {
+    document: any;
+    requirement: any;
+    userId: string;
+    registrationId: string;
+  }) {
+    if (!document || !document.source || !document.sitting) return null;
+    if (!requirement || !RESULT_REQUIREMENT_PATTERN.test(requirement.key)) return null;
+
+    try {
+      const { job } = await this.ocrService.createJob({
+        userId,
+        fileId: document.fileId || document.file_id,
+        examType: document.source && ['waec', 'neco', 'nabteb', 'gce'].includes(document.source)
+          ? document.source
+          : 'auto',
+        context: 'submission',
+        metadata: {
+          registration_id: registrationId,
+          requirement_id: document.requirementId || document.requirement_id,
+          document_id: document.id,
+          source: document.source,
+          sitting: document.sitting,
+          created_by: userId,
+        },
+      });
+      return job ? { id: job.id, status: job.status } : null;
+    } catch (err: any) {
+      this.logger.warn(`OCR auto-dispatch failed for document ${document.id}: ${err.message}`);
+      return null;
+    }
   }
 
   async deleteMyDocument(userId: string, documentId: string) {

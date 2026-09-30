@@ -9,15 +9,85 @@ const {
 
 const SUBJECT_LINE_RE = /^([A-Z][A-Z .&\-/()0-9]{2,60}?)\s+([A-F][1-9]?)\s*$/;
 
-const WAEC_GRADES = [
+const WAEC_GRADES = new Set([
   'A1', 'A2', 'A3',
   'B1', 'B2', 'B3',
   'C1', 'C2', 'C3', 'C4', 'C5', 'C6',
-  'D7', 'E8', 'F9'
+  'D7', 'E8', 'F9',
+  'A', 'B', 'C', 'D', 'E', 'F'
+]);
+
+const IGNORE_PATTERNS = [
+  /^(SUBJECT|GRADE|REMARK|POINT|SCORE|SERIAL|S\/N|NO\.|EXAMINATION|CANDIDATE|CENTRE|DATE|OFFICIAL|STATEMENT|COUNCIL|WEST AFRICAN|NATIONAL EXAM|RESULT SLIP|PROVISIONAL RESULT)/i,
+  /^(TOTAL|CREDITS?|PASSES?|PAGE|PRINTED|SECRETARY|REGISTRAR|CHAIRMAN|DATE OF BIRTH)/i,
+  /^[=\-_|~.+*#]+$/,
 ];
+
 function isWaecGrade(token) {
-  const t = (token || '').toUpperCase();
-  return WAEC_GRADES.includes(t) || /^[A-F][1-9]?$/.test(t);
+  const t = (token || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
+  return WAEC_GRADES.has(t) || /^[A-F][1-9]?$/.test(t);
+}
+
+function cleanGradeToken(token) {
+  return (token || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
+}
+
+function isLikelySubjectRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  for (const pat of IGNORE_PATTERNS) {
+    if (pat.test(trimmed)) return false;
+  }
+  const tokens = trimmed.replace(/[|:;~_]/g, ' ').split(/\s+/).filter(Boolean);
+  return tokens.some(isWaecGrade);
+}
+
+function parseSubjectRow(line) {
+  // Replace pipes, colons, ellipses and other table noise
+  const sanitized = line.replace(/[|:;~_]/g, ' ').replace(/\.{2,}/g, ' ');
+  const tokens = sanitized.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return null;
+
+  // Search for grade token from the right
+  let gradeIdx = -1;
+  for (let i = tokens.length - 1; i >= 0; i -= 1) {
+    if (isWaecGrade(tokens[i])) {
+      gradeIdx = i;
+      break;
+    }
+  }
+  if (gradeIdx < 1) return null;
+
+  const rawGrade = tokens[gradeIdx];
+  const grade = cleanGradeToken(rawGrade);
+  const beforeGrade = tokens.slice(0, gradeIdx);
+
+  // Strip row index (e.g. "1.", "10)", "01") or subject code (e.g. "104")
+  if (/^\d{1,4}[.)\]]?$/.test(beforeGrade[0] || '')) {
+    beforeGrade.shift();
+  }
+
+  // Remove common trailing noise words before the grade if any
+  const name = beforeGrade.join(' ').replace(/[:\-+*#|~.]+\s*$/, '').trim();
+  if (!name || name.length < 2) return null;
+
+  // Verify name doesn't match header keywords
+  for (const pat of IGNORE_PATTERNS) {
+    if (pat.test(name)) return null;
+  }
+
+  const norm = normalizeGrade(grade, 'waec');
+
+  return {
+    subject: {
+      name: name.toUpperCase(),
+      code: null,
+      grade,
+      grade_normalized: norm.normalized,
+      score: null
+    },
+    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null
+  };
 }
 
 function parseSubjects(lines) {
@@ -32,50 +102,6 @@ function parseSubjects(lines) {
     if (parsed.warning) warnings.push(parsed.warning);
   }
   return { subjects, warnings };
-}
-
-function isLikelySubjectRow(line) {
-  // Must contain a WAEC-style grade somewhere
-  const tokens = line.split(/\s+/);
-  return tokens.some(isWaecGrade);
-}
-
-function parseSubjectRow(line) {
-  // Pull the trailing grade and treat the rest as the subject name.
-  const tokens = line.split(/\s+/);
-  let gradeIdx = -1;
-  for (let i = tokens.length - 1; i >= 0; i -= 1) {
-    if (isWaecGrade(tokens[i])) {
-      gradeIdx = i;
-      break;
-    }
-  }
-  if (gradeIdx <= 0) return null;
-
-  const grade = tokens[gradeIdx].toUpperCase();
-  const beforeGrade = tokens.slice(0, gradeIdx);
-
-  // Some certificates include a numeric subject code at the start.
-  let code = null;
-  if (/^\d{2,4}$/.test(beforeGrade[0] || '')) {
-    code = beforeGrade.shift();
-  }
-
-  const name = beforeGrade.join(' ').replace(/[:\-]+\s*$/, '').trim();
-  if (!name || name.length < 3) return null;
-
-  const norm = normalizeGrade(grade, 'waec');
-
-  return {
-    subject: {
-      name: name.toUpperCase(),
-      code,
-      grade,
-      grade_normalized: norm.normalized,
-      score: null
-    },
-    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null
-  };
 }
 
 function parseWaec(text, { detected = 'waec' } = {}) {
