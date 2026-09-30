@@ -13,21 +13,17 @@ const HEADER_LOOKUP = [
       /GENERAL\s+CERTIFICATE\s+OF\s+EDUCATION/i,
       /\bGCE\b/i,
       /CAMBRIDGE\s+(INTERNATIONAL\s+)?(GENERAL\s+CERTIFICATE|EXAMINATIONS)/i,
-      /\bA-?\s*LEVEL\b/i
-    ]
-  }
+      /\bA-?\s*LEVEL\b/i,
+    ],
+  },
 ];
 
-function classifyExamType(text) {
+export function classifyExamType(text?: string | null): string {
   if (!text || typeof text !== 'string') return 'generic';
   const head = text.slice(0, 800);
 
-  // Check WAEC first; then NECO; then NABTEB; then GCE.
-  // (WAEC also operates a GCE programme — header for that says
-  //  "WEST AFRICAN ... GENERAL CERTIFICATE EXAMINATION (GCE)" — we honor
-  //  GCE in that case because the result format differs from SSCE.)
   const looksLikeGce = HEADER_LOOKUP.find((entry) => entry.type === 'gce')
-    .patterns.some((p) => p.test(head));
+    ?.patterns.some((p) => p.test(head));
 
   if (looksLikeGce) return 'gce';
 
@@ -37,5 +33,3 @@ function classifyExamType(text) {
   }
   return 'generic';
 }
-
-module.exports = { classifyExamType };

@@ -109,8 +109,9 @@ export class CandidateSyncProcessor extends WorkerHost {
             }
           }
         } catch (attErr: any) {
-          const errMsg = `[AttendanceSync] Chunk error: ${attErr.message}`;
-          this.logger.error(errMsg, attErr.stack);
+          const detail = attErr.details?.upstream || attErr.details || attErr.message;
+          const errMsg = `[AttendanceSync] Chunk error: ${attErr.message}${detail && typeof detail === 'string' ? ` - ${detail}` : ''}`;
+          this.logger.warn(errMsg, attErr.stack || attErr);
           errors.push(errMsg);
         }
 
@@ -128,8 +129,9 @@ export class CandidateSyncProcessor extends WorkerHost {
             }
           }
         } catch (crmsErr: any) {
-          const errMsg = `[CrmsSync] Chunk error: ${crmsErr.message}`;
-          this.logger.error(errMsg, crmsErr.stack);
+          const detail = crmsErr.details?.upstream || crmsErr.details || crmsErr.message;
+          const errMsg = `[CrmsSync] Chunk error: ${crmsErr.message}${detail && typeof detail === 'string' ? ` - ${detail}` : ''}`;
+          this.logger.warn(errMsg, crmsErr.stack || crmsErr);
           errors.push(errMsg);
         }
       }
@@ -172,13 +174,13 @@ export class CandidateSyncProcessor extends WorkerHost {
     const query = `
       SELECT
         r.id AS "registration_id",
-        COALESCE(r.jupeb_candidate_number, r.provisional_candidate_code) AS "jupebNumber",
+        COALESCE(r.jupeb_candidate_number, r.provisional_candidate_code, r.institution_issued_code) AS "jupebNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         u.email AS "email",
-        uni.jupeb_prefix AS "institutionCode",
+        COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
         'STUDENT' AS "role",
-        UPPER(p.gender) AS "gender",
+        UPPER(COALESCE(p.gender, '')) AS "gender",
         p.date_of_birth AS "dateOfBirth",
         u.phone AS "phone",
         p.residential_address AS "address",
@@ -192,7 +194,7 @@ export class CandidateSyncProcessor extends WorkerHost {
       FROM jupeb_registrations r
       JOIN users u ON u.id = r.user_id
       LEFT JOIN profiles p ON p.user_id = u.id
-      JOIN jupeb_universities uni ON uni.id = r.university_id
+      LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
       WHERE r.id = ANY($1::uuid[])
     `;
     return this.dataSource.query(query, [registrationIds]);
@@ -202,10 +204,10 @@ export class CandidateSyncProcessor extends WorkerHost {
     const query = `
       SELECT
         r.id AS "registration_id",
-        COALESCE(r.jupeb_candidate_number, r.provisional_candidate_code) AS "candidateNumber",
+        COALESCE(r.jupeb_candidate_number, r.provisional_candidate_code, r.institution_issued_code) AS "candidateNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
-        uni.jupeb_prefix AS "institutionCode",
+        COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
         s.academic_year AS "sessionAcademicYear",
         s.year_short AS "sessionYearShort",
         (
@@ -217,7 +219,7 @@ export class CandidateSyncProcessor extends WorkerHost {
       FROM jupeb_registrations r
       JOIN users u ON u.id = r.user_id
       LEFT JOIN profiles p ON p.user_id = u.id
-      JOIN jupeb_universities uni ON uni.id = r.university_id
+      LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
       LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
       WHERE r.id = ANY($1::uuid[])
     `;

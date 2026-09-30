@@ -22,7 +22,7 @@ import {
   PatchDocumentDto,
 } from '../dto';
 
-const RESULT_REQUIREMENT_PATTERN = /^(waec|neco|nabteb|gce|jamb)(_result)?$/i;
+const RESULT_REQUIREMENT_PATTERN = /^(waec|neco|nabteb|gce|jamb|olevel|result|primary_olevel|secondary_olevel)(_result)?$/i;
 const ALLOWED_SOURCES = new Set(['waec', 'neco', 'nabteb', 'gce', 'jamb', 'other']);
 const ROLE_MANAGE_REQ = new Set(['super_admin', 'admin', 'registrar']);
 const ROLE_INST_REVIEW = new Set([
@@ -34,12 +34,13 @@ const ROLE_INST_REVIEW = new Set([
 ]);
 
 function isResultRequirementKey(key?: string): boolean {
-  return typeof key === 'string' && RESULT_REQUIREMENT_PATTERN.test(key);
+  if (!key || typeof key !== 'string') return false;
+  return RESULT_REQUIREMENT_PATTERN.test(key) || /(waec|neco|nabteb|gce|jamb|olevel)/i.test(key);
 }
 
 function inferSourceFromRequirementKey(key?: string): string | null {
   if (!key) return null;
-  const m = String(key).toLowerCase().match(/^(waec|neco|nabteb|gce|jamb)/);
+  const m = String(key).toLowerCase().match(/(waec|neco|nabteb|gce|jamb)/);
   return m ? m[1] : null;
 }
 
@@ -283,7 +284,13 @@ export class SubmissionService {
       registrationId: reg.id,
     });
 
-    return ocrJob ? { ...document, ocr_job: ocrJob } : document;
+    return ocrJob
+      ? {
+          ...document,
+          ocr_job: ocrJob,
+          ocr_result: ocrJob.result || null,
+        }
+      : document;
   }
 
   async patchMeDocument(userId: string, documentId: string, body: PatchDocumentDto) {
@@ -323,7 +330,13 @@ export class SubmissionService {
       registrationId: reg.id,
     });
 
-    return ocrJob ? { ...document, ocr_job: ocrJob } : document;
+    return ocrJob
+      ? {
+          ...document,
+          ocr_job: ocrJob,
+          ocr_result: ocrJob.result || null,
+        }
+      : document;
   }
 
   private async dispatchOcrForDocument({
@@ -341,13 +354,14 @@ export class SubmissionService {
     if (!requirement || !RESULT_REQUIREMENT_PATTERN.test(requirement.key)) return null;
 
     try {
-      const { job } = await this.ocrService.createJob({
+      const { job, completedJob } = await this.ocrService.createJob({
         userId,
         fileId: document.fileId || document.file_id,
         examType: document.source && ['waec', 'neco', 'nabteb', 'gce'].includes(document.source)
           ? document.source
           : 'auto',
         context: 'submission',
+        wait: true,
         metadata: {
           registration_id: registrationId,
           requirement_id: document.requirementId || document.requirement_id,
@@ -357,9 +371,21 @@ export class SubmissionService {
           created_by: userId,
         },
       });
-      return job ? { id: job.id, status: job.status } : null;
+
+      const finalJob = completedJob || job;
+      let ocrResult: any = null;
+      if (finalJob) {
+        const fullJob = await this.ocrService.getJob(finalJob.id, userId).catch(() => null);
+        ocrResult = fullJob?.result?.result_json || null;
+      }
+
+      return {
+        id: finalJob.id,
+        status: finalJob.status,
+        result: ocrResult,
+      };
     } catch (err: any) {
-      this.logger.warn(`OCR auto-dispatch failed for document ${document.id}: ${err.message}`);
+      this.logger.warn(`OCR immediate processing failed for document ${document.id}: ${err.message}`);
       return null;
     }
   }

@@ -592,10 +592,219 @@ export class RegistrationService {
   }
 
   /**
-   * Get student registration profile.
+   * Get student registration profile in structured mobile format.
    */
   async getStudentProfile(userId: string) {
-    return this.getCurrentStudentRegistration(userId);
+    return this.buildStudentProfile(userId);
+  }
+
+  /**
+   * Build complete candidate profile for mobile and web self-service.
+   */
+  async buildStudentProfile(userId: string) {
+    const reg = await this.regRepo.findByUserId(userId);
+    if (!reg) throw new NotFoundException('No registration found for current user');
+
+    const [userRows, ninRows, nokRows, bioRows, uniRows, sessionRows, scRows] = await Promise.all([
+      this.dataSource.query(
+        `SELECT u.id, u.email, u.phone, p.title, p.first_name, p.last_name, p.display_name,
+                p.date_of_birth, p.gender, p.profile_photo_url,
+                p.residential_address, p.state_of_origin, p.lga, p.place_of_birth, p.country
+           FROM users u
+           LEFT JOIN profiles p ON p.user_id = u.id
+          WHERE u.id = $1`,
+        [userId],
+      ),
+      reg.ninVerificationId
+        ? this.dataSource.query(
+            `SELECT id, status, response_payload, intake_payload
+               FROM jupeb_nin_verifications
+              WHERE id = $1`,
+            [reg.ninVerificationId],
+          )
+        : Promise.resolve([]),
+      this.dataSource.query(
+        `SELECT name, relationship, phone, email, address, source
+           FROM jupeb_next_of_kin
+          WHERE registration_id = $1
+            AND is_active = true
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [reg.id],
+      ),
+      this.dataSource.query(
+        `SELECT b.file_id, b.external_reference, f.file_url
+           FROM jupeb_biometric_captures b
+           LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+          WHERE b.registration_id = $1
+            AND b.capture_type = 'face'
+            AND b.replaced_at IS NULL
+          ORDER BY b.created_at DESC
+          LIMIT 1`,
+        [reg.id],
+      ),
+      reg.universityId
+        ? this.dataSource.query(
+            `SELECT id, name, short_name, jupeb_prefix, institution_type
+               FROM jupeb_universities
+              WHERE id = $1`,
+            [reg.universityId],
+          )
+        : Promise.resolve([]),
+      reg.sessionId
+        ? this.dataSource.query(
+            `SELECT id, academic_year, year_short
+               FROM jupeb_registration_sessions
+              WHERE id = $1`,
+            [reg.sessionId],
+          )
+        : Promise.resolve([]),
+      reg.subjectCombinationId
+        ? this.dataSource.query(
+            `SELECT id, code, title
+               FROM jupeb_subject_combinations
+              WHERE id = $1`,
+            [reg.subjectCombinationId],
+          )
+        : Promise.resolve([]),
+    ]);
+
+    const u = userRows[0] || {};
+    const ninRow = ninRows[0] || null;
+    const ninPayload = ninRow?.response_payload || {};
+    const intake = ninRow?.intake_payload || {};
+    const ninStatus = ninRow?.status || null;
+
+    let fullName = null;
+    try {
+      const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
+      fullName = resolveCandidateDisplayName({
+        ninPayload,
+        intake,
+        profile: u,
+        ninStatus,
+      });
+    } catch {
+      fullName = u.display_name || [u.first_name, u.last_name].filter(Boolean).join(' ') || null;
+    }
+
+    let facePhotoUrl: string | null = null;
+    if (bioRows[0]) {
+      const b = bioRows[0];
+      facePhotoUrl =
+        b.file_url ||
+        (b.external_reference &&
+        (b.external_reference.startsWith('http://') || b.external_reference.startsWith('https://'))
+          ? b.external_reference
+          : null);
+      if (!facePhotoUrl && b.file_id) {
+        try {
+          const f = await this.dataSource.query(`SELECT file_url FROM files WHERE id = $1`, [b.file_id]);
+          facePhotoUrl = f[0]?.file_url || null;
+        } catch {
+          // File record query failed or table absent; fallback to profile/nin photo
+        }
+      }
+    }
+    if (!facePhotoUrl) {
+      facePhotoUrl = u.profile_photo_url || null;
+    }
+
+    const resolvedPhoto = facePhotoUrl || ninPayload.photo_url || u.profile_photo_url || null;
+
+    let geo: any = { country: { id: 1, name: 'Nigeria' }, state_of_origin: null, lga: null };
+    try {
+      const GeoModel = require('../../../utils/models/geo.model');
+      geo = await GeoModel.resolveBundle({
+        country: u.country || 'Nigeria',
+        stateOfOrigin: u.state_of_origin || ninPayload.state_of_origin || null,
+        lga: u.lga || ninPayload.lga || null,
+      });
+    } catch {
+      // Geo model resolution optional; fall back to defaults
+    }
+
+    const nokRow = nokRows[0] || null;
+    const ninNok = ninPayload.next_of_kin || null;
+
+    const uni = uniRows[0] || null;
+    const sess = sessionRows[0] || null;
+    const sc = scRows[0] || null;
+
+    return {
+      candidate: {
+        id: reg.id,
+        full_name: fullName,
+        provisional_candidate_code: reg.provisionalCandidateCode || null,
+        jupeb_candidate_number: reg.jupebCandidateNumber || null,
+        photo_url: resolvedPhoto,
+        face_photo_url: facePhotoUrl,
+        status: reg.status,
+      },
+      basic_information: {
+        date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
+        gender: ninPayload.gender || u.gender || null,
+        residential_address: u.residential_address || ninPayload.address || intake.address || null,
+        country: geo.country || { id: 1, name: 'Nigeria' },
+        state_of_origin: geo.state_of_origin || (u.state_of_origin ? { id: null, name: u.state_of_origin } : null),
+        lga: geo.lga || (u.lga ? { id: null, name: u.lga } : null),
+        place_of_birth: u.place_of_birth || ninPayload.place_of_birth || null,
+      },
+      contact_information: {
+        email: u.email || intake.email || null,
+        phone: u.phone || intake.phone || ninPayload.phone || null,
+      },
+      next_of_kin: nokRow
+        ? {
+            name: nokRow.name,
+            relationship: nokRow.relationship,
+            contact_no: nokRow.phone,
+            phone: nokRow.phone,
+            email: nokRow.email || null,
+            address: nokRow.address || null,
+            source: nokRow.source || 'registrar',
+          }
+        : ninNok
+        ? {
+            name: ninNok.name || ninNok.full_name || null,
+            relationship: ninNok.relationship || ninNok.relation || null,
+            contact_no: ninNok.phone || ninNok.contact || null,
+            phone: ninNok.phone || ninNok.contact || null,
+            email: ninNok.email || null,
+            address: ninNok.address || null,
+            source: 'nin',
+          }
+        : null,
+      subject_combination: sc
+        ? {
+            id: sc.id,
+            code: sc.code,
+            title: sc.title,
+          }
+        : null,
+      university: uni
+        ? {
+            id: uni.id,
+            name: uni.name,
+            short_name: uni.short_name,
+            jupeb_prefix: uni.jupeb_prefix,
+            institution_type: uni.institution_type || null,
+          }
+        : null,
+      session: sess
+        ? {
+            id: sess.id,
+            academic_year: sess.academic_year,
+            year_short: sess.year_short,
+          }
+        : null,
+      nin_verification: ninRow
+        ? {
+            id: ninRow.id,
+            status: ninRow.status,
+          }
+        : null,
+    };
   }
 
   /**
@@ -633,23 +842,63 @@ export class RegistrationService {
   /**
    * Get examination results and subject scores for authenticated candidate.
    */
-  async getStudentExamResults(userId: string) {
+  async getStudentExamResults(userId: string, query?: { source?: string; sitting?: number }) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
-    const results = await this.dataSource.query(
-      `SELECT * FROM jupeb_registration_results WHERE registration_id = $1`,
-      [reg.id],
-    );
-    const scores = await this.dataSource.query(
-      `SELECT * FROM jupeb_registration_scores WHERE registration_id = $1`,
-      [reg.id],
-    );
+    let sql = `
+      SELECT e.*, ores.confidence AS ocr_confidence, ores.exam_type_detected AS ocr_exam_type
+      FROM jupeb_result_entries e
+      LEFT JOIN ocr_results ores ON ores.job_id = e.ocr_job_id
+      WHERE e.registration_id = $1
+    `;
+    const params: any[] = [reg.id];
+    if (query?.source) {
+      params.push(query.source.toLowerCase().trim());
+      sql += ` AND LOWER(e.source) = $${params.length}`;
+    }
+    if (query?.sitting) {
+      params.push(Number(query.sitting));
+      sql += ` AND e.sitting = $${params.length}`;
+    }
+    sql += ` ORDER BY e.source ASC, e.sitting ASC, e.serial ASC`;
+
+    const rows = await this.dataSource.query(sql, params);
+
+    // Group entries by (source, sitting) for frontends/mobile apps
+    const groups: Record<string, any> = {};
+    for (const row of rows) {
+      const key = `${row.source}-${row.sitting}`;
+      if (!groups[key]) {
+        groups[key] = {
+          source: row.source,
+          sitting: row.sitting,
+          grades: [],
+          subjects: [],
+        };
+      }
+      const item = {
+        id: row.id,
+        sn: row.serial !== undefined && row.serial !== null ? row.serial : groups[key].grades.length + 1,
+        serial: row.serial,
+        subject: row.subject,
+        grade: row.grade,
+        grade_normalized: row.grade_normalized,
+        score: row.score,
+        origin: row.origin,
+        ocr_job_id: row.ocr_job_id,
+        ocr_confidence: row.ocr_confidence ? Number(row.ocr_confidence) : null,
+        ocr_exam_type: row.ocr_exam_type,
+        updated_at: row.updated_at,
+      };
+      groups[key].grades.push(item);
+      groups[key].subjects.push(item);
+    }
 
     return {
       registration_id: reg.id,
-      results,
-      scores,
+      results: Object.values(groups),
+      entries: rows,
     };
   }
 
@@ -687,7 +936,8 @@ export class RegistrationService {
   async updateStudentProfile(dto: PatchCandidateDto, userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
-    return this.updateCandidateProfile(reg.id, dto, userId);
+    await this.updateCandidateProfile(reg.id, dto, userId);
+    return this.buildStudentProfile(userId);
   }
 
   /**

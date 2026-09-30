@@ -1,13 +1,12 @@
-const { BaseProvider, ProviderUnavailableError } = require('./base.provider');
+import { BaseProvider, ExtractionInput, ExtractionResult, ProviderUnavailableError } from './base.provider';
 
-let pdfParsePromise;
+let pdfParsePromise: Promise<any> | null = null;
 async function getPdfParse() {
   if (!pdfParsePromise) {
     pdfParsePromise = (async () => {
       try {
-        // eslint-disable-next-line global-require, import/no-unresolved
         return require('pdf-parse');
-      } catch (err) {
+      } catch {
         throw new ProviderUnavailableError('pdf_text', 'pdf-parse not installed');
       }
     })();
@@ -15,29 +14,27 @@ async function getPdfParse() {
   return pdfParsePromise;
 }
 
-class PdfTextProvider extends BaseProvider {
-  get name() {
+export class PdfTextProvider extends BaseProvider {
+  get name(): string {
     return 'pdf_text';
   }
 
-  supportsMime(mimeType) {
+  supportsMime(mimeType: string): boolean {
     return mimeType === 'application/pdf';
   }
 
-  async extractText({ buffer }) {
+  async extractText({ buffer }: ExtractionInput): Promise<ExtractionResult> {
     const pdfParse = await getPdfParse();
     const data = await pdfParse(buffer);
     const text = (data.text || '').trim();
     const pages = data.numpages || 1;
 
     if (!text || text.length < 20) {
-      // Probably a scanned PDF without a text layer; signal low confidence
-      // so the chain advances to Tesseract.
       return {
         text,
         pages,
         providerPayload: { info: data.info || {}, metadata: data.metadata || null },
-        providerConfidence: 0
+        providerConfidence: 0,
       };
     }
 
@@ -45,9 +42,9 @@ class PdfTextProvider extends BaseProvider {
       text,
       pages,
       providerPayload: { info: data.info || {}, metadata: data.metadata || null },
-      providerConfidence: 98
+      providerConfidence: 98,
     };
   }
 }
 
-module.exports = PdfTextProvider;
+export default PdfTextProvider;

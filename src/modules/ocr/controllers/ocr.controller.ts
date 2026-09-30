@@ -102,13 +102,15 @@ export class OcrController {
       };
     }
 
+    const shouldWait = body.wait !== undefined ? Boolean(body.wait) : true;
+
     const { job, completedJob } = await this.ocrService.createJob({
       userId,
       fileId: body.file_id || null,
       multerFile: file || null,
       base64: base64Payload,
       examType: body.exam_type || 'auto',
-      wait: Boolean(body.wait),
+      wait: shouldWait,
       context: body.context || null,
       metadata,
     });

@@ -360,9 +360,9 @@ export class RegistrationController {
   @ApiOperation({
     summary: 'Get candidate exam results and subject scores',
   })
-  async getStudentExamResults(@Req() req: any) {
+  async getStudentExamResults(@Req() req: any, @Query() query?: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getStudentExamResults(userId);
+    return this.registrationService.getStudentExamResults(userId, query);
   }
 
   @Get('me/slip')

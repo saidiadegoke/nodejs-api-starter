@@ -40,6 +40,7 @@ export function clearTokenCache() {
   tokenCache = null;
   tokenPromise = null;
 }
+export const _clearTokenCache = clearTokenCache;
 
 export async function generateAccessToken(): Promise<string> {
   const { applicationName } = assertConfigured();

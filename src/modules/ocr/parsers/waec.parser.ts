@@ -1,20 +1,18 @@
-const { normalizeGrade } = require('./grade-normalizer');
-const {
+import { normalizeGrade } from './grade-normalizer';
+import {
   normalizeLines,
   findAfter,
   tryParseDate,
   extractYear,
-  extractDiet
-} = require('../utils/text-cleanup');
-
-const SUBJECT_LINE_RE = /^([A-Z][A-Z .&\-/()0-9]{2,60}?)\s+([A-F][1-9]?)\s*$/;
+  extractDiet,
+} from '../utils/text-cleanup';
 
 const WAEC_GRADES = new Set([
   'A1', 'A2', 'A3',
   'B1', 'B2', 'B3',
   'C1', 'C2', 'C3', 'C4', 'C5', 'C6',
   'D7', 'E8', 'F9',
-  'A', 'B', 'C', 'D', 'E', 'F'
+  'A', 'B', 'C', 'D', 'E', 'F',
 ]);
 
 const IGNORE_PATTERNS = [
@@ -23,16 +21,16 @@ const IGNORE_PATTERNS = [
   /^[=\-_|~.+*#]+$/,
 ];
 
-function isWaecGrade(token) {
+function isWaecGrade(token: string): boolean {
   const t = (token || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
   return WAEC_GRADES.has(t) || /^[A-F][1-9]?$/.test(t);
 }
 
-function cleanGradeToken(token) {
+function cleanGradeToken(token: string): string {
   return (token || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
 }
 
-function isLikelySubjectRow(line) {
+function isLikelySubjectRow(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
   for (const pat of IGNORE_PATTERNS) {
@@ -42,13 +40,11 @@ function isLikelySubjectRow(line) {
   return tokens.some(isWaecGrade);
 }
 
-function parseSubjectRow(line) {
-  // Replace pipes, colons, ellipses and other table noise
+function parseSubjectRow(line: string) {
   const sanitized = line.replace(/[|:;~_]/g, ' ').replace(/\.{2,}/g, ' ');
   const tokens = sanitized.split(/\s+/).filter(Boolean);
   if (tokens.length < 2) return null;
 
-  // Search for grade token from the right
   let gradeIdx = -1;
   for (let i = tokens.length - 1; i >= 0; i -= 1) {
     if (isWaecGrade(tokens[i])) {
@@ -62,16 +58,13 @@ function parseSubjectRow(line) {
   const grade = cleanGradeToken(rawGrade);
   const beforeGrade = tokens.slice(0, gradeIdx);
 
-  // Strip row index (e.g. "1.", "10)", "01") or subject code (e.g. "104")
   if (/^\d{1,4}[.)\]]?$/.test(beforeGrade[0] || '')) {
     beforeGrade.shift();
   }
 
-  // Remove common trailing noise words before the grade if any
   const name = beforeGrade.join(' ').replace(/[:\-+*#|~.]+\s*$/, '').trim();
   if (!name || name.length < 2) return null;
 
-  // Verify name doesn't match header keywords
   for (const pat of IGNORE_PATTERNS) {
     if (pat.test(name)) return null;
   }
@@ -84,15 +77,15 @@ function parseSubjectRow(line) {
       code: null,
       grade,
       grade_normalized: norm.normalized,
-      score: null
+      score: null,
     },
-    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null
+    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null,
   };
 }
 
-function parseSubjects(lines) {
-  const subjects = [];
-  const warnings = [];
+function parseSubjects(lines: string[]) {
+  const subjects: any[] = [];
+  const warnings: string[] = [];
 
   for (const line of lines) {
     if (!isLikelySubjectRow(line)) continue;
@@ -104,7 +97,7 @@ function parseSubjects(lines) {
   return { subjects, warnings };
 }
 
-function parseWaec(text, { detected = 'waec' } = {}) {
+export function parseWaec(text: string, { detected = 'waec' }: { detected?: string } = {}) {
   const lines = normalizeLines(text);
   const headLines = lines.slice(0, 30);
 
@@ -116,13 +109,13 @@ function parseWaec(text, { detected = 'waec' } = {}) {
       findAfter(lines, 'CANDIDATE NUMBER'),
     centre_number: findAfter(lines, 'CENTRE\\s*NO') || findAfter(lines, 'CENTRE NUMBER'),
     centre_name: findAfter(lines, 'CENTRE\\s*NAME') || findAfter(lines, 'CENTRE'),
-    date_of_birth: tryParseDate(findAfter(lines, 'DATE\\s*OF\\s*BIRTH'))
+    date_of_birth: tryParseDate(findAfter(lines, 'DATE\\s*OF\\s*BIRTH')),
   };
 
   const { subjects, warnings } = parseSubjects(lines);
   const credits = subjects.filter((s) => ['A', 'B', 'C'].includes(s.grade_normalized)).length;
   const passes = subjects.filter(
-    (s) => s.grade_normalized && s.grade_normalized !== 'F'
+    (s) => s.grade_normalized && s.grade_normalized !== 'F',
   ).length;
 
   const explicitYear = findAfter(lines, 'EXAM(?:INATION)?\\s*YEAR') ||
@@ -139,7 +132,9 @@ function parseWaec(text, { detected = 'waec' } = {}) {
 
   return {
     exam_type: detected,
-    exam_body: 'WEST AFRICAN EXAMINATIONS COUNCIL',
+    exam_body: detected === 'nabteb'
+      ? 'NATIONAL BUSINESS AND TECHNICAL EXAMINATIONS BOARD'
+      : 'WEST AFRICAN EXAMINATIONS COUNCIL',
     exam_year: examYear,
     exam_diet: examDiet,
     candidate,
@@ -147,10 +142,8 @@ function parseWaec(text, { detected = 'waec' } = {}) {
     summary: {
       subject_count: subjects.length,
       credits,
-      passes
+      passes,
     },
-    warnings
+    warnings,
   };
 }
-
-module.exports = { parseWaec };

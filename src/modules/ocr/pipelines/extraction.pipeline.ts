@@ -1,41 +1,47 @@
-const {
+import {
   resolveProvider,
   defaultChain,
-  fallbackProvider
-} = require('../providers');
-const {
+  fallbackProvider,
+} from '../providers';
+import {
   ProviderUnavailableError,
-  ProviderLowConfidenceError
-} = require('../providers/base.provider');
+  ProviderLowConfidenceError,
+  ExtractionInput,
+  ExtractionResult,
+} from '../providers/base.provider';
 
-const CONFIDENCE_FLOOR = parseFloat(process.env.OCR_CONFIDENCE_FLOOR || '60');
+export const CONFIDENCE_FLOOR = parseFloat(process.env.OCR_CONFIDENCE_FLOOR || '60');
 
-/**
- * Run the configured provider chain against a document.
- *
- * Strategy:
- *   1. Try each provider in the default chain in order.
- *   2. If a provider throws ProviderUnavailableError, skip it.
- *   3. If a provider returns confidence below the floor and there is a
- *      next provider, skip it (treat as low confidence).
- *   4. After the default chain, if a fallback provider is configured and
- *      we still don't have a confident result, try it.
- *   5. If nothing produced text, throw OCR_UNREADABLE.
- *
- * Returns the best result we got (highest confidence among providers that
- * produced any text).
- */
-async function runChain({ buffer, mimeType, filename, forcedProvider = null }) {
+export interface ExtractionAttempt {
+  ok: boolean;
+  name: string;
+  skipped?: boolean;
+  reason?: string;
+  error?: any;
+  result?: ExtractionResult;
+}
+
+export interface ChainResult {
+  result: ExtractionResult;
+  attempts: ExtractionAttempt[];
+}
+
+export async function runChain({
+  buffer,
+  mimeType,
+  filename,
+  forcedProvider = null,
+}: ExtractionInput & { forcedProvider?: string | null }): Promise<ChainResult> {
   const chain = forcedProvider ? [forcedProvider] : defaultChain();
   const fallback = forcedProvider ? null : fallbackProvider();
 
-  let best = null;
-  const attempts = [];
+  let best: ExtractionResult | null = null;
+  const attempts: ExtractionAttempt[] = [];
 
   for (const name of chain) {
     const outcome = await tryProvider(name, { buffer, mimeType, filename });
     attempts.push(outcome);
-    if (!outcome.ok) continue;
+    if (!outcome.ok || !outcome.result) continue;
 
     if (!best || outcome.result.providerConfidence > best.providerConfidence) {
       best = outcome.result;
@@ -48,7 +54,7 @@ async function runChain({ buffer, mimeType, filename, forcedProvider = null }) {
   if (fallback) {
     const outcome = await tryProvider(fallback, { buffer, mimeType, filename });
     attempts.push(outcome);
-    if (outcome.ok) {
+    if (outcome.ok && outcome.result) {
       if (!best || outcome.result.providerConfidence > best.providerConfidence) {
         best = outcome.result;
       }
@@ -56,7 +62,7 @@ async function runChain({ buffer, mimeType, filename, forcedProvider = null }) {
   }
 
   if (!best || !best.text || !best.text.trim()) {
-    const err = new Error('OCR could not extract any usable text');
+    const err: any = new Error('OCR could not extract any usable text');
     err.code = 'OCR_UNREADABLE';
     err.attempts = attempts;
     throw err;
@@ -65,11 +71,11 @@ async function runChain({ buffer, mimeType, filename, forcedProvider = null }) {
   return { result: best, attempts };
 }
 
-async function tryProvider(name, input) {
+async function tryProvider(name: string, input: ExtractionInput): Promise<ExtractionAttempt> {
   let provider;
   try {
     provider = resolveProvider(name);
-  } catch (err) {
+  } catch (err: any) {
     if (err instanceof ProviderUnavailableError) {
       return { ok: false, name, skipped: true, reason: err.reason };
     }
@@ -85,9 +91,9 @@ async function tryProvider(name, input) {
     return {
       ok: true,
       name,
-      result: { ...result, providerName: name }
+      result: { ...result, providerName: name },
     };
-  } catch (err) {
+  } catch (err: any) {
     if (
       err instanceof ProviderUnavailableError ||
       err instanceof ProviderLowConfidenceError
@@ -97,8 +103,3 @@ async function tryProvider(name, input) {
     return { ok: false, name, skipped: false, error: err };
   }
 }
-
-module.exports = {
-  runChain,
-  CONFIDENCE_FLOOR
-};

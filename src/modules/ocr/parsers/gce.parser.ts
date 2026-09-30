@@ -1,17 +1,15 @@
-const { normalizeGrade } = require('./grade-normalizer');
-const {
+import { normalizeGrade } from './grade-normalizer';
+import {
   normalizeLines,
   findAfter,
   tryParseDate,
-  extractYear
-} = require('../utils/text-cleanup');
+  extractYear,
+} from '../utils/text-cleanup';
 
-// GCE A-Level uses single letters A..E and U.
-// WAEC GCE (O-Level GCE) uses the same scheme as WAEC SSCE (A1..F9).
 const A_LEVEL_RE = /^[A-EU]$/;
 const SSCE_RE = /^([A-F][1-9]?)$/;
 
-function parseSubjectRow(line) {
+function parseSubjectRow(line: string) {
   const tokens = line.split(/\s+/);
   let gradeIdx = -1;
   for (let i = tokens.length - 1; i >= 0; i -= 1) {
@@ -26,7 +24,7 @@ function parseSubjectRow(line) {
   const nameTokens = tokens.slice(0, gradeIdx);
   if (!nameTokens.length) return null;
 
-  const name = nameTokens.join(' ').replace(/[:\-]+\s*$/, '').trim();
+  const name = nameTokens.join(' ').replace(/[:-]+\s*$/, '').trim();
   if (!name || name.length < 3) return null;
 
   const norm = normalizeGrade(grade, 'gce');
@@ -36,13 +34,13 @@ function parseSubjectRow(line) {
       code: null,
       grade,
       grade_normalized: norm.normalized,
-      score: null
+      score: null,
     },
-    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null
+    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null,
   };
 }
 
-function parseGce(text, { detected = 'gce' } = {}) {
+export function parseGce(text: string, { detected = 'gce' }: { detected?: string } = {}) {
   const lines = normalizeLines(text);
   const candidate = {
     name: findAfter(lines, 'NAME') || findAfter(lines, 'CANDIDATE NAME'),
@@ -52,11 +50,11 @@ function parseGce(text, { detected = 'gce' } = {}) {
       findAfter(lines, 'EXAM\\.?\\s*NO'),
     centre_number: findAfter(lines, 'CENTRE\\s*NO'),
     centre_name: findAfter(lines, 'CENTRE'),
-    date_of_birth: tryParseDate(findAfter(lines, 'DATE\\s*OF\\s*BIRTH'))
+    date_of_birth: tryParseDate(findAfter(lines, 'DATE\\s*OF\\s*BIRTH')),
   };
 
-  const subjects = [];
-  const warnings = [];
+  const subjects: any[] = [];
+  const warnings: string[] = [];
   for (const line of lines) {
     const parsed = parseSubjectRow(line);
     if (!parsed) continue;
@@ -66,7 +64,7 @@ function parseGce(text, { detected = 'gce' } = {}) {
 
   const credits = subjects.filter((s) => ['A', 'B', 'C'].includes(s.grade_normalized)).length;
   const passes = subjects.filter(
-    (s) => s.grade_normalized && s.grade_normalized !== 'F'
+    (s) => s.grade_normalized && s.grade_normalized !== 'F',
   ).length;
 
   if (!candidate.exam_number) warnings.push('low_confidence_field:candidate.exam_number');
@@ -83,10 +81,8 @@ function parseGce(text, { detected = 'gce' } = {}) {
     summary: {
       subject_count: subjects.length,
       credits,
-      passes
+      passes,
     },
-    warnings
+    warnings,
   };
 }
-
-module.exports = { parseGce };

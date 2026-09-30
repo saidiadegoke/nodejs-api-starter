@@ -25,4 +25,4 @@ export function get(name?: string): typeof http {
   return provider;
 }
 
-export { http };
+export { http, DEFAULT_PROVIDER };

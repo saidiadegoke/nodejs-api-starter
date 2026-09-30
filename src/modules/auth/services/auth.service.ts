@@ -538,13 +538,20 @@ export class AuthService {
    * Login user
    */
   async login(identifier: string, password: string, deviceInfo: Record<string, unknown> = {}): Promise<any> {
-    const user = await this.authRepo.findByIdentifier(identifier);
+    const rawIdentifier = String(identifier || '').trim();
+    const rawPassword = typeof password === 'string' ? password : String(password || '');
+
+    const user = await this.authRepo.findByIdentifier(rawIdentifier);
     if (!user || !user.password_hash) {
       const err: any = new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
       throw err;
     }
 
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
+    let isValidPassword = await bcrypt.compare(rawPassword, user.password_hash);
+    if (!isValidPassword && rawPassword.trim() !== rawPassword) {
+      isValidPassword = await bcrypt.compare(rawPassword.trim(), user.password_hash);
+    }
+
     if (!isValidPassword) {
       const err: any = new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
       throw err;

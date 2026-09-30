@@ -1,15 +1,9 @@
 /**
  * Collapse exam-specific raw grades into the A..F scale used by the
  * `academic` module's score rule.
- *
- * Returns { normalized, isCredit, isPass, warning } where:
- *   - normalized: 'A'|'B'|'C'|'D'|'E'|'F' or null when unknown
- *   - isCredit:   WAEC/NECO/NABTEB A1..C6 or GCE A..C
- *   - isPass:     A1..E8 / A..E (anything not F/U)
- *   - warning:    string describing why the grade was unrecognized, or null
  */
 
-const WAEC_LIKE_MAP = {
+const WAEC_LIKE_MAP: Record<string, string> = {
   A1: 'A',
   A2: 'A',
   A3: 'A',
@@ -24,19 +18,26 @@ const WAEC_LIKE_MAP = {
   C6: 'C',
   D7: 'D',
   E8: 'E',
-  F9: 'F'
+  F9: 'F',
 };
 
-const GCE_MAP = {
+const GCE_MAP: Record<string, string> = {
   A: 'A',
   B: 'B',
   C: 'C',
   D: 'D',
   E: 'E',
-  U: 'F'
+  U: 'F',
 };
 
-function normalizeGrade(rawGrade, examType = 'waec') {
+export interface NormalizedGradeResult {
+  normalized: string | null;
+  isCredit: boolean;
+  isPass: boolean;
+  warning: string | null;
+}
+
+export function normalizeGrade(rawGrade?: string | null, examType = 'waec'): NormalizedGradeResult {
   if (!rawGrade || typeof rawGrade !== 'string') {
     return { normalized: null, isCredit: false, isPass: false, warning: 'empty grade' };
   }
@@ -49,7 +50,7 @@ function normalizeGrade(rawGrade, examType = 'waec') {
         normalized,
         isCredit: ['A', 'B', 'C'].includes(normalized),
         isPass: normalized !== 'F',
-        warning: null
+        warning: null,
       };
     }
   }
@@ -60,7 +61,7 @@ function normalizeGrade(rawGrade, examType = 'waec') {
       normalized,
       isCredit: ['A', 'B', 'C'].includes(normalized),
       isPass: normalized !== 'F',
-      warning: null
+      warning: null,
     };
   }
 
@@ -70,7 +71,7 @@ function normalizeGrade(rawGrade, examType = 'waec') {
       normalized: grade,
       isCredit: ['A', 'B', 'C'].includes(grade),
       isPass: grade !== 'F',
-      warning: null
+      warning: null,
     };
   }
 
@@ -78,8 +79,6 @@ function normalizeGrade(rawGrade, examType = 'waec') {
     normalized: null,
     isCredit: false,
     isPass: false,
-    warning: `unknown grade "${rawGrade}"`
+    warning: `unknown grade "${rawGrade}"`,
   };
 }
-
-module.exports = { normalizeGrade };

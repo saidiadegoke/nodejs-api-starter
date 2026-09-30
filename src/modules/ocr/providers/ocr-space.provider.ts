@@ -1,6 +1,6 @@
-const axios = require('axios');
-const FormData = require('form-data');
-const { BaseProvider, ProviderUnavailableError } = require('./base.provider');
+import axios from 'axios';
+import * as FormData from 'form-data';
+import { BaseProvider, ExtractionInput, ExtractionResult, ProviderUnavailableError } from './base.provider';
 
 const OCR_SPACE_URL = 'https://api.ocr.space/parse/image';
 const SUPPORTED_MIMES = new Set([
@@ -11,19 +11,19 @@ const SUPPORTED_MIMES = new Set([
   'image/webp',
   'image/tiff',
   'image/gif',
-  'image/bmp'
+  'image/bmp',
 ]);
 
-class OcrSpaceProvider extends BaseProvider {
-  get name() {
+export class OcrSpaceProvider extends BaseProvider {
+  get name(): string {
     return 'ocr_space';
   }
 
-  supportsMime(mimeType) {
+  supportsMime(mimeType: string): boolean {
     return SUPPORTED_MIMES.has(mimeType);
   }
 
-  async extractText({ buffer, mimeType, filename }) {
+  async extractText({ buffer, mimeType, filename }: ExtractionInput): Promise<ExtractionResult> {
     const apiKey = process.env.OCR_SPACE_API_KEY;
     if (!apiKey) {
       throw new ProviderUnavailableError('ocr_space', 'OCR_SPACE_API_KEY not set');
@@ -32,7 +32,7 @@ class OcrSpaceProvider extends BaseProvider {
     const form = new FormData();
     form.append('file', buffer, {
       filename: filename || 'document',
-      contentType: mimeType
+      contentType: mimeType,
     });
     form.append('apikey', apiKey);
     form.append('OCREngine', process.env.OCR_SPACE_ENGINE || '2');
@@ -46,7 +46,7 @@ class OcrSpaceProvider extends BaseProvider {
       headers: form.getHeaders(),
       timeout: timeoutMs,
       maxContentLength: 50 * 1024 * 1024,
-      maxBodyLength: 50 * 1024 * 1024
+      maxBodyLength: 50 * 1024 * 1024,
     });
 
     const body = response.data || {};
@@ -54,17 +54,15 @@ class OcrSpaceProvider extends BaseProvider {
       const msg = Array.isArray(body.ErrorMessage)
         ? body.ErrorMessage.join('; ')
         : String(body.ErrorMessage || 'unknown');
-      const err = new Error(`ocr.space failure: ${msg}`);
+      const err: any = new Error(`ocr.space failure: ${msg}`);
       err.code = 'OCR_PROVIDER_FAILED';
       throw err;
     }
 
     const parsed = Array.isArray(body.ParsedResults) ? body.ParsedResults : [];
-    const text = parsed.map((p) => (p.ParsedText || '').trim()).join('\n\n').trim();
+    const text = parsed.map((p: any) => (p.ParsedText || '').trim()).join('\n\n').trim();
     const pages = parsed.length || 1;
 
-    // ocr.space doesn't return a numeric confidence; OCRExitCode 1 = success.
-    // We treat success as ~85, partial-success as ~65.
     const exitCode = parseInt(body.OCRExitCode, 10);
     let providerConfidence = 0;
     if (exitCode === 1) providerConfidence = 85;
@@ -74,9 +72,9 @@ class OcrSpaceProvider extends BaseProvider {
       text,
       pages,
       providerPayload: { exitCode, processingTimeMs: body.ProcessingTimeInMilliseconds },
-      providerConfidence
+      providerConfidence,
     };
   }
 }
 
-module.exports = OcrSpaceProvider;
+export default OcrSpaceProvider;

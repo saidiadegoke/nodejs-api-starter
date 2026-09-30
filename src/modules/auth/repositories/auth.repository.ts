@@ -100,95 +100,71 @@ export class AuthRepository {
   }
 
   /**
-   * Find a user by email, phone, provisional_candidate_code, or jupeb_candidate_number
-   * Supports matric lockdown and re-entry exceptions
+   * Find a user by email, phone, provisional_candidate_code, institution_issued_code, or jupeb_candidate_number
    */
   async findByIdentifier(identifier: string | null | undefined): Promise<UserWithProfile | null> {
     if (identifier === undefined || identifier === null || identifier === '') return null;
     const value = String(identifier).trim();
+    const cleanDigits = value.replace(/\D/g, '');
+    let phoneVariations: string[] = [value, value.replace(/\s+/g, '')];
+
+    if (cleanDigits.length >= 7) {
+      phoneVariations.push(cleanDigits);
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) {
+        phoneVariations.push('+' + cleanDigits);
+        phoneVariations.push('0' + cleanDigits.slice(3));
+        phoneVariations.push(cleanDigits.slice(3));
+      } else if (cleanDigits.startsWith('0') && cleanDigits.length === 11) {
+        phoneVariations.push('+234' + cleanDigits.slice(1));
+        phoneVariations.push('234' + cleanDigits.slice(1));
+        phoneVariations.push(cleanDigits.slice(1));
+      } else if (cleanDigits.length === 10) {
+        phoneVariations.push('0' + cleanDigits);
+        phoneVariations.push('+234' + cleanDigits);
+        phoneVariations.push('234' + cleanDigits);
+      }
+    }
+    phoneVariations = Array.from(new Set(phoneVariations.map((p) => p.trim()).filter(Boolean)));
 
     try {
       const rows = await this.dataSource.query(
-        `WITH candidates AS (
-           SELECT u.id AS user_id,
-                  EXISTS (
-                    SELECT 1 FROM user_roles ur
-                      JOIN roles ro ON ro.id = ur.role_id
-                     WHERE ur.user_id = u.id
-                       AND ro.name NOT IN ('student', 'user')
-                  ) AS has_admin_role,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rm
-                     WHERE rm.user_id = u.id
-                       AND rm.jupeb_candidate_number IS NOT NULL
-                  ) AS has_matric,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rip
-                     WHERE rip.user_id = u.id
-                       AND rip.jupeb_candidate_number IS NULL
-                       AND rip.status NOT IN ('approved', 'rejected', 'withdrawn')
-                  ) AS in_progress_no_matric,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rmx
-                     WHERE rmx.user_id = u.id
-                       AND rmx.jupeb_candidate_number IS NOT NULL
-                       AND UPPER(rmx.jupeb_candidate_number) = UPPER($1)
-                  ) AS matric_match,
-                  EXISTS (
-                    SELECT 1 FROM jupeb_registrations rp
-                     WHERE rp.user_id = u.id
-                       AND UPPER(rp.provisional_candidate_code) = UPPER($1)
-                  ) AS provisional_match
-             FROM users u
-            WHERE u.deleted_at IS NULL
-              AND (
-                    LOWER(u.email) = LOWER($1)
-                 OR u.phone = $1
-                 OR EXISTS (
-                      SELECT 1 FROM jupeb_registrations rr
-                       WHERE rr.user_id = u.id
-                         AND (
-                               UPPER(rr.provisional_candidate_code) = UPPER($1)
-                            OR UPPER(rr.jupeb_candidate_number)    = UPPER($1)
-                         )
-                    )
-              )
-         )
-         SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
-           FROM candidates c
-           JOIN users u ON u.id = c.user_id
+        `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
+           FROM users u
            LEFT JOIN profiles p ON u.id = p.user_id
-          WHERE
-              c.has_admin_role = TRUE
-           OR
-              (c.has_matric = TRUE AND c.in_progress_no_matric = TRUE AND (
-                    LOWER(u.email) = LOWER($1)
-                 OR u.phone = $1
-                 OR c.provisional_match = TRUE
-                 OR c.matric_match = TRUE
-              ))
-           OR
-              (c.has_matric = TRUE AND c.in_progress_no_matric = FALSE AND c.matric_match = TRUE)
-           OR
-              (c.has_matric = FALSE AND (
-                    LOWER(u.email) = LOWER($1)
-                 OR u.phone = $1
-                 OR c.provisional_match = TRUE
-              ))
+          WHERE u.deleted_at IS NULL
+            AND (
+                  LOWER(TRIM(u.email)) = LOWER($1)
+               OR u.phone = ANY($2::text[])
+               ${cleanDigits.length >= 7 ? `OR REGEXP_REPLACE(COALESCE(u.phone, ''), '\\D', '', 'g') = ANY($2::text[])` : ''}
+               OR EXISTS (
+                    SELECT 1 FROM jupeb_registrations rr
+                     WHERE rr.user_id = u.id
+                       AND (
+                             UPPER(TRIM(rr.provisional_candidate_code)) = UPPER($1)
+                          OR UPPER(TRIM(rr.jupeb_candidate_number))    = UPPER($1)
+                          OR UPPER(TRIM(rr.institution_issued_code))    = UPPER($1)
+                       )
+                  )
+            )
+          ORDER BY u.created_at DESC
           LIMIT 1`,
-        [value]
+        [value, phoneVariations]
       );
       return rows[0] || null;
     } catch (err: any) {
-      if (err && err.code === '42P01') {
+      if (err && (err.code === '42P01' || err.code === '42703')) {
         const rows = await this.dataSource.query(
           `SELECT u.*, p.first_name, p.last_name, p.display_name, p.profile_photo_url
              FROM users u
              LEFT JOIN profiles p ON u.id = p.user_id
             WHERE u.deleted_at IS NULL
-              AND (LOWER(u.email) = LOWER($1) OR u.phone = $1)
+              AND (
+                LOWER(TRIM(u.email)) = LOWER($1)
+                OR u.phone = ANY($2::text[])
+              )
+            ORDER BY u.created_at DESC
             LIMIT 1`,
-          [value]
+          [value, phoneVariations]
         );
         return rows[0] || null;
       }

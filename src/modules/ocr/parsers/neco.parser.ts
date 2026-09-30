@@ -1,11 +1,11 @@
-const { normalizeGrade } = require('./grade-normalizer');
-const {
+import { normalizeGrade } from './grade-normalizer';
+import {
   normalizeLines,
   findAfter,
   tryParseDate,
   extractYear,
-  extractDiet
-} = require('../utils/text-cleanup');
+  extractDiet,
+} from '../utils/text-cleanup';
 
 const NECO_GRADES = new Set(['A1', 'B2', 'B3', 'C4', 'C5', 'C6', 'D7', 'E8', 'F9', 'A', 'B', 'C', 'D', 'E', 'F']);
 
@@ -15,15 +15,14 @@ const IGNORE_PATTERNS = [
   /^[=\-_|~.+*#]+$/,
 ];
 
-const isGrade = (t) => {
+const isGrade = (t: string) => {
   const clean = (t || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
   return NECO_GRADES.has(clean) || /^[A-F][1-9]?$/.test(clean);
 };
 
-const cleanGradeToken = (t) => (t || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
+const cleanGradeToken = (t: string) => (t || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
 
-function parseSubjectRow(line) {
-  // NECO often prints "SUBJECT  SCORE  GRADE", e.g. "ENGLISH LANGUAGE   72   B2" or with pipes
+function parseSubjectRow(line: string) {
   const sanitized = line.replace(/[|:;~_]/g, ' ').replace(/\.{2,}/g, ' ');
   const tokens = sanitized.split(/\s+/).filter(Boolean);
   if (tokens.length < 2) return null;
@@ -39,10 +38,9 @@ function parseSubjectRow(line) {
 
   const rawGrade = tokens[gradeIdx];
   const grade = cleanGradeToken(rawGrade);
-  let score = null;
+  let score: number | null = null;
   let nameTokens = tokens.slice(0, gradeIdx);
 
-  // Optional numeric score immediately before the grade
   const maybeScore = nameTokens[nameTokens.length - 1];
   if (/^\d{1,3}$/.test(maybeScore || '')) {
     const n = parseInt(maybeScore, 10);
@@ -52,7 +50,6 @@ function parseSubjectRow(line) {
     }
   }
 
-  // Strip row index (e.g. "1.", "01", "101")
   if (/^\d{1,4}[.)\]]?$/.test(nameTokens[0] || '')) {
     nameTokens.shift();
   }
@@ -71,13 +68,13 @@ function parseSubjectRow(line) {
       code: null,
       grade,
       grade_normalized: norm.normalized,
-      score
+      score,
     },
-    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null
+    warning: norm.warning ? `unknown_grade:${name}:${grade}` : null,
   };
 }
 
-function parseNeco(text, { detected = 'neco' } = {}) {
+export function parseNeco(text: string, { detected = 'neco' }: { detected?: string } = {}) {
   const lines = normalizeLines(text);
   const head = lines.slice(0, 30).join(' ');
 
@@ -89,11 +86,11 @@ function parseNeco(text, { detected = 'neco' } = {}) {
       findAfter(lines, 'EXAM\\.?\\s*NO'),
     centre_number: findAfter(lines, 'CENTRE\\s*NO'),
     centre_name: findAfter(lines, 'CENTRE'),
-    date_of_birth: tryParseDate(findAfter(lines, 'DATE\\s*OF\\s*BIRTH'))
+    date_of_birth: tryParseDate(findAfter(lines, 'DATE\\s*OF\\s*BIRTH')),
   };
 
-  const subjects = [];
-  const warnings = [];
+  const subjects: any[] = [];
+  const warnings: string[] = [];
   for (const line of lines) {
     if (!line.split(/\s+/).some(isGrade)) continue;
     const parsed = parseSubjectRow(line);
@@ -104,7 +101,7 @@ function parseNeco(text, { detected = 'neco' } = {}) {
 
   const credits = subjects.filter((s) => ['A', 'B', 'C'].includes(s.grade_normalized)).length;
   const passes = subjects.filter(
-    (s) => s.grade_normalized && s.grade_normalized !== 'F'
+    (s) => s.grade_normalized && s.grade_normalized !== 'F',
   ).length;
 
   if (!candidate.exam_number) warnings.push('low_confidence_field:candidate.exam_number');
@@ -127,10 +124,8 @@ function parseNeco(text, { detected = 'neco' } = {}) {
     summary: {
       subject_count: subjects.length,
       credits,
-      passes
+      passes,
     },
-    warnings
+    warnings,
   };
 }
-
-module.exports = { parseNeco };

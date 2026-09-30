@@ -1,15 +1,6 @@
-const { BaseProvider, ProviderUnavailableError } = require('./base.provider');
+import { BaseProvider, ExtractionInput, ExtractionResult, ProviderUnavailableError } from './base.provider';
 
-/**
- * Test-only provider. Returns deterministic fixture text keyed by filename.
- *
- * Hard-guarded against accidental production use: even if env or config
- * tries to select it, it throws unless NODE_ENV === 'test'.
- *
- * Tests can register new fixtures via MockProvider.registerFixture(name, payload).
- */
-
-const FIXTURES = new Map();
+const FIXTURES = new Map<string, { text: string; pages: number; providerConfidence: number }>();
 
 const SAMPLE_WAEC_TEXT = `WEST AFRICAN EXAMINATIONS COUNCIL
 SENIOR SCHOOL CERTIFICATE EXAMINATION
@@ -52,46 +43,46 @@ GEOGRAPHY           65      C5
 FIXTURES.set('waec_sample_2023.pdf', {
   text: SAMPLE_WAEC_TEXT,
   pages: 1,
-  providerConfidence: 95
+  providerConfidence: 95,
 });
 
 FIXTURES.set('neco_sample_2023.pdf', {
   text: SAMPLE_NECO_TEXT,
   pages: 1,
-  providerConfidence: 92
+  providerConfidence: 92,
 });
 
-class MockProvider extends BaseProvider {
+export class MockProvider extends BaseProvider {
   constructor() {
     super();
     if (process.env.NODE_ENV !== 'test') {
       throw new ProviderUnavailableError(
         'mock',
-        'mock provider instantiated outside NODE_ENV=test'
+        'mock provider instantiated outside NODE_ENV=test',
       );
     }
   }
 
-  get name() {
+  get name(): string {
     return 'mock';
   }
 
-  supportsMime() {
+  supportsMime(): boolean {
     return true;
   }
 
-  async extractText({ filename }) {
+  async extractText({ filename }: ExtractionInput): Promise<ExtractionResult> {
     const key = (filename || '').toLowerCase();
-    const fixture = FIXTURES.get(key) || FIXTURES.get('waec_sample_2023.pdf');
+    const fixture = FIXTURES.get(key) || FIXTURES.get('waec_sample_2023.pdf')!;
     return {
       text: fixture.text,
       pages: fixture.pages,
       providerPayload: { fixture: key },
-      providerConfidence: fixture.providerConfidence
+      providerConfidence: fixture.providerConfidence,
     };
   }
 
-  static registerFixture(name, payload) {
+  static registerFixture(name: string, payload: { text: string; pages: number; providerConfidence: number }) {
     FIXTURES.set(name.toLowerCase(), payload);
   }
 
@@ -100,4 +91,4 @@ class MockProvider extends BaseProvider {
   }
 }
 
-module.exports = MockProvider;
+export default MockProvider;

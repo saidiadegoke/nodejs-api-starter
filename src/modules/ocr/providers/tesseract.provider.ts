@@ -1,5 +1,5 @@
-const { BaseProvider, ProviderUnavailableError } = require('./base.provider');
-const { rasterizePdf } = require('../pipelines/pdf-rasterizer');
+import { BaseProvider, ExtractionInput, ExtractionResult, ProviderUnavailableError } from './base.provider';
+import { rasterizePdf } from '../pipelines/pdf-rasterizer';
 
 const SUPPORTED_MIMES = new Set([
   'application/pdf',
@@ -7,17 +7,16 @@ const SUPPORTED_MIMES = new Set([
   'image/jpeg',
   'image/jpg',
   'image/webp',
-  'image/tiff'
+  'image/tiff',
 ]);
 
-let tesseractPromise;
+let tesseractPromise: Promise<any> | null = null;
 async function getTesseract() {
   if (!tesseractPromise) {
     tesseractPromise = (async () => {
       try {
-        // eslint-disable-next-line global-require, import/no-unresolved
         return require('tesseract.js');
-      } catch (err) {
+      } catch {
         throw new ProviderUnavailableError('tesseract', 'tesseract.js not installed');
       }
     })();
@@ -25,15 +24,13 @@ async function getTesseract() {
   return tesseractPromise;
 }
 
-let sharpPromise;
+let sharpPromise: Promise<any> | null = null;
 async function getSharp() {
   if (!sharpPromise) {
     sharpPromise = (async () => {
       try {
-        // eslint-disable-next-line global-require, import/no-unresolved
         return require('sharp');
-      } catch (err) {
-        // sharp is optional — without it we just skip preprocessing
+      } catch {
         return null;
       }
     })();
@@ -41,7 +38,7 @@ async function getSharp() {
   return sharpPromise;
 }
 
-async function preprocess(buffer) {
+async function preprocess(buffer: Buffer) {
   const sharp = await getSharp();
   if (!sharp) return buffer;
   try {
@@ -55,19 +52,19 @@ async function preprocess(buffer) {
   }
 }
 
-class TesseractProvider extends BaseProvider {
-  get name() {
+export class TesseractProvider extends BaseProvider {
+  get name(): string {
     return 'tesseract';
   }
 
-  supportsMime(mimeType) {
+  supportsMime(mimeType: string): boolean {
     return SUPPORTED_MIMES.has(mimeType);
   }
 
-  async extractText({ buffer, mimeType }) {
+  async extractText({ buffer, mimeType }: ExtractionInput): Promise<ExtractionResult> {
     const langs = process.env.OCR_TESSERACT_LANGS || 'eng';
-    let imageBuffers;
-    let pageCount;
+    let imageBuffers: Buffer[];
+    let pageCount: number;
 
     if (mimeType === 'application/pdf') {
       const rast = await rasterizePdf(buffer);
@@ -79,14 +76,13 @@ class TesseractProvider extends BaseProvider {
     }
 
     const Tesseract = await getTesseract();
-    const texts = [];
-    let confidences = [];
+    const texts: string[] = [];
+    const confidences: number[] = [];
 
     for (const imgBuf of imageBuffers) {
       const cleaned = await preprocess(imgBuf);
       const { data } = await Tesseract.recognize(cleaned, langs, {
-        // suppress noisy logs
-        logger: () => {}
+        logger: () => {},
       });
       texts.push((data.text || '').trim());
       if (typeof data.confidence === 'number') {
@@ -103,9 +99,9 @@ class TesseractProvider extends BaseProvider {
       text,
       pages: pageCount,
       providerPayload: { perPageConfidence: confidences },
-      providerConfidence
+      providerConfidence,
     };
   }
 }
 
-module.exports = TesseractProvider;
+export default TesseractProvider;

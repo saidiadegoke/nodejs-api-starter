@@ -19,14 +19,6 @@ import {
 import { OLEVEL_SUBJECTS } from '../constants/olevel-subjects';
 
 const STAFF_ROLES = new Set(['admin', 'super_admin', 'registrar']);
-const SYNC_WAIT_MS = 30000;
-
-function ocrError(code: string, message: string, status: number) {
-  const err: any = new Error(message);
-  err.code = code;
-  err.status = status;
-  return err;
-}
 
 @Injectable()
 export class OcrService {
@@ -141,26 +133,27 @@ export class OcrService {
       metadata: { ...metadata, source_file_id: fileRecord.id },
     });
 
+    if (wait) {
+      try {
+        const completedJob = await this.workerService.processJob(job.id, {
+          directBuffer,
+          directMime,
+          directFilename,
+        });
+        return { job: completedJob, completedJob };
+      } catch {
+        const refreshed = await this.jobRepo.findOne({ where: { id: job.id } });
+        return { job: refreshed || job, completedJob: refreshed };
+      }
+    }
+
     const promise = this.workerService.enqueue(job.id, {
       directBuffer,
       directMime,
       directFilename,
     });
-
-    if (!wait) {
-      promise.catch(() => {});
-      return { job, completedJob: null };
-    }
-
-    const completedJob = await Promise.race([
-      promise,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), SYNC_WAIT_MS)),
-    ]);
-    if (completedJob) {
-      return { job, completedJob };
-    }
-    const refreshed = await this.jobRepo.findOne({ where: { id: job.id } });
-    return { job, completedJob: refreshed };
+    promise.catch(() => {});
+    return { job, completedJob: null };
   }
 
   async getJob(jobId: string, viewerId: string) {

@@ -1,5 +1,5 @@
-const { normalizeGrade } = require('./grade-normalizer');
-const { normalizeLines, findAfter, extractYear } = require('../utils/text-cleanup');
+import { normalizeGrade } from './grade-normalizer';
+import { normalizeLines, findAfter, extractYear } from '../utils/text-cleanup';
 
 const ANY_GRADE_RE = /^([A-F][1-9]?|U)$/i;
 
@@ -9,15 +9,15 @@ const IGNORE_PATTERNS = [
   /^[=\-_|~.+*#]+$/,
 ];
 
-function isGrade(token) {
+function isGrade(token: string): boolean {
   const clean = (token || '').toUpperCase().replace(/[()[\],.:;\-_]/g, '');
   return ANY_GRADE_RE.test(clean);
 }
 
-function parseGeneric(text, { detected = 'generic' } = {}) {
+export function parseGeneric(text: string, { detected = 'generic' }: { detected?: string } = {}) {
   const lines = normalizeLines(text);
-  const subjects = [];
-  const warnings = [];
+  const subjects: any[] = [];
+  const warnings: string[] = [];
 
   for (const line of lines) {
     const sanitized = line.replace(/[|:;~_]/g, ' ').replace(/\.{2,}/g, ' ');
@@ -59,7 +59,7 @@ function parseGeneric(text, { detected = 'generic' } = {}) {
       code: null,
       grade,
       grade_normalized: norm.normalized,
-      score: null
+      score: null,
     });
     if (norm.warning) warnings.push(`unknown_grade:${name}:${grade}`);
   }
@@ -77,18 +77,16 @@ function parseGeneric(text, { detected = 'generic' } = {}) {
       exam_number: findAfter(lines, 'EXAM\\.?\\s*NO') || findAfter(lines, 'REG\\.?\\s*NO') || null,
       centre_number: null,
       centre_name: null,
-      date_of_birth: null
+      date_of_birth: null,
     },
     subjects,
     summary: {
       subject_count: subjects.length,
       credits: subjects.filter((s) => ['A', 'B', 'C'].includes(s.grade_normalized)).length,
       passes: subjects.filter(
-        (s) => s.grade_normalized && s.grade_normalized !== 'F'
-      ).length
+        (s) => s.grade_normalized && s.grade_normalized !== 'F',
+      ).length,
     },
-    warnings
+    warnings,
   };
 }
-
-module.exports = { parseGeneric };
