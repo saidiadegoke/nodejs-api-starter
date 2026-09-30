@@ -1,4 +1,3 @@
-version: '3.8'
 
 # All values are sourced from .env via `env_file`. Compose also expands ${VAR}
 # substitutions from the same .env when interpolating this file (used by ports

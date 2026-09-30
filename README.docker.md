@@ -21,7 +21,12 @@ This service can be deployed independently using Docker.
    DB_NAME=your_app
    JWT_SECRET=your-strong-secret-key
    JWT_REFRESH_SECRET=your-strong-refresh-secret
-   # …plus optional sections: AWS_S3_*, SMTP_*, RATE_LIMIT_*, LOG_*, OAuth, JUPEB_*
+   # Production providers — both default to mock when unset:
+   JUPEB_NIN_PROVIDER=speedysms
+   OTP_SMS_PROVIDER=speedysms   # when OTP_CHANNEL is sms or both
+   SPEEDYSMS_API_KEY=sk_live_...
+   # …plus the other sections in .env.example: file storage (S3 / DO Spaces),
+   # SMTP, Attendance, CRMS, SSO (CRP_SSO_*), OCR, Remita, logging
    ```
    Compose does **not** hard-code any secrets or URLs in
    `docker-compose.yml`; if a value is missing from `.env`, it's missing
@@ -38,11 +43,50 @@ This service can be deployed independently using Docker.
    docker compose exec api npm run seed
    ```
 
-4. **Default admin** (after a successful seed): `admin@example.com` / `Admin@12` — rotate in production. If login fails on an old volume, see **SETUP.md** (legacy `password` hash).
+4. **Default admin** (after a successful seed): `admin@example.com` / `Admin@12`.
+   This password is public (it is in the seed). Change it before the API is
+   reachable from outside:
+   ```bash
+   docker compose exec api npm run rbac:set-user-password -- admin@example.com '<new password>'
+   ```
+   If login fails on an old volume, see **SETUP.md** (legacy `password` hash).
+
+5. **SSO keys** (only if users launch CRMS / Attendance from this portal):
+   ```bash
+   docker compose exec api npm run sso:generate-keys
+   ```
+   Paste the printed `CRP_SSO_CURRENT_KID`, `CRP_SSO_PRIVATE_KEY_PEM` and
+   `CRP_SSO_JWKS_JSON` into `.env`, set `CRP_SSO_ISSUER` to the public API URL and
+   the `*_SSO_CALLBACK_URL`s, then `docker compose up -d` to reload. SSO stays off
+   until all four `CRP_SSO_*` values are set.
+
+## Production Checklist
+
+- [ ] `NODE_ENV=production`, strong unique `JWT_SECRET` and `JWT_REFRESH_SECRET`.
+- [ ] `JUPEB_NIN_PROVIDER=speedysms` — unset (or misspelled) means the mock
+      provider, which accepts any 11-digit NIN without checking NIMC.
+- [ ] `OTP_SMS_PROVIDER=speedysms` if `OTP_CHANNEL` is `sms` or `both` — otherwise
+      SMS codes are only logged, never sent.
+- [ ] `SPEEDYSMS_API_KEY` set (and `SPEEDYSMS_SIGNING_SECRET` if the account uses
+      signed requests).
+- [ ] `JUPEB_NIN_FORCE_UNAVAILABLE` unset (a test switch that fails every NIN check).
+- [ ] `ATTENDANCE_PROVIDER` / `CRMS_PROVIDER` are `http` (the default), with
+      their base URLs and secrets set; not `mock`.
+- [ ] File storage: `DEFAULT_FILE_PROVIDER=s3` with the S3 / DO Spaces keys (the
+      code default is `mock`).
+- [ ] `SMTP_*` and `FROM_EMAIL` set, so verification and reset emails go out.
+- [ ] `INSTITUTION_FRONTEND_URL` set (the login link in institution emails).
+- [ ] `REMITA_SERVICE_TYPE_ID` set if Remita is enabled.
+- [ ] `CORS_ORIGIN` lists only the real frontends; `API_DOCS_PASSWORD` set to
+      protect `/docs`.
+- [ ] Seeded admin password changed (step 4).
+- [ ] One API replica. The NIN resolver job runs inside every API process, so
+      several replicas would all run it.
 
 ## Environment Variables
 
-See `.env.example` for the complete list.
+See `.env.example` for the complete list, grouped by area. Lines marked
+**PRODUCTION** there are values that must change from their defaults.
 
 ## Common Commands
 
