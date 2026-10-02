@@ -6,6 +6,7 @@ module.exports = {
   transform: {
     '^.+\\.(t|j)sx?$': ['ts-jest', { tsconfig: 'tsconfig.json', isolatedModules: true }],
   },
+  transformIgnorePatterns: ['/node_modules/(?!(@nestjs/bullmq|@nestjs/bull-shared|bullmq)/)'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@modules/(.*)$': '<rootDir>/src/modules/$1',
