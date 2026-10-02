@@ -347,7 +347,8 @@ export class DashboardService {
     const closesAt = session?.closesAt ?? (session as any)?.closes_at;
     const academicYear = session?.academicYear ?? (session as any)?.academic_year;
 
-    if (session && opensAt && closesAt) {
+    // ── Session-scoped mode: only when session_id is explicitly requested in query
+    if (query.session_id && session && opensAt && closesAt) {
       const params: any[] = [session.id];
       let where = `session_id = $1 AND status <> 'withdrawn'`;
       let i = 2;
