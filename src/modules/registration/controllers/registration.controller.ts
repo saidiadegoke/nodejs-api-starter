@@ -179,7 +179,25 @@ export class RegistrationController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.listRegistrations(query, userId);
+    const result = await this.registrationService.listRegistrations(query, userId);
+    const totalPages = Math.ceil(result.total / (result.limit || 20));
+    return {
+      success: true,
+      message: 'Registrations retrieved successfully',
+      data: result.rows,
+      registrations: result.rows,
+      rows: result.rows,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages,
+        total_pages: totalPages,
+      },
+    };
   }
 
   @Get('institution/registrations/export')
