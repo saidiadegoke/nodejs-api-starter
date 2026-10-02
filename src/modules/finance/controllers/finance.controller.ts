@@ -195,13 +195,23 @@ export class FinanceController {
         },
         payment_item_id: {
           type: 'string',
-          description: 'Selected payment type UUID or code',
-          example: 'fee_affiliation',
+          description: 'Selected payment type UUID or code (e.g. affiliation_fee, fee_affiliation, examination_fee)',
+          example: 'affiliation_fee',
+        },
+        payment_item: {
+          type: 'string',
+          description: 'Selected payment type code (e.g. affiliation_fee, examination_fee)',
+          example: 'affiliation_fee',
         },
         payment_structure_id: {
           type: 'string',
-          description: 'Selected payment structure UUID or code',
-          example: 'struct_full',
+          description: 'Selected payment structure UUID or code (e.g. full, installment, per_student)',
+          example: 'full',
+        },
+        payment_structure: {
+          type: 'string',
+          description: 'Selected payment structure code (e.g. full, installment, per_student)',
+          example: 'full',
         },
         amount: {
           type: 'number',
