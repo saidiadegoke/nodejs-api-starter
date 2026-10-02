@@ -35,7 +35,7 @@ class AuditListQueryDto {
 }
 
 @ApiTags('Admin Audit Trail')
-@Controller('admin/audit')
+@Controller(['audit', 'admin/audit'])
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT')
 export class AdminAuditController {
@@ -67,6 +67,26 @@ export class AdminAuditController {
   })
   @ApiOkResponse({ description: 'Paginated audit logs.' })
   async list(@Query() query: AuditListQueryDto, @Req() req: any) {
-    return this.auditService.list(query as AuditListFilters, req.user?.user_id);
+    const result = await this.auditService.list(
+      query as AuditListFilters,
+      req.user?.user_id,
+    );
+    const totalPages = Math.ceil(result.total / (result.limit || 20));
+    return {
+      success: true,
+      message: 'Audit logs retrieved successfully',
+      data: result.logs,
+      logs: result.logs,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages,
+        total_pages: totalPages,
+      },
+    };
   }
 }

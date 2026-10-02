@@ -7,6 +7,7 @@ export interface RegistrationListFilter {
   sessionId?: string;
   universityId?: string;
   status?: string;
+  bucket?: string;
   biometrics?: string;
   q?: string;
   limit?: number;
@@ -173,10 +174,17 @@ export class RegistrationRepository {
         'r.jupeb_candidate_number AS jupeb_candidate_number',
         'r.institution_issued_code AS institution_issued_code',
         'r.created_at AS created_at',
+        'r.updated_at AS updated_at',
+        'r.submitted_at AS submitted_at',
+        'r.approved_at AS approved_at',
+        'u.id AS uni_id',
         'u.name AS university_name',
+        'u.short_name AS university_short_name',
         'u.code AS university_code',
         'p.first_name AS first_name',
         'p.last_name AS last_name',
+        'p.display_name AS display_name',
+        'p.profile_photo_url AS profile_photo_url',
         'usr.email AS email',
         'usr.phone AS phone',
         'nv.nin_last4 AS nin_last4',
@@ -200,6 +208,25 @@ export class RegistrationRepository {
     }
     if (filter.status) {
       qb.andWhere('r.status = :status', { status: filter.status });
+    } else if (filter.bucket) {
+      const b = filter.bucket.toLowerCase();
+      if (b === 'approved') {
+        qb.andWhere('r.status = :status', { status: RegistrationStatus.APPROVED });
+      } else if (b === 'rejected') {
+        qb.andWhere('r.status = :status', { status: RegistrationStatus.REJECTED });
+      } else if (b === 'withdrawn') {
+        qb.andWhere('r.status = :status', { status: RegistrationStatus.WITHDRAWN });
+      } else if (b === 'pending') {
+        qb.andWhere('r.status NOT IN (:...doneStatuses)', {
+          doneStatuses: [
+            RegistrationStatus.APPROVED,
+            RegistrationStatus.REJECTED,
+            RegistrationStatus.WITHDRAWN,
+          ],
+        });
+      } else {
+        qb.andWhere('r.status = :bucket', { bucket: filter.bucket });
+      }
     }
     if (filter.biometrics === 'with_biometrics') {
       qb.andWhere(

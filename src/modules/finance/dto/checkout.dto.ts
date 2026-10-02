@@ -197,21 +197,37 @@ export class UploadPaymentReceiptDto {
   @IsUUID('4')
   session_id?: string;
 
-  @ApiProperty({
-    description: 'Payment item UUID or code (Select Payment Type)',
-    example: 'd3b07384-d113-40f4-8a4e-379e4971c260',
+  @ApiPropertyOptional({
+    description: 'Payment item UUID or code (e.g. affiliation_fee, fee_affiliation, examination_fee)',
+    example: 'affiliation_fee',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  payment_item_id: string;
+  payment_item_id?: string;
 
   @ApiPropertyOptional({
-    description: 'Payment structure UUID or code (Payment Structure, e.g. full, partial)',
-    example: 'd3b07384-d113-40f4-8a4e-379e4971c260',
+    description: 'Payment item code or UUID (e.g. affiliation_fee, examination_fee)',
+    example: 'affiliation_fee',
+  })
+  @IsOptional()
+  @IsString()
+  payment_item?: string;
+
+  @ApiPropertyOptional({
+    description: 'Payment structure UUID or code (Payment Structure, e.g. full, installment, per_student)',
+    example: 'full',
   })
   @IsOptional()
   @IsString()
   payment_structure_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Payment structure code or UUID (e.g. full, installment, per_student)',
+    example: 'full',
+  })
+  @IsOptional()
+  @IsString()
+  payment_structure?: string;
 
   @ApiProperty({
     description: 'Amount in NGN',
