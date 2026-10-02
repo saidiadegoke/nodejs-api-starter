@@ -218,18 +218,19 @@ router.get('/docs/openapi.yaml', (req, res) => {
   return res.status(404).send('Unified OpenAPI specification not yet generated');
 });
 
-router.get('/docs', (req, res) => {
-  const apiList = Object.keys(swaggerDocs).map((key) => ({
-    name: swaggerDocs[key].info.title,
-    description: swaggerDocs[key].info.description,
-    url: `/docs/${key}`,
-    jsonUrl: `/docs/${key}.json`
-  }));
+router.get('/docs', (req, res, next) => {
+  if (req.query.hub === '1' || req.query.portal === '1') {
+    const apiList = Object.keys(swaggerDocs).map((key) => ({
+      name: swaggerDocs[key].info.title,
+      description: swaggerDocs[key].info.description,
+      url: `/docs/${key}`,
+      jsonUrl: `/docs/${key}.json`
+    }));
 
-  res.send(`<!DOCTYPE html>
+    return res.send(`<!DOCTYPE html>
 <html>
 <head>
-  <title>API Documentation</title>
+  <title>API Documentation Hub</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background: #f0f2f5; }
@@ -256,42 +257,34 @@ router.get('/docs', (req, res) => {
 </head>
 <body>
   <div class="container">
-    <h1>API Documentation</h1>
+    <h1>API Documentation Hub</h1>
     <p class="subtitle">Complete technical reference for the JUPEB Registration & Administration Portal.</p>
-
     <div class="hero-card">
-      <div class="hero-title">
-        <span>Unified OpenAPI 3.0 Specification</span>
-        <span class="badge">Postman Ready</span>
-      </div>
-      <div class="hero-desc">
-        Import the complete API catalog directly into Postman or Insomnia. Contains all 255+ endpoints across 49 categories with authentication, schemas, parameters, and examples.
-      </div>
+      <div class="hero-title">Unified OpenAPI 3.0 Specification <span class="badge">Postman Ready</span></div>
+      <div class="hero-desc">Import the complete API catalog directly into Postman or Insomnia. Contains all 255+ endpoints across 49 categories with authentication, schemas, parameters, and examples.</div>
       <div class="api-links">
-        <a href="/docs/all" class="btn btn-hero">Explore All Endpoints</a>
-        <a href="/docs/openapi.json" download="openapi.json" class="btn btn-hero-alt">Download openapi.json (Postman)</a>
-        <a href="/docs/openapi.yaml" download="openapi.yaml" class="btn btn-hero-alt">Download openapi.yaml</a>
+        <a class="btn btn-hero" href="/docs/all">Explore All Endpoints</a>
+        <a class="btn btn-hero-alt" href="/docs/openapi.json" download>Download openapi.json (Postman)</a>
+        <a class="btn btn-hero-alt" href="/docs/openapi.yaml" download>Download openapi.yaml</a>
       </div>
     </div>
-
-    <h2 style="font-size: 18px; color: #334155; margin-bottom: 16px;">Individual Modules</h2>
-    ${apiList
-      .map(
-        (api) => `
-    <div class="api-card">
-      <div class="api-title">${api.name}</div>
-      <div class="api-desc">${api.description || ''}</div>
-      <div class="api-links">
-        <a href="${api.url}" class="btn btn-primary">View Docs</a>
-        <a href="${api.jsonUrl}" class="btn btn-secondary">Download JSON</a>
+    <h3 style="color: #334155; margin-bottom: 16px;">Individual Modules</h3>
+    ${apiList.map((api) => `
+      <div class="api-card">
+        <div class="api-title">${api.name}</div>
+        <div class="api-desc">${api.description || ''}</div>
+        <div class="api-links">
+          <a class="btn btn-primary" href="${api.url}">View Docs</a>
+          <a class="btn btn-secondary" href="${api.jsonUrl}" download>Download JSON</a>
+        </div>
       </div>
-    </div>`
-      )
-      .join('')}
+    `).join('')}
     <div class="footer">JUPEB Portal API v1.0.0 &nbsp;|&nbsp; OpenAPI 3.0 &nbsp;|&nbsp; Swagger UI</div>
   </div>
 </body>
 </html>`);
+  }
+  return res.redirect('/docs/all');
 });
 
 /**
@@ -303,3 +296,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 module.exports = router;
+

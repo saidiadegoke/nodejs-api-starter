@@ -1,28 +1,32 @@
-# Multi-stage build for Node.js API
+# Multi-stage build for NestJS API
 FROM node:20-alpine AS base
-
-FROM base AS deps
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat curl
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Stage 1: Build TypeScript NestJS code
+FROM base AS builder
+WORKDIR /app
+COPY package.json package-lock.json* tsconfig*.json nest-cli.json* ./
+RUN npm ci
+COPY . .
+RUN npm run build
 
-# Production image
+# Stage 2: Production runner image
 FROM base AS runner
 WORKDIR /app
 
-# All runtime values come from .env (provided by docker-compose's env_file).
-# These ENV lines are fallback defaults only — every real value should live in .env.
 ENV NODE_ENV=production
 ENV PORT=5269
-
-RUN apk add --no-cache curl
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 apiuser
 
-COPY --from=deps --chown=apiuser:nodejs /app/node_modules ./node_modules
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=builder --chown=apiuser:nodejs /app/dist ./dist
+COPY --from=builder --chown=apiuser:nodejs /app/docs ./docs
+COPY --from=builder --chown=apiuser:nodejs /app/scripts ./scripts
 COPY --chown=apiuser:nodejs . .
 
 RUN mkdir -p uploads && \
@@ -32,8 +36,8 @@ USER apiuser
 
 EXPOSE 5269
 
-# Healthcheck reads $PORT so containers honour whatever value .env supplies.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f "http://localhost:${PORT}/health" || exit 1
 
 CMD ["npm", "start"]
+

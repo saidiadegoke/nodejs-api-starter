@@ -13,6 +13,7 @@ export class AppController {
     return {
       success: true,
       message: 'API is running',
+      appType: "NestJS is here",
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
     };

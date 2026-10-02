@@ -30,42 +30,42 @@ describe('Configuration System', () => {
 
   describe('Config Modules', () => {
     it('should load appConfig without errors', () => {
-      const config = appConfig();
+      const config = appConfig() as any;
       expect(config).toBeDefined();
       expect(config.nodeEnv).toBeDefined();
     });
 
     it('should load databaseConfig without errors', () => {
-      const config = databaseConfig();
+      const config = databaseConfig() as any;
       expect(config).toBeDefined();
       expect(config.port).toBeDefined();
     });
 
     it('should load jwtConfig without errors', () => {
-      const config = jwtConfig();
+      const config = jwtConfig() as any;
       expect(config).toBeDefined();
       expect(config.secret).toBeDefined();
     });
 
     it('should load fileStorageConfig without errors', () => {
-      const config = fileStorageConfig();
+      const config = fileStorageConfig() as any;
       expect(config).toBeDefined();
       expect(config.defaultProvider).toBeDefined();
     });
 
     it('should load redisConfig without errors', () => {
-      const config = redisConfig();
+      const config = redisConfig() as any;
       expect(config).toBeDefined();
       expect(config.url).toBeDefined();
     });
 
     it('should load mailConfig without errors', () => {
-      const config = mailConfig();
+      const config = mailConfig() as any;
       expect(config).toBeDefined();
     });
 
     it('should load integrationsConfig without errors', () => {
-      const config = integrationsConfig();
+      const config = integrationsConfig() as any;
       expect(config).toBeDefined();
       expect(config.speedysms).toBeDefined();
       expect(config.attendance).toBeDefined();
