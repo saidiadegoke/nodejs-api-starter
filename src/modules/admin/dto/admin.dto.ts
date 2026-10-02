@@ -109,7 +109,7 @@ export class ListRbacQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(10000)
   limit?: number = 20;
 
   @ApiPropertyOptional({ example: 'admin' })
@@ -303,7 +303,7 @@ export class ListErrorLogsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(10000)
   limit?: number = 20;
 
   @ApiPropertyOptional({ enum: ['all', 'error', 'slow', '5xx', '4xx'], example: 'all' })

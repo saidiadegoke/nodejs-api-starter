@@ -74,13 +74,14 @@ export class ResponseEnvelopeInterceptor implements NestInterceptor {
           return resData;
         }
 
-        // Paginated result shape check: { data, pagination: { page, limit, total } } or { data, total, page, limit }
+        // Paginated result shape check: { data, pagination: { page, limit, total } } or { rows, total, page, limit }
         if (
           typeof resData === 'object' &&
           resData !== null &&
-          Array.isArray(resData.data) &&
+          (Array.isArray(resData.data) || Array.isArray(resData.rows)) &&
           (resData.pagination || ('total' in resData && 'page' in resData && 'limit' in resData))
         ) {
+          const list = Array.isArray(resData.data) ? resData.data : resData.rows;
           const page = parseInt(resData.pagination?.page ?? resData.page, 10) || 1;
           const limit = parseInt(resData.pagination?.limit ?? resData.limit, 10) || 10;
           const total = parseInt(resData.pagination?.total ?? resData.total, 10) || 0;
@@ -89,7 +90,12 @@ export class ResponseEnvelopeInterceptor implements NestInterceptor {
 
           return {
             success: true,
-            data: resData.data,
+            message: resData.message || 'Success',
+            data: list,
+            rows: list,
+            total,
+            page,
+            limit,
             pagination: {
               page,
               limit,

@@ -359,19 +359,46 @@ export class RegistrationService {
   /**
    * Get registration breakdown aggregated by university.
    */
-  async getRegistrationsByUniversity(query: { session_id?: string }, _userId?: string | null) {
-    const params = query.session_id ? [query.session_id] : [];
-    const sessionClause = query.session_id ? `WHERE r.session_id = $1` : '';
+  async getRegistrationsByUniversity(query: { session_id?: string; limit?: number }, _userId?: string | null) {
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
+    const params: any[] = [];
+    let sessionClause = '';
+    if (query.session_id) {
+      params.push(query.session_id);
+      sessionClause = `WHERE r.session_id = $1`;
+    }
+    params.push(limit);
+    const limitIdx = params.length;
 
     const rows = await this.dataSource.query(
-      `SELECT u.id AS university_id, u.name AS university_name, u.code AS university_code,
-              COUNT(r.id)::int AS total_candidates,
-              COUNT(CASE WHEN r.status = '${RegistrationStatus.APPROVED}' THEN 1 END)::int AS approved_candidates
+      `SELECT
+        u.id,
+        u.id AS university_id,
+        u.name,
+        u.name AS university_name,
+        u.code,
+        u.code AS university_code,
+        u.code AS institutionId,
+        u.name AS institutionName,
+        u.short_name,
+        COALESCE(u.short_name, u.code) AS university_short_name,
+        u.university_type,
+        u.email,
+        u.phone,
+        u.phone AS phoneNumber,
+        u.jupeb_prefix,
+        u.status,
+        COALESCE(u.expected_candidate_count, 0) AS expected_candidate_count,
+        COUNT(r.id)::int AS total_candidates,
+        COUNT(r.id)::int AS registered_count,
+        COUNT(r.id)::int AS enrolled_count,
+        COUNT(CASE WHEN r.status = '${RegistrationStatus.APPROVED}' THEN 1 END)::int AS approved_candidates
        FROM jupeb_universities u
        LEFT JOIN jupeb_registrations r ON r.university_id = u.id ${sessionClause}
        WHERE u.deleted_at IS NULL
-       GROUP BY u.id, u.name, u.code
-       ORDER BY total_candidates DESC`,
+       GROUP BY u.id, u.name, u.code, u.short_name, u.university_type, u.email, u.phone, u.jupeb_prefix, u.status, u.expected_candidate_count
+       ORDER BY total_candidates DESC, u.name ASC
+       LIMIT $${limitIdx}`,
       params,
     );
 

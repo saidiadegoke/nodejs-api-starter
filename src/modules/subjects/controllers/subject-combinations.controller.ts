@@ -60,7 +60,25 @@ export class SubjectCombinationsController {
   })
   @ApiOkResponse({ type: [SubjectCombinationResponseDto] })
   async listAdmin(@Query() query: ListSubjectCombinationsQueryDto) {
-    return this.combinationService.listAdmin(query);
+    const result = await this.combinationService.listAdmin(query);
+    const totalPages = Math.ceil(result.total / (result.limit || 20));
+    return {
+      success: true,
+      message: 'Subject combinations retrieved successfully',
+      data: result.rows,
+      combinations: result.rows,
+      rows: result.rows,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages,
+        total_pages: totalPages,
+      },
+    };
   }
 
   @Get(['catalog/subject-combinations/:subjectCombinationId', 'subject-combinations/:subjectCombinationId'])
