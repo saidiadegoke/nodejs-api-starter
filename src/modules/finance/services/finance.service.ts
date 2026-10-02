@@ -22,6 +22,7 @@ import {
   PaymentStatus,
   PaymentType,
 } from '../../../shared/enums';
+import { deltaPct, growthTrend } from '../../registration/services/registration-kpi.service';
 import {
   CreateCheckoutDto,
   CreateInstitutionCheckoutDto,
@@ -401,40 +402,269 @@ export class FinanceService {
     return { rows, page, limit, total };
   }
 
+  private _growthCard(curVal: any, prevVal?: any) {
+    const cur = curVal !== undefined && curVal !== null ? Number(curVal) : 0;
+    const prev = prevVal !== undefined && prevVal !== null ? Number(prevVal) : null;
+    return {
+      value: cur,
+      delta_pct: deltaPct(cur, prev),
+      trend: growthTrend(cur, prev),
+    };
+  }
+
+  async resolveInstitutionFeeDetails(universityId: string, session: any) {
+    const sessionId = session.id;
+    const opensAt = session.opensAt || (session as any).opens_at;
+
+    // 1. Number of active candidates in this session
+    const regCountRow = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS count
+       FROM jupeb_registrations
+       WHERE university_id = $1 AND session_id = $2 AND status <> 'withdrawn'`,
+      [universityId, sessionId],
+    );
+    const numberOfCandidates = Number(regCountRow[0]?.count) || 0;
+
+    // 2. Determine if institution is new affiliate
+    let isNewAffiliate = true;
+    if (opensAt) {
+      const isNewRow = await this.dataSource.query(
+        `SELECT NOT EXISTS (
+           SELECT 1 FROM jupeb_registrations r2
+           JOIN jupeb_registration_sessions s2 ON s2.id = r2.session_id
+           WHERE r2.university_id = $1 AND s2.opens_at < $2
+         ) AS is_new`,
+        [universityId, opensAt],
+      );
+      isNewAffiliate = Boolean(isNewRow[0]?.is_new ?? true);
+    }
+
+    // 3. Projected Fees
+    const affNew = Number(session.affiliationFeeNew ?? (session as any).affiliation_fee_new) || 0;
+    const affExisting = Number(session.affiliationFeeExisting ?? (session as any).affiliation_fee_existing) || 0;
+    const examPerCandidate = Number(session.examFeePerCandidate ?? (session as any).exam_fee_per_candidate) || 25000;
+
+    const affiliationFee = isNewAffiliate ? affNew : affExisting;
+    const examFee = examPerCandidate * numberOfCandidates;
+    const projectedTotal = affiliationFee + examFee;
+
+    // 4. Collected Payments
+    const collRow = await this.dataSource.query(
+      `SELECT
+         COALESCE(SUM(p.amount) FILTER (WHERE p.status IN ('successful', 'completed')), 0)::numeric AS collected_total,
+         COALESCE(SUM(p.amount) FILTER (
+           WHERE p.status IN ('successful', 'completed') AND (pi.code ILIKE '%affiliation%' OR p.purpose ILIKE '%affiliation%')
+         ), 0)::numeric AS collected_affiliation,
+         COALESCE(SUM(p.amount) FILTER (
+           WHERE p.status IN ('successful', 'completed') AND (pi.code ILIKE '%exam%' OR p.purpose ILIKE '%exam%')
+         ), 0)::numeric AS collected_examination,
+         COUNT(*) FILTER (WHERE p.status IN ('successful', 'completed'))::int AS collected_count,
+         COALESCE(SUM(p.amount) FILTER (
+           WHERE p.status IN ('pending', 'pending_transfer', 'processing', 'pending_verification')
+         ), 0)::numeric AS pending_total
+       FROM payments p
+       LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
+       LEFT JOIN jupeb_registrations r ON r.id = p.registration_id
+       WHERE (
+         (p.jupeb_university_id = $1 AND (p.jupeb_session_id = $2 OR p.session_id = $2))
+         OR (r.university_id = $1 AND r.session_id = $2)
+       )`,
+      [universityId, sessionId],
+    );
+
+    const coll = collRow[0] || {};
+    const collectedTotal = Number(coll.collected_total) || 0;
+    const collectedAffiliation = Number(coll.collected_affiliation) || 0;
+    const collectedExamination = Number(coll.collected_examination) || 0;
+    const collectedCount = Number(coll.collected_count) || 0;
+    const pendingTotal = Number(coll.pending_total) || 0;
+
+    return {
+      numberOfCandidates,
+      isNewAffiliate,
+      projected: {
+        affiliation_fee: affiliationFee,
+        exam_fee: examFee,
+        total: projectedTotal,
+      },
+      collected: {
+        affiliation_fee: collectedAffiliation,
+        examination_fee: collectedExamination,
+        total: collectedTotal,
+        payment_count: collectedCount,
+      },
+      pending: { total: pendingTotal },
+      outstanding: Math.max(0, projectedTotal - collectedTotal),
+      outstanding_by_fee: {
+        affiliation_fee: Math.max(0, affiliationFee - collectedAffiliation),
+        examination_fee: Math.max(0, examFee - collectedExamination),
+      },
+    };
+  }
+
   async institutionOverview(query: AnalyticsQueryDto, userId: string) {
     const universityId = await this.scopeService.effectiveUniversityId(userId, query.university_id);
     if (!universityId) throw new UnprocessableEntityException('university_id required');
 
-    const rows = await this.dataSource.query(
-      `SELECT
-         COUNT(DISTINCT r.id)::int as candidates_count,
-         COALESCE(SUM(p.amount), 0)::numeric as total_collected,
-         COUNT(DISTINCT r.id)::numeric * 25000 as total_projected
-       FROM jupeb_registrations r
-       LEFT JOIN payments p ON p.jupeb_university_id = r.university_id AND p.status = 'successful'
-       WHERE r.university_id = $1`,
-      [universityId],
-    );
+    const sessionId = query.session_id;
+    let session: any = null;
+    if (sessionId) {
+      session = await this.sessionRepo.findById(sessionId);
+    }
+    if (!session) {
+      session = await this.sessionRepo.findActiveOrLatest();
+    }
+    if (!session) {
+      const allSessions = await this.dataSource.query(
+        `SELECT * FROM jupeb_registration_sessions ORDER BY opens_at DESC LIMIT 1`,
+      );
+      session = allSessions[0] || null;
+    }
+    if (!session) throw new NotFoundException('Registration session not found');
 
-    const data = rows[0] || {};
-    const proj = Number(data.total_projected) || 0;
-    const coll = Number(data.total_collected) || 0;
+    const current = await this.resolveInstitutionFeeDetails(universityId, session);
+
+    // Previous session comparison if available
+    let prev: any = null;
+    let previousSession: any = null;
+    const opensAt = session.opensAt || session.opens_at;
+    if (opensAt) {
+      const prevRows = await this.dataSource.query(
+        `SELECT id, academic_year, opens_at, closes_at FROM jupeb_registration_sessions
+         WHERE opens_at < $1 ORDER BY opens_at DESC LIMIT 1`,
+        [opensAt],
+      );
+      previousSession = prevRows[0] || null;
+      if (previousSession) {
+        prev = await this.resolveInstitutionFeeDetails(universityId, previousSession);
+      }
+    }
 
     return {
+      session_id: session.id,
       university_id: universityId,
-      total_projected: proj,
-      total_collected: coll,
-      outstanding_balance: Math.max(0, proj - coll),
-      candidates_count: Number(data.candidates_count) || 0,
+      number_of_candidates: this._growthCard(
+        current.numberOfCandidates,
+        prev?.numberOfCandidates,
+      ),
+      total_expected_affiliation_fee: this._growthCard(
+        current.projected.affiliation_fee,
+        prev?.projected.affiliation_fee,
+      ),
+      total_expected_examination_fee: this._growthCard(
+        current.projected.exam_fee,
+        prev?.projected.exam_fee,
+      ),
+      total_amount_paid: this._growthCard(current.collected.total, prev?.collected.total),
+      compared_to: previousSession
+        ? { session_id: previousSession.id, label: previousSession.academic_year || previousSession.academicYear }
+        : null,
+
+      // Flat compatibility fields
+      candidates_count: current.numberOfCandidates,
+      total_projected: current.projected.total,
+      total_collected: current.collected.total,
+      outstanding_balance: current.outstanding,
     };
   }
 
   async institutionFees(query: AnalyticsQueryDto, userId: string) {
-    return this.institutionOverview(query, userId);
+    const universityId = await this.scopeService.effectiveUniversityId(userId, query.university_id);
+    if (!universityId) throw new UnprocessableEntityException('university_id required');
+
+    let session: any = query.session_id ? await this.sessionRepo.findById(query.session_id) : null;
+    if (!session) session = await this.sessionRepo.findActiveOrLatest();
+    if (!session) throw new NotFoundException('Registration session not found');
+
+    const itemRef = (query as any).payment_item || (query as any).payment_item_id;
+    if (!itemRef) {
+      return this.institutionOverview(query, userId);
+    }
+
+    const itemRows = await this.dataSource.query(
+      `SELECT * FROM payment_items WHERE (id::text = $1 OR code = $1) AND is_active = true LIMIT 1`,
+      [itemRef],
+    );
+    const item = itemRows[0];
+    if (!item) throw new NotFoundException('Payment item not found or inactive');
+
+    const current = await this.resolveInstitutionFeeDetails(universityId, session);
+
+    let prev: any = null;
+    let previousSession: any = null;
+    const opensAt = session.opensAt || session.opens_at;
+    if (opensAt) {
+      const prevRows = await this.dataSource.query(
+        `SELECT id, academic_year, opens_at, closes_at FROM jupeb_registration_sessions
+         WHERE opens_at < $1 ORDER BY opens_at DESC LIMIT 1`,
+        [opensAt],
+      );
+      previousSession = prevRows[0] || null;
+      if (previousSession) {
+        prev = await this.resolveInstitutionFeeDetails(universityId, previousSession);
+      }
+    }
+
+    const isAffiliation = item.fee_source === 'affiliation' || item.code.includes('affiliation');
+    const expected = isAffiliation ? current.projected.affiliation_fee : current.projected.exam_fee;
+    const paid = isAffiliation ? current.collected.affiliation_fee : current.collected.examination_fee;
+    const outstanding = isAffiliation ? current.outstanding_by_fee.affiliation_fee : current.outstanding_by_fee.examination_fee;
+
+    const prevExpected = prev ? (isAffiliation ? prev.projected.affiliation_fee : prev.projected.exam_fee) : null;
+    const prevPaid = prev ? (isAffiliation ? prev.collected.affiliation_fee : prev.collected.examination_fee) : null;
+    const prevOutstanding = prev ? (isAffiliation ? prev.outstanding_by_fee.affiliation_fee : prev.outstanding_by_fee.examination_fee) : null;
+
+    return {
+      session_id: session.id,
+      university_id: universityId,
+      payment_item: { id: item.id, code: item.code, name: item.name },
+      total_payment_count: this._growthCard(current.collected.payment_count, prev?.collected.payment_count),
+      total_expected: this._growthCard(expected, prevExpected),
+      paid: this._growthCard(paid, prevPaid),
+      outstanding: this._growthCard(outstanding, prevOutstanding),
+      total_expected_payment: this._growthCard(expected, prevExpected),
+      fee_paid: this._growthCard(paid, prevPaid),
+      outstanding_fees: this._growthCard(outstanding, prevOutstanding),
+      compared_to: previousSession
+        ? { session_id: previousSession.id, label: previousSession.academic_year || previousSession.academicYear }
+        : null,
+    };
   }
 
   async institutionFeePreview(query: AnalyticsQueryDto, userId: string) {
-    return this.institutionOverview(query, userId);
+    const universityId = await this.scopeService.effectiveUniversityId(userId, query.university_id);
+    if (!universityId) throw new UnprocessableEntityException('university_id required');
+
+    let session: any = query.session_id ? await this.sessionRepo.findById(query.session_id) : null;
+    if (!session) session = await this.sessionRepo.findActiveOrLatest();
+    if (!session) throw new NotFoundException('Registration session not found');
+
+    const itemRef = (query as any).payment_item || (query as any).payment_item_id;
+    if (!itemRef) throw new UnprocessableEntityException('payment_item is required');
+
+    const itemRows = await this.dataSource.query(
+      `SELECT * FROM payment_items WHERE (id::text = $1 OR code = $1) AND is_active = true LIMIT 1`,
+      [itemRef],
+    );
+    const item = itemRows[0];
+    if (!item) throw new NotFoundException('Payment item not found or inactive');
+
+    const current = await this.resolveInstitutionFeeDetails(universityId, session);
+    const isAffiliation = item.fee_source === 'affiliation' || item.code.includes('affiliation');
+    const fullFee = isAffiliation ? current.projected.affiliation_fee : current.projected.exam_fee;
+    const alreadyPaid = isAffiliation ? current.collected.affiliation_fee : current.collected.examination_fee;
+    const outstanding = Math.max(0, fullFee - alreadyPaid);
+
+    return {
+      session_id: session.id,
+      university_id: universityId,
+      currency: session.registrationFeeCurrency || (session as any).registration_fee_currency || 'NGN',
+      payment_item: { id: item.id, code: item.code, name: item.name },
+      full_fee: fullFee,
+      already_paid: alreadyPaid,
+      outstanding,
+      fully_paid: outstanding <= 0,
+    };
   }
 
   async createInstitutionCheckout(userId: string, dto: CreateInstitutionCheckoutDto) {
