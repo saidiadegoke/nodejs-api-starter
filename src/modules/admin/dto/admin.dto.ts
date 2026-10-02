@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   IsOptional,
   IsString,
@@ -126,6 +126,16 @@ export class ListRbacQueryDto {
   @IsOptional()
   @IsString()
   module?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === true || value === 1 || value === '1') return true;
+    if (value === 'false' || value === false || value === 0 || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  is_system?: boolean;
 }
 
 export class RoleResponseDto {
@@ -232,6 +242,15 @@ export class AdminUsersStatsResponseDto {
 
   @ApiProperty({ example: 85 })
   institution_admins: number;
+
+  @ApiProperty({ example: 10 })
+  roles: number;
+
+  @ApiProperty({ example: 10 })
+  total_roles: number;
+
+  @ApiProperty({ example: 10 })
+  roles_count: number;
 }
 
 // ----------------------------------------------------

@@ -31,7 +31,7 @@ import {
 } from '../dto';
 
 @ApiTags('Admin RBAC')
-@Controller('admin')
+@Controller(['admin', ''])
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT')
 export class RbacController {

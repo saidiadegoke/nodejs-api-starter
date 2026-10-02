@@ -106,7 +106,9 @@ export class UserProfileController {
     const permissions = await this.userProfileService.getMyPermissions(userId);
     return {
       message: 'Permissions retrieved successfully',
-      data: permissions,
+      data: {
+        permissions,
+      },
     };
   }
 
