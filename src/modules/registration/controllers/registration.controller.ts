@@ -258,7 +258,14 @@ export class RegistrationController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getRegistrationsByUniversity(query, userId);
+    const rows = await this.registrationService.getRegistrationsByUniversity(query, userId);
+    return {
+      success: true,
+      message: 'Registrations by university retrieved successfully',
+      data: rows,
+      rows,
+      total: rows.length,
+    };
   }
 
   @Post('institution/registrations/batch')

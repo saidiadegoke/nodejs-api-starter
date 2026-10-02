@@ -278,10 +278,20 @@ export class SubjectCombinationsService {
       ? await this.combinationRepo.enrolledCountsForCombinations(ids)
       : null;
 
-    return rows.map((row) => ({
-      ...row,
-      subject_items: itemsMap.get(row.id) || [],
-      ...(options.withEnrolled ? { enrolled_count: enrolledMap?.get(row.id) || 0 } : {}),
-    }));
+    return rows.map((row) => {
+      const count = enrolledMap?.get(row.id) || 0;
+      return {
+        ...row,
+        subject_items: itemsMap.get(row.id) || [],
+        ...(options.withEnrolled
+          ? {
+              enrolled_count: count,
+              candidates_count: count,
+              registrations_count: count,
+              enrollment_count: count,
+            }
+          : {}),
+      };
+    });
   }
 }

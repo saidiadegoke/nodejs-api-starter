@@ -38,7 +38,7 @@ export class AdminRepository {
 
   async listRoles(query: ListRbacQueryDto) {
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const limit = Math.min(10000, Math.max(1, Number(query.limit) || 20));
     const offset = (page - 1) * limit;
 
     const qb = this.roleRepo.createQueryBuilder('r');
@@ -94,7 +94,7 @@ export class AdminRepository {
 
   async listPermissions(query: ListRbacQueryDto) {
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+    const limit = Math.min(10000, Math.max(1, Number(query.limit) || 50));
     const offset = (page - 1) * limit;
 
     const qb = this.permissionRepo.createQueryBuilder('p');
@@ -253,7 +253,7 @@ export class AdminRepository {
 
   async listErrorLogs(query: ListErrorLogsQueryDto) {
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const limit = Math.min(10000, Math.max(1, Number(query.limit) || 20));
     const offset = (page - 1) * limit;
 
     const qb = this.logRepo.createQueryBuilder('l');

@@ -26,7 +26,7 @@ import { UserQueryDto, UpdateUserDto } from '../dto/user-query.dto';
 import { UserProfileResponseDto } from '../dto/user-responses.dto';
 
 @ApiTags('Users')
-@Controller('users')
+@Controller(['users', 'admin/users'])
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth('JWT-auth')
 export class UsersController {
@@ -58,12 +58,19 @@ export class UsersController {
       },
     );
     return {
+      success: true,
+      message: 'Users retrieved successfully',
       data: result.users,
+      users: result.users,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
       pagination: {
         page: result.page,
         limit: result.limit,
         total: result.total,
         totalPages: result.totalPages,
+        total_pages: result.totalPages,
       },
     };
   }
