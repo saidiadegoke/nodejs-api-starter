@@ -37,6 +37,7 @@ import {
 } from '../utils/session.constants';
 import {
   assertSessionDateRules,
+  formatSession,
   mapSessionDtoToFields,
 } from '../utils/session-fields.mapper';
 import {
@@ -96,19 +97,35 @@ export class SessionsService {
     const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(query.limit) || DEFAULT_PAGE_SIZE));
     const filter = { status: query.status, q: query.q };
 
-    const [rows, total] = await Promise.all([
+    const [rawRows, total] = await Promise.all([
       this.sessionRepo.findAll({ ...filter, limit, offset: (page - 1) * limit }),
       this.sessionRepo.count(filter),
     ]);
 
-    return { rows, page, limit, total };
+    const rows = rawRows.map((r) => formatSession(r));
+
+    return {
+      success: true,
+      message: 'Academic sessions retrieved successfully',
+      data: rows,
+      rows,
+      page,
+      limit,
+      total,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: limit > 0 ? Math.ceil(total / limit) : 1,
+      },
+    };
   }
 
-  async getById(id: string): Promise<AcademicSessionEntity> {
+  async getById(id: string): Promise<any> {
     this.assertUuid(id, 'Invalid session id');
     const row = await this.sessionRepo.findById(id);
     if (!row) throw new NotFoundException('Session not found');
-    return row;
+    return formatSession(row);
   }
 
   // ─────────────────────────────── Commands ──────────────────────────────
@@ -147,7 +164,7 @@ export class SessionsService {
       { academic_year: created.academicYear },
       userId,
     );
-    return created;
+    return formatSession(created);
   }
 
   async patch(id: string, dto: PatchSessionDto, userId?: UserId): Promise<AcademicSessionEntity> {
@@ -193,7 +210,7 @@ export class SessionsService {
 
     const updated = await this.sessionRepo.updateById(id, fields);
     await this.eventRepo.insertEvent(id, SessionEventType.Updated, { ...fields }, userId);
-    return updated!;
+    return formatSession(updated!);
   }
 
   open(id: string, userId?: UserId): Promise<AcademicSessionEntity> {
@@ -220,7 +237,7 @@ export class SessionsService {
     }
     const updated = await this.sessionRepo.setStatus(id, SessionStatus.CLOSED, userId);
     await this.eventRepo.insertEvent(id, SessionEventType.Closed, {}, userId);
-    return updated!;
+    return formatSession(updated!);
   }
 
   // ───────────────────────── Registration locks ─────────────────────────
@@ -557,7 +574,7 @@ export class SessionsService {
 
     const updated = await this.sessionRepo.setStatus(id, SessionStatus.OPEN, userId);
     await this.eventRepo.insertEvent(id, eventType, {}, userId);
-    return updated!;
+    return formatSession(updated!);
   }
 
   private assertYearPair(academicYear?: string, yearShort?: string): void {

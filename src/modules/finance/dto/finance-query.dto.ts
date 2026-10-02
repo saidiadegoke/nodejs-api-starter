@@ -130,4 +130,9 @@ export class AnalyticsQueryDto {
   @Min(1)
   @Type(() => Number)
   limit?: number;
+
+  @ApiPropertyOptional({ example: 'unilag' })
+  @IsOptional()
+  @IsString()
+  q?: string;
 }

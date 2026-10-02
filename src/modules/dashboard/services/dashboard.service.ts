@@ -347,8 +347,8 @@ export class DashboardService {
     const closesAt = session?.closesAt ?? (session as any)?.closes_at;
     const academicYear = session?.academicYear ?? (session as any)?.academic_year;
 
-    // ── Session-scoped mode: only when session_id is explicitly requested in query
-    if (query.session_id && session && opensAt && closesAt) {
+    // ── Session-scoped mode: when session is resolved (active or requested)
+    if (session && opensAt && closesAt) {
       const params: any[] = [session.id];
       let where = `session_id = $1 AND status <> 'withdrawn'`;
       let i = 2;
@@ -375,6 +375,7 @@ export class DashboardService {
         count: map.get(`${b.year}-${b.month}`) || 0,
       }));
       return {
+        year: Number(query.year) || new Date(opensAt).getUTCFullYear(),
         session: {
           id: session.id,
           academic_year: academicYear,

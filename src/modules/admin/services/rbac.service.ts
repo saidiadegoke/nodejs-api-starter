@@ -47,7 +47,13 @@ export class RbacService {
     }
 
     return {
+      success: true,
+      message: 'Roles retrieved successfully',
+      data: rolesWithPerms,
       roles: rolesWithPerms,
+      total: res.total,
+      page: res.page,
+      limit: res.limit,
       pagination: {
         page: res.page,
         limit: res.limit,
@@ -152,14 +158,21 @@ export class RbacService {
 
   async listPermissions(query: ListRbacQueryDto) {
     const res = await this.adminRepo.listPermissions(query);
+    const permissions = res.permissions.map((p) => ({
+      id: p.id,
+      name: p.name,
+      module: p.module,
+      description: p.description,
+      created_at: p.createdAt,
+    }));
     return {
-      permissions: res.permissions.map((p) => ({
-        id: p.id,
-        name: p.name,
-        module: p.module,
-        description: p.description,
-        created_at: p.createdAt,
-      })),
+      success: true,
+      message: 'Permissions retrieved successfully',
+      data: permissions,
+      permissions,
+      total: res.total,
+      page: res.page,
+      limit: res.limit,
       pagination: {
         page: res.page,
         limit: res.limit,
