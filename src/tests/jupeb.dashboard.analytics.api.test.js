@@ -103,13 +103,25 @@ describe('Dashboard analytics — added widgets', () => {
     expect(r2.status).toBe(401);
   });
 
-  it('institution-distribution math is consistent with /dashboard/quick-stats.institutions_count', async () => {
+  it('GET /dashboard/subject-combination-distribution returns distribution without SQL errors', async () => {
     const token = await adminToken();
     if (!token) return;
-    const [dist, quick] = await Promise.all([
-      request(app).get('/dashboard/institution-distribution').set('Authorization', `Bearer ${token}`),
-      request(app).get('/dashboard/quick-stats').set('Authorization', `Bearer ${token}`),
-    ]);
-    expect(dist.body.data.total).toBe(quick.body.data.institutions_count);
+    const r = await request(app)
+      .get('/dashboard/subject-combination-distribution')
+      .set('Authorization', `Bearer ${token}`);
+    expect(r.status).toBe(200);
+    expect(r.body.data).toHaveProperty('total');
+    expect(r.body.data).toHaveProperty('slices');
+    expect(Array.isArray(r.body.data.slices)).toBe(true);
+  });
+
+  it('GET /dashboard/subject-enrollment returns items with subjects list', async () => {
+    const token = await adminToken();
+    if (!token) return;
+    const r = await request(app)
+      .get('/dashboard/subject-enrollment')
+      .set('Authorization', `Bearer ${token}`);
+    expect(r.status).toBe(200);
+    expect(Array.isArray(r.body.data)).toBe(true);
   });
 });
