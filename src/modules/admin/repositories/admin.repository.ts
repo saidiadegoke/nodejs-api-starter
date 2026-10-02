@@ -50,6 +50,9 @@ export class AdminRepository {
     if (query.status) {
       qb.andWhere('r.status = :status', { status: query.status });
     }
+    if (query.is_system !== undefined) {
+      qb.andWhere('r.is_system = :is_system', { is_system: query.is_system });
+    }
 
     qb.orderBy('r.is_system', 'DESC')
       .addOrderBy('r.name', 'ASC')
@@ -314,6 +317,13 @@ export class AdminRepository {
       WHERE r.name IN ('institution_admin', 'admin', 'super_admin')
     `);
 
+    const roleCountRows = await this.dataSource.query(`
+      SELECT COUNT(*)::int AS count
+      FROM roles
+      WHERE status = 'active' OR status IS NULL
+    `);
+
+    const totalRoles = Number(roleCountRows[0]?.count) || 0;
     const r = rows[0] || {};
     return {
       total_users: Number(r.total_users) || 0,
@@ -321,6 +331,9 @@ export class AdminRepository {
       inactive_users: Number(r.inactive_users) || 0,
       verified_emails: Number(r.verified_emails) || 0,
       institution_admins: Number(adminCountRows[0]?.count) || 0,
+      roles: totalRoles,
+      total_roles: totalRoles,
+      roles_count: totalRoles,
     };
   }
 }
