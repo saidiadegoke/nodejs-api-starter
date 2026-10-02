@@ -127,6 +127,16 @@ export class ListRbacQueryDto {
   @IsString()
   module?: string;
 
+  @ApiPropertyOptional({ example: 'users' })
+  @IsOptional()
+  @IsString()
+  resource?: string;
+
+  @ApiPropertyOptional({ example: 'role', enum: ['role'] })
+  @IsOptional()
+  @IsString()
+  group_by?: string;
+
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @Transform(({ value }) => {

@@ -365,7 +365,7 @@ export class RegistrationService {
     let sessionClause = '';
     if (query.session_id) {
       params.push(query.session_id);
-      sessionClause = `WHERE r.session_id = $1`;
+      sessionClause = `AND r.session_id = $1`;
     }
     params.push(limit);
     const limitIdx = params.length;
@@ -720,9 +720,11 @@ export class RegistrationService {
       this.dataSource.query(
         `SELECT u.id, u.email, u.phone, p.title, p.first_name, p.last_name, p.display_name,
                 p.date_of_birth, p.gender, p.profile_photo_url,
-                p.residential_address, p.state_of_origin, p.lga, p.place_of_birth, p.country
+                p.residential_address, p.state_of_origin, p.lga, p.place_of_birth,
+                c.name as country
            FROM users u
            LEFT JOIN profiles p ON p.user_id = u.id
+           LEFT JOIN countries c ON p.country_id = c.id
           WHERE u.id = $1`,
         [userId],
       ),

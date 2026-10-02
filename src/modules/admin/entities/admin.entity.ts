@@ -47,8 +47,11 @@ export class PermissionEntity {
   @Column({ type: 'varchar', length: 100, unique: true })
   name: string;
 
-  @Column({ type: 'varchar', length: 100, default: 'general' })
-  module: string;
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  resource?: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  action?: string | null;
 
   @Column({ type: 'text', nullable: true })
   description?: string | null;

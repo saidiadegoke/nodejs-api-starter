@@ -139,7 +139,13 @@ export class StudentDashboardService {
   async getResults(userId: string) {
     const ctx = await this.resolveStudentContext(userId);
     if (!ctx.is_result_released) {
-      throw new ForbiddenException('Results have not been released for your registration yet');
+      throw new ForbiddenException({
+        message: 'JUPEB results have not been released yet.',
+        error_code: 'RESULTS_NOT_YET_RELEASED',
+        details: {
+          error_code: 'RESULTS_NOT_YET_RELEASED',
+        },
+      });
     }
     const crms = crmsProviders?.get ? crmsProviders.get() : null;
     if (crms && typeof crms.getResults === 'function') {

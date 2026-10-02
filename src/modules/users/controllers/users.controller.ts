@@ -43,7 +43,7 @@ export class UsersController {
     @CurrentUser('user_id') currentUserId: string,
     @Query() query: UserQueryDto,
   ) {
-    const search = query.q !== undefined ? query.q : query.search;
+    const search = query.q ?? query.query ?? query.search;
     const result = await this.usersService.getAllUsers(
       query.page,
       query.limit,

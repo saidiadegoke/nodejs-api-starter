@@ -141,7 +141,7 @@ export class RbacService {
     return perms.map((p) => ({
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
     }));
   }
@@ -157,11 +157,21 @@ export class RbacService {
   }
 
   async listPermissions(query: ListRbacQueryDto) {
+    if (query.group_by === 'role') {
+      const groups = await this.adminRepo.listPermissionsGroupedByRole(query);
+      return {
+        success: true,
+        message: 'Permissions grouped by role retrieved successfully',
+        data: groups,
+        roles: groups,
+      };
+    }
+
     const res = await this.adminRepo.listPermissions(query);
     const permissions = res.permissions.map((p) => ({
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
       created_at: p.createdAt,
     }));
@@ -187,7 +197,7 @@ export class RbacService {
     return {
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
       created_at: p.createdAt,
     };
@@ -199,14 +209,14 @@ export class RbacService {
 
     const p = await this.adminRepo.createPermission({
       name: dto.name.trim(),
-      module: dto.module || 'general',
+      resource: dto.module || (dto.name.includes('.') ? dto.name.split('.')[0] : 'general'),
       description: dto.description || null,
     });
 
     return {
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
       created_at: p.createdAt,
     };
@@ -217,14 +227,14 @@ export class RbacService {
     if (!p) throw new NotFoundException('Permission not found');
 
     const updates: any = {};
-    if (dto.module !== undefined) updates.module = dto.module;
+    if (dto.module !== undefined) updates.resource = dto.module;
     if (dto.description !== undefined) updates.description = dto.description;
 
     const updated = await this.adminRepo.updatePermission(id, updates);
     return {
       id: updated!.id,
       name: updated!.name,
-      module: updated!.module,
+      module: updated!.resource || (updated!.name ? updated!.name.split('.')[0] : 'general'),
       description: updated!.description,
       created_at: updated!.createdAt,
     };

@@ -395,7 +395,7 @@ export class FinanceService {
          LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
          LEFT JOIN jupeb_registrations r3 ON r3.id = p.registration_id
          WHERE (
-           (p.jupeb_university_id = u.id AND (p.jupeb_session_id = sess.id OR p.session_id = sess.id))
+           (p.jupeb_university_id = u.id AND p.jupeb_session_id = sess.id)
            OR (r3.session_id = sess.id AND r3.university_id = u.id)
          )
        ) coll ON true
@@ -632,7 +632,7 @@ export class FinanceService {
        LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
        LEFT JOIN jupeb_registrations r ON r.id = p.registration_id
        WHERE (
-         (p.jupeb_university_id = $1 AND (p.jupeb_session_id = $2 OR p.session_id = $2))
+         (p.jupeb_university_id = $1 AND p.jupeb_session_id = $2)
          OR (r.university_id = $1 AND r.session_id = $2)
        )`,
       [universityId, sessionId],
