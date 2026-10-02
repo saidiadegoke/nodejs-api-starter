@@ -337,28 +337,167 @@ export class FinanceService {
     };
   }
 
+  async _institutionFeeRows(sessionId: string) {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) return [];
+
+    const r = await this.dataSource.query(
+      `WITH sess AS (
+         SELECT id, opens_at,
+                COALESCE(affiliation_fee_existing, 0)::numeric AS aff_existing,
+                COALESCE(affiliation_fee_new, 0)::numeric      AS aff_new,
+                COALESCE(exam_fee_per_candidate, 0)::numeric   AS exam_per
+         FROM jupeb_registration_sessions WHERE id = $1
+       ),
+       inst AS (
+         SELECT r.university_id,
+                COUNT(*) FILTER (WHERE r.status <> 'withdrawn')::int AS number_of_candidates
+         FROM jupeb_registrations r
+         WHERE r.session_id = $1
+         GROUP BY r.university_id
+       )
+       SELECT
+         u.id   AS institution_id,
+         u.name AS institution_name,
+         u.code AS institution_code,
+         u.jupeb_prefix,
+         u.email,
+         u.status,
+         COALESCE(inst.number_of_candidates, 0)::int AS number_of_candidates,
+         NOT EXISTS (
+           SELECT 1 FROM jupeb_registrations r2
+           JOIN jupeb_registration_sessions s2 ON s2.id = r2.session_id
+           WHERE r2.university_id = u.id AND s2.opens_at < sess.opens_at
+         ) AS is_new_affiliate,
+         sess.aff_existing, sess.aff_new, sess.exam_per,
+         COALESCE(coll.collected_total, 0)::numeric AS collected_total,
+         COALESCE(coll.collected_affiliation, 0)::numeric AS collected_affiliation,
+         COALESCE(coll.collected_examination, 0)::numeric AS collected_examination,
+         COALESCE(coll.collected_count, 0)::int     AS collected_count,
+         COALESCE(coll.pending_total, 0)::numeric   AS pending_total
+       FROM jupeb_universities u
+       LEFT JOIN inst ON inst.university_id = u.id
+       CROSS JOIN sess
+       LEFT JOIN LATERAL (
+         SELECT
+           SUM(p.amount) FILTER (WHERE p.status IN ('completed', 'successful')) AS collected_total,
+           SUM(p.amount) FILTER (
+             WHERE p.status IN ('completed', 'successful') AND (pi.code = 'affiliation_fee' OR pi.code ILIKE '%affiliation%' OR p.purpose ILIKE '%affiliation%')
+           ) AS collected_affiliation,
+           SUM(p.amount) FILTER (
+             WHERE p.status IN ('completed', 'successful') AND (pi.code = 'examination_fee' OR pi.code ILIKE '%exam%' OR p.purpose ILIKE '%exam%')
+           ) AS collected_examination,
+           COUNT(*) FILTER (WHERE p.status IN ('completed', 'successful')) AS collected_count,
+           SUM(p.amount) FILTER (
+             WHERE p.status IN ('pending', 'pending_transfer', 'processing', 'pending_verification')
+           ) AS pending_total
+         FROM payments p
+         LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
+         LEFT JOIN jupeb_registrations r3 ON r3.id = p.registration_id
+         WHERE (
+           (p.jupeb_university_id = u.id AND (p.jupeb_session_id = sess.id OR p.session_id = sess.id))
+           OR (r3.session_id = sess.id AND r3.university_id = u.id)
+         )
+       ) coll ON true
+       WHERE u.deleted_at IS NULL
+       ORDER BY u.name ASC`,
+      [sessionId],
+    );
+
+    return r.map((row: any) => this._mapInstitutionFeeRow(row));
+  }
+
+  private _mapInstitutionFeeRow(row: any) {
+    const numCandidates = Number(row.number_of_candidates) || 0;
+    const affiliationFee = row.is_new_affiliate
+      ? Number(row.aff_new) || 0
+      : Number(row.aff_existing) || 0;
+    const examFee = (Number(row.exam_per) || 0) * numCandidates;
+    const projectedTotal = affiliationFee + examFee;
+    const collectedAffiliation = Number(row.collected_affiliation) || 0;
+    const collectedExamination = Number(row.collected_examination) || 0;
+    const collectedTotal = Number(row.collected_total) || 0;
+
+    return {
+      institution_id: row.institution_id,
+      institution_name: row.institution_name,
+      institution_code: row.institution_code,
+      jupeb_prefix: row.jupeb_prefix || null,
+      email: row.email || null,
+      status: row.status || null,
+      number_of_candidates: numCandidates,
+      is_new_affiliate: row.is_new_affiliate,
+      projected: {
+        affiliation_fee: affiliationFee,
+        exam_fee: examFee,
+        total: projectedTotal,
+      },
+      collected: {
+        affiliation_fee: collectedAffiliation,
+        examination_fee: collectedExamination,
+        total: collectedTotal,
+        payment_count: Number(row.collected_count) || 0,
+      },
+      pending: { total: Number(row.pending_total) || 0 },
+      outstanding: projectedTotal - collectedTotal,
+      outstanding_by_fee: {
+        affiliation_fee: affiliationFee - collectedAffiliation,
+        examination_fee: examFee - collectedExamination,
+      },
+    };
+  }
+
   async examFeeByInstitution(query: AnalyticsQueryDto, _actorUserId: string) {
     const session = query.session_id
       ? await this.sessionRepo.findById(query.session_id)
       : await this.sessionRepo.findActive();
 
-    const sessionId = session?.id;
-    const rows = await this.dataSource.query(
-      `SELECT
-         ju.id as university_id,
-         ju.code as university_code,
-         ju.name as university_name,
-         COUNT(r.id)::int as candidate_count,
-         COUNT(r.id)::numeric * COALESCE(s.exam_fee_per_candidate, 25000) as projected_exam_fee
-       FROM jupeb_universities ju
-       LEFT JOIN jupeb_registrations r ON r.university_id = ju.id AND ($1::uuid IS NULL OR r.session_id = $1)
-       LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
-       WHERE ju.deleted_at IS NULL
-       GROUP BY ju.id, ju.code, ju.name, s.exam_fee_per_candidate
-       ORDER BY candidate_count DESC`,
-      [sessionId || null],
-    );
-    return rows;
+    if (!session) {
+      return {
+        session_id: null,
+        academic_year: null,
+        exam_fee_per_candidate: 0,
+        total_projected_exam_fee: 0,
+        institutions: [],
+      };
+    }
+
+    const sessionId = session.id;
+    const rows = await this._institutionFeeRows(sessionId);
+    const allInstitutions = rows
+      .map((row) => ({
+        institution_id: row.institution_id,
+        institution_name: row.institution_name,
+        institution_code: row.institution_code,
+        jupeb_prefix: row.jupeb_prefix,
+        number_of_candidates: row.number_of_candidates,
+        exam_fee: row.projected.exam_fee,
+        collected: row.collected.total,
+        collected_examination: row.collected.examination_fee,
+      }))
+      .sort((a, b) => b.exam_fee - a.exam_fee);
+
+    let institutions = allInstitutions;
+    if (query.university_id) {
+      institutions = allInstitutions.filter(
+        (row) => String(row.institution_id) === String(query.university_id),
+      );
+    }
+    const limitRaw = parseInt(String(query.limit), 10);
+    if (Number.isFinite(limitRaw) && limitRaw > 0) {
+      institutions = institutions.slice(0, Math.min(limitRaw, 100));
+    }
+
+    const totalProjectedExamFee = allInstitutions.reduce((s, i) => s + i.exam_fee, 0);
+
+    return {
+      session_id: sessionId,
+      academic_year: session.academicYear || (session as any).academic_year,
+      exam_fee_per_candidate:
+        Number(session.examFeePerCandidate || (session as any).exam_fee_per_candidate) || 0,
+      total_projected_exam_fee: totalProjectedExamFee,
+      institutions,
+    };
   }
 
   async paymentTrends(_query: AnalyticsQueryDto, _actorUserId: string) {
@@ -368,41 +507,65 @@ export class FinanceService {
          SUM(amount)::numeric as total_amount,
          COUNT(id)::int as transaction_count
        FROM payments
-       WHERE status = 'successful' AND created_at >= NOW() - INTERVAL '30 days'
+       WHERE status IN ('successful', 'completed') AND created_at >= NOW() - INTERVAL '30 days'
        GROUP BY DATE_TRUNC('day', created_at)
        ORDER BY date ASC`,
     );
-    return { trends: rows };
+    return { trends: rows, data: rows };
   }
 
   async institutionFeeRecords(query: AnalyticsQueryDto, _actorUserId: string) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
-    const offset = (page - 1) * limit;
+    const session = query.session_id
+      ? await this.sessionRepo.findById(query.session_id)
+      : await this.sessionRepo.findActive();
 
-    const countRes = await this.dataSource.query(
-      `SELECT COUNT(*)::int as total FROM jupeb_universities WHERE deleted_at IS NULL`,
-    );
-    const total = countRes[0]?.total || 0;
+    if (!session) {
+      return {
+        success: true,
+        message: 'Institution fee records retrieved successfully',
+        data: [],
+        rows: [],
+        page: 1,
+        limit: 20,
+        total: 0,
+        pagination: { page: 1, limit: 20, total: 0, totalPages: 1 },
+      };
+    }
 
-    const rows = await this.dataSource.query(
-      `SELECT
-         ju.id as university_id,
-         ju.code as university_code,
-         ju.name as university_name,
-         COALESCE(SUM(p.amount), 0)::numeric as collected_amount,
-         COUNT(DISTINCT r.id)::numeric * 25000 as projected_amount
-       FROM jupeb_universities ju
-       LEFT JOIN jupeb_registrations r ON r.university_id = ju.id
-       LEFT JOIN payments p ON p.jupeb_university_id = ju.id AND p.status = 'successful'
-       WHERE ju.deleted_at IS NULL
-       GROUP BY ju.id, ju.code, ju.name
-       ORDER BY collected_amount DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset],
-    );
+    const safePage = Math.max(1, parseInt(String(query.page), 10) || 1);
+    const safeLimit = Math.min(100, Math.max(1, parseInt(String(query.limit), 10) || 20));
 
-    return { rows, page, limit, total };
+    let rows = await this._institutionFeeRows(session.id);
+    if (query.university_id) {
+      rows = rows.filter((row) => String(row.institution_id) === String(query.university_id));
+    }
+    const q = query.q ? String(query.q).trim().toLowerCase() : '';
+    if (q) {
+      rows = rows.filter(
+        (row) =>
+          row.institution_name.toLowerCase().includes(q) ||
+          (row.institution_code || '').toLowerCase().includes(q),
+      );
+    }
+    const total = rows.length;
+    const offset = (safePage - 1) * safeLimit;
+    const pagedRows = rows.slice(offset, offset + safeLimit);
+
+    return {
+      success: true,
+      message: 'Institution fee records retrieved successfully',
+      data: pagedRows,
+      rows: pagedRows,
+      page: safePage,
+      limit: safeLimit,
+      total,
+      pagination: {
+        page: safePage,
+        limit: safeLimit,
+        total,
+        totalPages: safeLimit > 0 ? Math.ceil(total / safeLimit) : 1,
+      },
+    };
   }
 
   private _growthCard(curVal: any, prevVal?: any) {
