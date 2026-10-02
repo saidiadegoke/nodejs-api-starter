@@ -504,7 +504,7 @@ export class DashboardService {
          FROM jupeb_subject_combination_items i
          JOIN jupeb_subjects s ON s.id = i.subject_id
          WHERE i.combination_id = ANY($1)
-         ORDER BY i.sort_order ASC, s.name ASC`,
+         ORDER BY i.position ASC, s.name ASC`,
         [combIds],
       );
       for (const item of itemRows) {
@@ -564,7 +564,7 @@ export class DashboardService {
          FROM jupeb_subject_combination_items i
          JOIN jupeb_subjects s ON s.id = i.subject_id
          WHERE i.combination_id = ANY($1)
-         ORDER BY i.sort_order ASC, s.name ASC`,
+         ORDER BY i.position ASC, s.name ASC`,
         [combIds],
       );
       for (const item of itemRows) {
