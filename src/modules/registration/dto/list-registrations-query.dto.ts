@@ -50,6 +50,14 @@ export class ListRegistrationsQueryDto {
   status?: string;
 
   @ApiPropertyOptional({
+    description: 'Filter by high-level UI status bucket (approved, pending, rejected, withdrawn)',
+    example: 'pending',
+  })
+  @IsOptional()
+  @IsString()
+  bucket?: string;
+
+  @ApiPropertyOptional({
     description: 'Filter by biometric capture status',
     enum: ['all', 'with_biometrics', 'without_biometrics'],
     example: 'all',

@@ -35,6 +35,9 @@ import {
   AnalyticsQueryDto,
 } from '../dto';
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function generatePaymentId(): string {
   const ts = Date.now().toString(36).toUpperCase();
   const rand = Math.floor(Math.random() * 10000)
@@ -674,23 +677,58 @@ export class FinanceService {
     const transactionRef = `TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const amount = dto.amount || 500000;
 
+    const rawPaymentItemKey = (dto.payment_item_id || '').trim();
+    let paymentItem: any = null;
+    if (rawPaymentItemKey) {
+      if (UUID_REGEX.test(rawPaymentItemKey)) {
+        paymentItem = await this.paymentItemRepo.findById(rawPaymentItemKey);
+      }
+      if (!paymentItem) {
+        paymentItem = await this.paymentItemRepo.findByCode(rawPaymentItemKey);
+      }
+    }
+
+    const rawPaymentStructureKey = (dto.payment_structure_id || '').trim();
+    let paymentStructure: any = null;
+    if (rawPaymentStructureKey) {
+      if (UUID_REGEX.test(rawPaymentStructureKey)) {
+        paymentStructure = await this.paymentStructureRepo.findById(rawPaymentStructureKey);
+      }
+      if (!paymentStructure) {
+        paymentStructure = await this.paymentStructureRepo.findByCode(rawPaymentStructureKey);
+      }
+    }
+
+    const resolvedPaymentItemId =
+      paymentItem?.id ||
+      (rawPaymentItemKey && UUID_REGEX.test(rawPaymentItemKey) ? rawPaymentItemKey : null);
+    const resolvedPaymentStructureId =
+      paymentStructure?.id ||
+      (rawPaymentStructureKey && UUID_REGEX.test(rawPaymentStructureKey)
+        ? rawPaymentStructureKey
+        : null);
+
     const payment = await this.paymentRepo.create({
       paymentId,
       amount,
       currency: Currency.NGN,
       type: PaymentType.INSTITUTION_BULK_FEE,
-      paymentType: PaymentType.INSTITUTION_FEE,
+      paymentType: paymentItem?.code || PaymentType.INSTITUTION_FEE,
       status: PaymentStatus.PENDING,
       paymentMethod: (dto.payment_method as PaymentMethod) || PaymentMethod.DIRECT_TRANSFER,
       paymentMethodId: dto.payment_method_id || null,
       transactionRef,
       userId,
-      paymentItemId: dto.payment_item_id || null,
-      paymentStructureId: dto.payment_structure_id || null,
+      paymentItemId: resolvedPaymentItemId,
+      paymentStructureId: resolvedPaymentStructureId,
       jupebUniversityId: dto.university_id,
       jupebSessionId: dto.session_id || null,
       metadata: {
         processor: dto.processor || 'direct_transfer',
+        payment_item_key: rawPaymentItemKey || null,
+        payment_item_code: paymentItem?.code || rawPaymentItemKey || null,
+        payment_structure_key: rawPaymentStructureKey || null,
+        payment_structure_code: paymentStructure?.code || rawPaymentStructureKey || null,
       },
     });
 
@@ -812,24 +850,39 @@ export class FinanceService {
       receiptFileId = uploaded.id;
     }
 
+    const rawPaymentItemKey = (dto.payment_item_id || dto.payment_item || '').trim();
     let paymentItem: any = null;
-    if (dto.payment_item_id) {
-      paymentItem = await this.paymentItemRepo.findById(dto.payment_item_id);
+    if (rawPaymentItemKey) {
+      if (UUID_REGEX.test(rawPaymentItemKey)) {
+        paymentItem = await this.paymentItemRepo.findById(rawPaymentItemKey);
+      }
       if (!paymentItem) {
-        paymentItem = await this.paymentItemRepo.findByCode(dto.payment_item_id);
+        paymentItem = await this.paymentItemRepo.findByCode(rawPaymentItemKey);
       }
     }
 
+    const rawPaymentStructureKey = (dto.payment_structure_id || dto.payment_structure || '').trim();
     let paymentStructure: any = null;
-    if (dto.payment_structure_id) {
-      paymentStructure = await this.paymentStructureRepo.findById(dto.payment_structure_id);
+    if (rawPaymentStructureKey) {
+      if (UUID_REGEX.test(rawPaymentStructureKey)) {
+        paymentStructure = await this.paymentStructureRepo.findById(rawPaymentStructureKey);
+      }
       if (!paymentStructure) {
-        paymentStructure = await this.paymentStructureRepo.findByCode(dto.payment_structure_id);
+        paymentStructure = await this.paymentStructureRepo.findByCode(rawPaymentStructureKey);
       }
     }
 
     const paymentId = generatePaymentId();
     const transactionRef = dto.transaction_ref || `TXN-REC-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    const resolvedPaymentItemId =
+      paymentItem?.id ||
+      (rawPaymentItemKey && UUID_REGEX.test(rawPaymentItemKey) ? rawPaymentItemKey : null);
+    const resolvedPaymentStructureId =
+      paymentStructure?.id ||
+      (rawPaymentStructureKey && UUID_REGEX.test(rawPaymentStructureKey)
+        ? rawPaymentStructureKey
+        : null);
 
     const payment = await this.paymentRepo.create({
       paymentId,
@@ -841,8 +894,8 @@ export class FinanceService {
       paymentMethod: PaymentMethod.OFFLINE_RECEIPT,
       transactionRef,
       userId,
-      paymentItemId: paymentItem?.id || dto.payment_item_id || null,
-      paymentStructureId: paymentStructure?.id || dto.payment_structure_id || null,
+      paymentItemId: resolvedPaymentItemId,
+      paymentStructureId: resolvedPaymentStructureId,
       jupebUniversityId: universityId,
       jupebSessionId: sessionId || null,
       metadata: {
@@ -851,7 +904,11 @@ export class FinanceService {
         description: dto.description || null,
         bank_name: dto.bank_name || null,
         payment_date: dto.payment_date || new Date().toISOString(),
+        payment_item_key: rawPaymentItemKey || null,
+        payment_item_code: paymentItem?.code || rawPaymentItemKey || null,
         payment_item_name: paymentItem?.name || null,
+        payment_structure_key: rawPaymentStructureKey || null,
+        payment_structure_code: paymentStructure?.code || rawPaymentStructureKey || null,
         payment_structure_name: paymentStructure?.name || null,
         uploaded_by: userId,
         uploaded_at: new Date().toISOString(),
