@@ -61,6 +61,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build TypeScript project
+        run: npm run build
+
       - name: Run migrations
         run: npm run migrate
 
