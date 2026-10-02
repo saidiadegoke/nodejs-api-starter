@@ -29,6 +29,87 @@ import { CandidateSyncQueueService } from '../../sync/services/candidate-sync-qu
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function statusBucket(status: string | null | undefined): string {
+  if (status === 'approved') return 'approved';
+  if (status === 'rejected') return 'rejected';
+  if (status === 'withdrawn') return 'withdrawn';
+  return 'pending';
+}
+
+function enrichRegistrationRow(row: any) {
+  if (!row) return row;
+  const firstName = row.first_name ? String(row.first_name).trim() : '';
+  const lastName = row.last_name ? String(row.last_name).trim() : '';
+  const displayName = row.display_name ? String(row.display_name).trim() : '';
+  const fullName = displayName || `${firstName} ${lastName}`.trim() || row.email || 'N/A';
+
+  const hasBiometrics = Boolean(row.has_biometrics);
+  const biometricStatus = hasBiometrics ? 'captured' : 'pending';
+
+  const candidateId =
+    row.jupeb_candidate_number ||
+    row.provisional_candidate_code ||
+    row.institution_issued_code ||
+    null;
+
+  const candidate = {
+    id: row.user_id || null,
+    candidate_id: candidateId,
+    name: fullName,
+    full_name: fullName,
+    first_name: firstName || null,
+    last_name: lastName || null,
+    display_name: displayName || null,
+    email: row.email || null,
+    phone: row.phone || null,
+    status: row.status || 'pending',
+  };
+
+  const university = (row.university_id || row.university_name)
+    ? {
+        id: row.university_id || null,
+        name: row.university_name || '-',
+        short_name: row.university_short_name || null,
+        code: row.university_code || null,
+      }
+    : null;
+
+  const subjectCombination = (row.subject_combination_id || row.subject_combination_code || row.subject_combination_title)
+    ? {
+        id: row.subject_combination_id || null,
+        code: row.subject_combination_code || '-',
+        title: row.subject_combination_title || row.subject_combination_code || '-',
+      }
+    : null;
+
+  const bucket = statusBucket(row.status);
+
+  return {
+    ...row,
+    full_name: fullName,
+    name: fullName,
+    candidate_id: candidateId,
+    biometric_status: biometricStatus,
+    biometricStatus: biometricStatus,
+    has_biometrics: hasBiometrics,
+    bucket,
+    candidate,
+    university,
+    institution: university,
+    subject_combination: subjectCombination,
+    subjectCombination,
+    subject_combination_code: row.subject_combination_code || null,
+    contact_information: {
+      email: row.email || null,
+      phone: row.phone || null,
+    },
+    user: {
+      id: row.user_id || null,
+      email: row.email || null,
+    },
+  };
+}
+
 @Injectable()
 export class RegistrationService {
   private readonly logger;
@@ -62,14 +143,17 @@ export class RegistrationService {
       sessionId: query.session_id,
       universityId: query.university_id,
       status: query.status,
+      bucket: query.bucket,
       biometrics: query.biometrics,
       q: query.q,
       limit,
       offset,
     });
 
+    const enrichedRows = rows.map(enrichRegistrationRow);
+
     return {
-      rows,
+      rows: enrichedRows,
       page,
       limit,
       total,
