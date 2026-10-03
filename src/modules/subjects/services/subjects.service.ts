@@ -121,6 +121,12 @@ export class SubjectsService {
       triggeredBy: 'subject_created',
     }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
 
+    // Emit in-memory event for instant single subject sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.SUBJECT_UPDATED, {
+      subjectId: created.id,
+      data: created,
+    });
+
     return created;
   }
 
@@ -148,7 +154,6 @@ export class SubjectsService {
       data: fields,
     });
 
-
     return updated;
   }
 
@@ -161,6 +166,12 @@ export class SubjectsService {
       subjectIds: [id],
       triggeredBy: 'subject_status_changed',
     }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
+
+    // Emit in-memory event for instant single subject sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.SUBJECT_UPDATED, {
+      subjectId: id,
+      data: { status },
+    });
 
     return updated;
   }

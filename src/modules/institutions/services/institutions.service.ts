@@ -262,6 +262,13 @@ export class InstitutionsService {
         triggeredBy: 'institution_created',
       }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
 
+      // Emit in-memory event for instant single institution sync to CRMS & Attendance
+      this.eventEmitter.emit(SyncEvent.INSTITUTION_UPDATED, {
+        universityId: university.id,
+        userId: createdBy,
+        data: university,
+      });
+
       return {
         ...university,
         institution_admin: admin.institution_admin,
@@ -310,7 +317,6 @@ export class InstitutionsService {
       data: fields,
     });
 
-
     return updated;
   }
 
@@ -324,6 +330,13 @@ export class InstitutionsService {
       userId,
       triggeredBy: 'institution_status_changed',
     }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
+
+    // Emit in-memory event for instant single institution sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.INSTITUTION_UPDATED, {
+      universityId: id,
+      userId,
+      data: { status },
+    });
 
     return updated;
   }
