@@ -28,22 +28,37 @@ export class RbacService {
     this.logger = this.loggerFactory.create(RbacService.name);
   }
 
+  private formatRole(role: any, perms: any[]): RoleResponseDto {
+    const permissionObjects = perms.map((p) => ({
+      id: p.id,
+      name: p.name,
+      display_name: p.description || p.name,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
+      description: p.description || null,
+      created_at: p.createdAt,
+    }));
+
+    return {
+      id: role.id,
+      name: role.name,
+      display_name: role.displayName || null,
+      description: role.description || null,
+      is_system: role.isSystem,
+      status: role.status,
+      permissions: permissionObjects,
+      permission_names: perms.map((p) => p.name),
+      created_at: role.createdAt,
+      updated_at: role.updatedAt || role.createdAt,
+    };
+  }
+
   async listRoles(query: ListRbacQueryDto) {
     const res = await this.adminRepo.listRoles(query);
     const rolesWithPerms: RoleResponseDto[] = [];
 
     for (const r of res.roles) {
       const perms = await this.adminRepo.getRolePermissions(r.id);
-      rolesWithPerms.push({
-        id: r.id,
-        name: r.name,
-        display_name: r.displayName || null,
-        description: r.description || null,
-        is_system: r.isSystem,
-        status: r.status,
-        permissions: perms.map((p) => p.name),
-        created_at: r.createdAt,
-      });
+      rolesWithPerms.push(this.formatRole(r, perms));
     }
 
     return {
@@ -67,16 +82,7 @@ export class RbacService {
     if (!role) throw new NotFoundException('Role not found');
 
     const perms = await this.adminRepo.getRolePermissions(role.id);
-    return {
-      id: role.id,
-      name: role.name,
-      display_name: role.displayName || null,
-      description: role.description || null,
-      is_system: role.isSystem,
-      status: role.status,
-      permissions: perms.map((p) => p.name),
-      created_at: role.createdAt,
-    };
+    return this.formatRole(role, perms);
   }
 
   async createRole(dto: CreateRoleDto, userId?: string | null): Promise<RoleResponseDto> {

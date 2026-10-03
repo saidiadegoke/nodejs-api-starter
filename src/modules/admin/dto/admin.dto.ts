@@ -148,6 +148,26 @@ export class ListRbacQueryDto {
   is_system?: boolean;
 }
 
+export class RolePermissionItemDto {
+  @ApiProperty({ example: 'p0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22' })
+  id: string;
+
+  @ApiProperty({ example: 'reports.view' })
+  name: string;
+
+  @ApiPropertyOptional({ example: 'Reports View', nullable: true })
+  display_name?: string | null;
+
+  @ApiPropertyOptional({ example: 'reports', nullable: true })
+  module?: string | null;
+
+  @ApiPropertyOptional({ example: 'Can view analytics and reports.', nullable: true })
+  description?: string | null;
+
+  @ApiPropertyOptional({ example: '2026-09-29T12:00:00.000Z' })
+  created_at?: Date;
+}
+
 export class RoleResponseDto {
   @ApiProperty({ example: 'r0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
   id: string;
@@ -167,11 +187,17 @@ export class RoleResponseDto {
   @ApiProperty({ example: 'active' })
   status: string;
 
+  @ApiPropertyOptional({ type: () => [RolePermissionItemDto] })
+  permissions?: (RolePermissionItemDto | string)[];
+
   @ApiPropertyOptional({ example: ['candidate.view'], type: [String] })
-  permissions?: string[];
+  permission_names?: string[];
 
   @ApiProperty({ example: '2026-09-29T12:00:00.000Z' })
   created_at: Date;
+
+  @ApiPropertyOptional({ example: '2026-09-29T12:00:00.000Z' })
+  updated_at?: Date;
 }
 
 export class PermissionResponseDto {
