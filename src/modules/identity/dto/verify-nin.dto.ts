@@ -42,8 +42,8 @@ export class VerifyNinDto {
   session_id?: string;
 
   @ApiPropertyOptional({
-    description: 'Override provider (e.g. mock for testing sample NIN pool)',
-    example: 'mock',
+    description: 'NIN provider name (defaults to speedysms, or mock for testing)',
+    example: 'speedysms',
   })
   @IsOptional()
   @IsString()

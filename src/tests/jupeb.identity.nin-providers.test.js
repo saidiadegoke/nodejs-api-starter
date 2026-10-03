@@ -44,17 +44,18 @@ describe('nin-providers registry', () => {
     expect(names).toEqual(expect.arrayContaining(['mock', 'speedysms']));
   });
 
-  it('defaults to mock when JUPEB_NIN_PROVIDER is unset', () => {
+  it('defaults to speedysms when JUPEB_NIN_PROVIDER is unset', () => {
     const prior = process.env.JUPEB_NIN_PROVIDER;
     delete process.env.JUPEB_NIN_PROVIDER;
-    expect(registry.resolveName()).toBe('mock');
+    delete process.env.NIN_PROVIDER;
+    expect(registry.resolveName()).toBe('speedysms');
     if (prior !== undefined) process.env.JUPEB_NIN_PROVIDER = prior;
   });
 
-  it('falls back to mock when JUPEB_NIN_PROVIDER names an unknown provider', () => {
+  it('falls back to speedysms when JUPEB_NIN_PROVIDER names an unknown provider', () => {
     const prior = process.env.JUPEB_NIN_PROVIDER;
     process.env.JUPEB_NIN_PROVIDER = 'does-not-exist';
-    expect(registry.resolveName()).toBe('mock');
+    expect(registry.resolveName()).toBe('speedysms');
     if (prior === undefined) delete process.env.JUPEB_NIN_PROVIDER;
     else process.env.JUPEB_NIN_PROVIDER = prior;
   });
