@@ -12,11 +12,13 @@ export enum SyncQueue {
 
 export interface InstitutionUpdatedEvent {
   universityId: string;
+  userId?: string;
   data: Record<string, any>;
 }
 
 export interface SubjectUpdatedEvent {
   subjectId: string;
+  userId?: string;
   data: Record<string, any>;
 }
 

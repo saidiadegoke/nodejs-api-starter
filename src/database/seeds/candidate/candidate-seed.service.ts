@@ -116,13 +116,21 @@ export class CandidateSeedService {
       );
       const userId = userRows[0].id;
 
-      // Create profile
+      // Create profile with all demographic fields
       await this.dataSource.query(
         `INSERT INTO profiles (
-          user_id, first_name, last_name, display_name, gender, date_of_birth, residential_address, created_at, updated_at
+          user_id, first_name, last_name, display_name, gender, date_of_birth,
+          residential_address, state_of_origin, lga, place_of_birth, created_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, '2005-05-15', '123 Demo Campus Road, Lagos', NOW(), NOW()
-        ) ON CONFLICT (user_id) DO UPDATE SET first_name = $2, last_name = $3`,
+          $1, $2, $3, $4, $5, '2005-05-15',
+          '123 Demo Campus Road, Lagos', 'Lagos State', 'Ikeja', 'Ikeja General Hospital', NOW(), NOW()
+        ) ON CONFLICT (user_id) DO UPDATE SET
+          first_name = $2,
+          last_name = $3,
+          residential_address = '123 Demo Campus Road, Lagos',
+          state_of_origin = 'Lagos State',
+          lga = 'Ikeja',
+          place_of_birth = 'Ikeja General Hospital'`,
         [userId, firstName, lastName, `${firstName} ${lastName}`, i % 2 === 0 ? 'female' : 'male'],
       );
 
@@ -130,16 +138,48 @@ export class CandidateSeedService {
       const institutionCode = `DEMO/${new Date().getFullYear()}/${String(i).padStart(4, '0')}`;
       const provCode = `PROV-${new Date().getFullYear()}-${String(i).padStart(4, '0')}`;
 
-      await this.dataSource.query(
+      const regRows = await this.dataSource.query(
         `INSERT INTO jupeb_registrations (
           session_id, university_id, user_id, subject_combination_id,
           institution_issued_code, provisional_candidate_code,
           jupeb_candidate_number, status, approved_at, payment_projection, created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, NULL, 'approved', NOW(), 'paid', NOW(), NOW()
-        )`,
+        ) RETURNING id`,
         [session.id, university.id, userId, combination.id, institutionCode, provCode],
       );
+      const regId = regRows[0].id;
+
+      // Seed Next of Kin
+      await this.dataSource.query(
+        `INSERT INTO jupeb_next_of_kin (
+          registration_id, name, relationship, phone, email, address, source, is_active, created_at, updated_at
+        ) VALUES (
+          $1, $2, 'Parent', $3, $4, '123 Demo Campus Road, Lagos', 'candidate', true, NOW(), NOW()
+        ) ON CONFLICT DO NOTHING`,
+        [regId, `Parent of Candidate ${i}`, phone, `parent.${i}@${TEST_CANDIDATE_EMAIL_DOMAIN}`],
+      );
+
+      // Seed O-Level Examination Results (WAEC / NECO)
+      const examSubjects = [
+        { subject: 'English Language', grade: 'B2' },
+        { subject: 'Mathematics', grade: 'A1' },
+        { subject: 'Physics', grade: 'B3' },
+        { subject: 'Chemistry', grade: 'A1' },
+        { subject: 'Biology', grade: 'B2' },
+      ];
+
+      for (let sIdx = 0; sIdx < examSubjects.length; sIdx++) {
+        const item = examSubjects[sIdx];
+        await this.dataSource.query(
+          `INSERT INTO jupeb_result_entries (
+            registration_id, source, sitting, serial, subject, grade, created_at, updated_at
+          ) VALUES (
+            $1, 'waec', 1, $2, $3, $4, NOW(), NOW()
+          ) ON CONFLICT DO NOTHING`,
+          [regId, sIdx + 1, item.subject, item.grade],
+        );
+      }
 
       createdCount++;
     }
@@ -155,10 +195,30 @@ export class CandidateSeedService {
   }
 
   /**
-   * Clean and remove all seeded test candidates, registrations, and profiles.
+   * Clean and remove all seeded test candidates, registrations, profiles, next of kin, and result entries.
    */
   async clean(): Promise<{ deletedCount: number }> {
-    this.logger.log('🧹 Cleaning up test candidate registrations and users...');
+    this.logger.log('🧹 Cleaning up test candidate registrations, next of kin, results, and users...');
+
+    // Delete next of kin
+    await this.dataSource.query(`
+      DELETE FROM jupeb_next_of_kin
+      WHERE registration_id IN (
+        SELECT r.id FROM jupeb_registrations r
+        JOIN users u ON u.id = r.user_id
+        WHERE u.email LIKE '%@${TEST_CANDIDATE_EMAIL_DOMAIN}' OR u.email LIKE '${TEST_CANDIDATE_EMAIL_PREFIX}%'
+      )
+    `);
+
+    // Delete result entries
+    await this.dataSource.query(`
+      DELETE FROM jupeb_result_entries
+      WHERE registration_id IN (
+        SELECT r.id FROM jupeb_registrations r
+        JOIN users u ON u.id = r.user_id
+        WHERE u.email LIKE '%@${TEST_CANDIDATE_EMAIL_DOMAIN}' OR u.email LIKE '${TEST_CANDIDATE_EMAIL_PREFIX}%'
+      )
+    `);
 
     const deletedRegistrations = await this.dataSource.query(`
       DELETE FROM jupeb_registrations

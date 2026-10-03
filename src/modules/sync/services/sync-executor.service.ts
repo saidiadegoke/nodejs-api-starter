@@ -349,22 +349,21 @@ export class SyncExecutorService {
         return { synced: 0 };
       }
 
-      const payload = subjects.map((s) => ({
-        code: s.code,
-        name: s.name,
-        description: s.description || '',
-        status: s.status,
-      }));
-
       let attendanceSuccess = false;
       let crmsSuccess = false;
       const errors: string[] = [];
 
       // 1. Sync to Attendance
       try {
+        const attPayload = {
+          subjects: subjects.map((s) => ({
+            subjectCode: s.code,
+            subjectName: s.name,
+          })),
+        };
         const att = attendanceProvider.get();
         if (typeof att.syncSubjects === 'function') {
-          await att.syncSubjects(payload);
+          await att.syncSubjects(attPayload);
           attendanceSuccess = true;
           this.logger.log(`[AttendanceSync] ${subjects.length} subject(s) synced successfully`);
         }
