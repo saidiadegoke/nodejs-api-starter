@@ -42,26 +42,35 @@ export class PgBossService implements OnModuleInit, OnModuleDestroy {
             ? { rejectUnauthorized: false }
             : undefined;
 
+        const baseBossConfig: any = {
+          schema,
+          persistQueueStats: true,
+          keepAlive: true,
+          keepAliveInitialDelayMillis: 10000,
+          notifyKeepAliveInitialDelayMs: 10000,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 10000,
+          max: 10,
+        };
+
         let bossConfig: any;
 
         if (databaseUrl) {
           bossConfig = {
+            ...baseBossConfig,
             connectionString: databaseUrl,
-            schema,
-            persistQueueStats: true,
           };
           if (ssl) {
             bossConfig.ssl = ssl;
           }
         } else {
           bossConfig = {
+            ...baseBossConfig,
             host: dbConfig?.host || process.env.DB_HOST || 'localhost',
             port: dbConfig?.port || parseInt(process.env.DB_PORT || '5432', 10),
             user: dbConfig?.user || process.env.DB_USER || 'postgres',
             password: dbConfig?.password || process.env.DB_PASSWORD || '',
             database: dbConfig?.name || process.env.DB_NAME || 'reg_portal_db',
-            schema,
-            persistQueueStats: true,
           };
           if (ssl) {
             bossConfig.ssl = ssl;
@@ -74,8 +83,12 @@ export class PgBossService implements OnModuleInit, OnModuleDestroy {
 
         this.boss = new PgBossClass(bossConfig);
 
-        this.boss.on('error', (error) => {
-          this.logger.error('pg-boss background worker error:', error);
+        this.boss.on('error', (error: any) => {
+          if (error?.code === 'ETIMEDOUT' || error?.code === 'ECONNRESET' || error?.message?.includes('ETIMEDOUT')) {
+            this.logger.warn(`pg-boss worker socket recycled after timeout (${error.queue || 'pool'}): ${error.message}`);
+          } else {
+            this.logger.error('pg-boss background worker error:', error);
+          }
         });
 
         await this.boss.start();
