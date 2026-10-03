@@ -143,13 +143,15 @@ export class RegistrationService {
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const offset = (page - 1) * limit;
 
+    const searchTerm = query.q || query.search || query.query || query.keyword;
+
     const { rows, total } = await this.regRepo.findAllPaginated({
       sessionId: query.session_id,
       universityId: query.university_id,
       status: query.status,
       bucket: query.bucket,
       biometrics: query.biometrics,
-      q: query.q,
+      q: searchTerm,
       limit,
       offset,
     });
@@ -254,23 +256,49 @@ export class RegistrationService {
 
     // Next of kin resolution
     let nextOfKin = nokRows[0] || null;
-    if (!nextOfKin && ninPayload.next_of_kin && typeof ninPayload.next_of_kin === 'object') {
-      const nok = ninPayload.next_of_kin;
-      nextOfKin = {
-        name:
-          [nok.firstname, nok.middlename, nok.surname].filter(Boolean).join(' ') ||
-          nok.name ||
-          nok.full_name ||
-          null,
-        relationship: nok.relationship || null,
-        phone: nok.telephoneno || nok.phone || null,
-        email: nok.email || null,
-        address:
-          [nok.address1, nok.address2, nok.lga, nok.state].filter(Boolean).join(', ') ||
-          nok.address ||
-          null,
-        source: 'nin',
-      };
+    if (!nextOfKin) {
+      const nok =
+        (ninPayload.next_of_kin && typeof ninPayload.next_of_kin === 'object' ? ninPayload.next_of_kin : null) ||
+        (ninPayload.next_of_kin_record && typeof ninPayload.next_of_kin_record === 'object' ? ninPayload.next_of_kin_record : null) ||
+        (ninIntake.next_of_kin && typeof ninIntake.next_of_kin === 'object' ? ninIntake.next_of_kin : null);
+
+      if (nok) {
+        nextOfKin = {
+          registration_id: registrationId,
+          name:
+            [nok.firstname, nok.middlename, nok.surname].filter(Boolean).join(' ') ||
+            nok.name ||
+            nok.full_name ||
+            null,
+          relationship: nok.relationship || nok.nok_relationship || null,
+          phone: nok.telephoneno || nok.phone || nok.nok_phone || null,
+          email: nok.email || nok.nok_email || null,
+          address:
+            [nok.address1, nok.address2, nok.lga, nok.state].filter(Boolean).join(', ') ||
+            nok.address ||
+            nok.nok_address ||
+            null,
+          source: 'nin',
+        };
+
+        if (nextOfKin.name || nextOfKin.phone || nextOfKin.email) {
+          this.dataSource
+            .query(
+              `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, 'nin', NOW(), NOW())
+               ON CONFLICT DO NOTHING`,
+              [
+                registrationId,
+                nextOfKin.name || 'Next of Kin',
+                nextOfKin.relationship || 'Guardian',
+                nextOfKin.phone,
+                nextOfKin.email,
+                nextOfKin.address,
+              ],
+            )
+            .catch(() => {});
+        }
+      }
     }
 
     // Group result entries by examination type (e.g. WAEC, NECO, NABTEB) & sitting
@@ -337,6 +365,29 @@ export class RegistrationService {
    * Create an individual candidate registration record.
    */
   async createRegistration(dto: CreateRegistrationDto, userId?: string | null): Promise<any> {
+    if (dto.nin_verification_id) {
+      const ninRows = await this.dataSource.query(
+        `SELECT id, status, nin_hash FROM jupeb_nin_verifications WHERE id = $1`,
+        [dto.nin_verification_id],
+      );
+      const nin = ninRows[0];
+      if (!nin) {
+        throw new NotFoundException('NIN verification record not found');
+      }
+      if (nin.status !== 'verified') {
+        throw new UnprocessableEntityException('NIN verification must be completed and in verified status to create candidate registration');
+      }
+      const existing = await this.dataSource.query(
+        `SELECT id FROM jupeb_registrations WHERE nin_verification_id = $1 AND status NOT IN ('rejected', 'withdrawn') AND session_id = $2 LIMIT 1`,
+        [dto.nin_verification_id, dto.session_id],
+      );
+      if (existing.length > 0) {
+        throw new ConflictException('This NIN is already registered for this academic session');
+      }
+    } else {
+      throw new UnprocessableEntityException('nin_verification_id is required to create a candidate registration');
+    }
+
     const serialRows = await this.dataSource.query(
       `SELECT COALESCE(MAX(provisional_serial), 0) + 1 AS next_serial
        FROM jupeb_registrations WHERE session_id = $1`,
@@ -583,6 +634,13 @@ export class RegistrationService {
     const rawAction = dto.action ? String(dto.action).toLowerCase().trim() : 'approve';
     const reason = dto.reason ? String(dto.reason).trim() : undefined;
 
+    if (!ids.length) {
+      throw new UnprocessableEntityException('registration_ids array is required');
+    }
+    if (rawAction === 'reject' && !reason) {
+      throw new UnprocessableEntityException('reason is required when action is reject');
+    }
+
     const accepted: Array<{ id: string; status: string }> = [];
     const rejected: Array<{ id: string; error_code: string; message: string; http_status: number }> = [];
 
@@ -595,6 +653,19 @@ export class RegistrationService {
         }
 
         if (rawAction === 'delete') {
+          const deletable =
+            reg.status === RegistrationStatus.REJECTED ||
+            reg.status === RegistrationStatus.WITHDRAWN ||
+            (reg.status === RegistrationStatus.CODE_ISSUED && !reg.userId);
+          if (!deletable) {
+            rejected.push({
+              id,
+              error_code: 'invalid_status_transition',
+              message: `Cannot delete registration in status ${reg.status}`,
+              http_status: 422,
+            });
+            continue;
+          }
           await this.dataSource.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [id]);
           accepted.push({ id, status: 'deleted' });
           continue;
@@ -610,6 +681,38 @@ export class RegistrationService {
         }
 
         if (rawAction === 'approve') {
+          if (!this.stateService.canTransition(reg.status, RegistrationStatus.APPROVED)) {
+            rejected.push({
+              id,
+              error_code: 'invalid_status_transition',
+              message: `Registration cannot be approved from status ${reg.status}`,
+              http_status: 422,
+            });
+            continue;
+          }
+
+          // Check biometric completion
+          const bioRows = await this.dataSource.query(
+            `SELECT COUNT(*)::int AS count FROM jupeb_biometric_captures WHERE registration_id = $1 AND replaced_at IS NULL`,
+            [id],
+          );
+          const bioCount = Number(bioRows[0]?.count) || 0;
+          const skipped = Boolean(
+            (reg as any).face_skipped_at ||
+              (reg as any).fingerprint_skipped_at ||
+              (reg as any).faceSkippedAt ||
+              (reg as any).fingerprintSkippedAt,
+          );
+          if (bioCount === 0 && !skipped) {
+            rejected.push({
+              id,
+              error_code: 'biometrics_incomplete',
+              message: 'Biometric capture must be completed or explicitly skipped before approval',
+              http_status: 422,
+            });
+            continue;
+          }
+
           await this.regRepo.setStatus(id, RegistrationStatus.APPROVED, reason, userId);
           await this.dataSource.query(
             `UPDATE jupeb_registrations SET status = 'approved', approved_at = NOW(), approved_by = $1, dashboard_unlocked_at = NOW(), updated_at = NOW() WHERE id = $2`,
@@ -628,6 +731,15 @@ export class RegistrationService {
           }
           accepted.push({ id, status: RegistrationStatus.APPROVED });
         } else if (rawAction === 'reject') {
+          if (!this.stateService.canTransition(reg.status, RegistrationStatus.REJECTED)) {
+            rejected.push({
+              id,
+              error_code: 'invalid_status_transition',
+              message: `Registration cannot be rejected from status ${reg.status}`,
+              http_status: 422,
+            });
+            continue;
+          }
           await this.regRepo.setStatus(id, RegistrationStatus.REJECTED, reason || 'Rejected in batch', userId);
           await this.historyRepo.create({
             registrationId: id,
@@ -638,6 +750,15 @@ export class RegistrationService {
           });
           accepted.push({ id, status: RegistrationStatus.REJECTED });
         } else if (rawAction === 'withdraw') {
+          if (!this.stateService.canTransition(reg.status, RegistrationStatus.WITHDRAWN)) {
+            rejected.push({
+              id,
+              error_code: 'invalid_status_transition',
+              message: `Registration cannot be withdrawn from status ${reg.status}`,
+              http_status: 422,
+            });
+            continue;
+          }
           await this.regRepo.setStatus(id, RegistrationStatus.WITHDRAWN, reason || 'Withdrawn in batch', userId);
           await this.historyRepo.create({
             registrationId: id,
@@ -682,7 +803,27 @@ export class RegistrationService {
       throw new UnprocessableEntityException(`Cannot approve registration in status ${reg.status}`);
     }
 
+    // Biometric completion check
+    const bioRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM jupeb_biometric_captures WHERE registration_id = $1 AND replaced_at IS NULL`,
+      [registrationId],
+    );
+    const bioCount = Number(bioRows[0]?.count) || 0;
+    const skipped = Boolean(
+      (reg as any).face_skipped_at ||
+        (reg as any).fingerprint_skipped_at ||
+        (reg as any).faceSkippedAt ||
+        (reg as any).fingerprintSkippedAt,
+    );
+    if (bioCount === 0 && !skipped) {
+      throw new UnprocessableEntityException('Biometric capture must be completed or explicitly skipped before approving candidate registration');
+    }
+
     const updated = await this.regRepo.setStatus(registrationId, RegistrationStatus.APPROVED, body?.reason, userId);
+    await this.dataSource.query(
+      `UPDATE jupeb_registrations SET status = 'approved', approved_at = NOW(), approved_by = $1, dashboard_unlocked_at = NOW(), updated_at = NOW() WHERE id = $2`,
+      [userId || registrationId, registrationId],
+    );
     await this.historyRepo.create({
       registrationId,
       fromStatus: reg.status,

@@ -371,10 +371,28 @@ class FinanceService {
         current.projected.exam_fee,
         prev?.projected.exam_fee
       ),
+      total_affiliation_fee_paid: this._growthCard(
+        current.collected.affiliation_fee,
+        prev?.collected.affiliation_fee
+      ),
+      total_examination_fee_paid: this._growthCard(
+        current.collected.examination_fee,
+        prev?.collected.examination_fee
+      ),
       total_amount_paid: this._growthCard(current.collected.total, prev?.collected.total),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year }
         : null,
+
+      // Flat compatibility fields
+      candidates_count: current.number_of_candidates,
+      total_projected: current.projected.total,
+      total_collected: current.collected.total,
+      total_affiliation_fee_collected: current.collected.affiliation_fee,
+      total_examination_fee_collected: current.collected.examination_fee,
+      outstanding_balance: current.outstanding,
+      outstanding_affiliation_fee: current.outstanding_by_fee.affiliation_fee,
+      outstanding_examination_fee: current.outstanding_by_fee.examination_fee,
     };
   }
 
@@ -394,7 +412,11 @@ class FinanceService {
       ? await this._resolveInstitutionFeeRow(universityId, previousSession.id)
       : null;
 
-    const isAffiliation = item.fee_source === 'affiliation' || item.code === 'affiliation_fee';
+    const isAffiliation =
+      item.fee_source === 'affiliation' ||
+      item.code === 'affiliation_fee' ||
+      item.code?.toLowerCase().includes('affiliation') ||
+      item.name?.toLowerCase().includes('affiliation');
     const expectedKey = isAffiliation ? 'affiliation_fee' : 'exam_fee';
     const collectedKey = isAffiliation ? 'affiliation_fee' : 'examination_fee';
     const outstandingKey = isAffiliation ? 'affiliation_fee' : 'examination_fee';
@@ -417,7 +439,20 @@ class FinanceService {
       // UI aliases for Session History / institution fee tabs.
       total_expected_payment: this._growthCard(expected, prevExpected),
       fee_paid: this._growthCard(paid, prevPaid),
+      total_amount_paid: this._growthCard(paid, prevPaid),
+      total_expected_affiliation_fee: this._growthCard(current.projected.affiliation_fee, prev?.projected.affiliation_fee),
+      total_expected_examination_fee: this._growthCard(current.projected.exam_fee, prev?.projected.exam_fee),
+      total_affiliation_fee_paid: this._growthCard(current.collected.affiliation_fee, prev?.collected.affiliation_fee),
+      total_examination_fee_paid: this._growthCard(current.collected.examination_fee, prev?.collected.examination_fee),
       outstanding_fees: this._growthCard(outstanding, prevOutstanding),
+      outstanding_balance: outstanding,
+      total_collected: paid,
+      total_projected: expected,
+      candidates_count: current.number_of_candidates,
+      number_of_candidates: this._growthCard(
+        current.number_of_candidates,
+        prev?.number_of_candidates
+      ),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year }
         : null,
@@ -455,15 +490,17 @@ class FinanceService {
     const r = await pool.query(
       `SELECT COALESCE(SUM(p.amount), 0)::numeric AS total
        FROM payments p
+       LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
        LEFT JOIN jupeb_registrations reg ON reg.id = p.registration_id
-       WHERE p.payment_item_id = $3 AND p.status = 'completed'
+       WHERE (p.payment_item_id = $3 OR pi.id = $3 OR pi.code = (SELECT code FROM payment_items WHERE id = $3) OR (pi.code ILIKE '%affiliation%' AND (SELECT code FROM payment_items WHERE id = $3) ILIKE '%affiliation%') OR (pi.code ILIKE '%exam%' AND (SELECT code FROM payment_items WHERE id = $3) ILIKE '%exam%'))
+         AND p.status IN ('completed', 'successful')
          AND (
-           (p.jupeb_university_id = $1 AND p.jupeb_session_id = $2)
-           OR (reg.university_id = $1 AND reg.session_id = $2)
+           (p.jupeb_university_id = $1 AND (p.jupeb_session_id = $2 OR p.jupeb_session_id IS NULL))
+           OR (reg.university_id = $1 AND (reg.session_id = $2 OR reg.session_id IS NULL))
          )`,
       [universityId, sessionId, paymentItemId]
     );
-    return Number(r.rows[0].total) || 0;
+    return Number(r.rows[0]?.total) || 0;
   }
 
   _mapInstitutionFeeRow(row) {
@@ -1204,7 +1241,7 @@ class FinanceService {
          u.jupeb_prefix,
          u.email,
          u.status,
-         inst.number_of_candidates,
+         COALESCE(inst.number_of_candidates, 0)::int AS number_of_candidates,
          NOT EXISTS (
            SELECT 1 FROM jupeb_registrations r2
            JOIN jupeb_registration_sessions s2 ON s2.id = r2.session_id
@@ -1216,19 +1253,37 @@ class FinanceService {
          COALESCE(coll.collected_examination, 0)::numeric AS collected_examination,
          COALESCE(coll.collected_count, 0)::int     AS collected_count,
          COALESCE(coll.pending_total, 0)::numeric   AS pending_total
-       FROM inst
-       JOIN jupeb_universities u ON u.id = inst.university_id
+       FROM jupeb_universities u
+       LEFT JOIN inst ON inst.university_id = u.id
        CROSS JOIN sess
        LEFT JOIN LATERAL (
          SELECT
-           SUM(p.amount) FILTER (WHERE p.status = 'completed') AS collected_total,
+           SUM(p.amount) FILTER (WHERE p.status IN ('completed', 'successful')) AS collected_total,
            SUM(p.amount) FILTER (
-             WHERE p.status = 'completed' AND pi.code = 'affiliation_fee'
+             WHERE p.status IN ('completed', 'successful') AND (
+               pi.code ILIKE '%affiliation%'
+               OR pi.fee_source = 'affiliation'
+               OR pi.name ILIKE '%affiliation%'
+               OR p.type ILIKE '%affiliation%'
+               OR p.payment_type ILIKE '%affiliation%'
+               OR (p.metadata->>'payment_item_code') ILIKE '%affiliation%'
+               OR (p.metadata->>'payment_item_key') ILIKE '%affiliation%'
+               OR (p.metadata->>'purpose') ILIKE '%affiliation%'
+             )
            ) AS collected_affiliation,
            SUM(p.amount) FILTER (
-             WHERE p.status = 'completed' AND pi.code = 'examination_fee'
+             WHERE p.status IN ('completed', 'successful') AND (
+               pi.code ILIKE '%exam%'
+               OR pi.fee_source = 'examination'
+               OR pi.name ILIKE '%exam%'
+               OR p.type ILIKE '%exam%'
+               OR p.payment_type ILIKE '%exam%'
+               OR (p.metadata->>'payment_item_code') ILIKE '%exam%'
+               OR (p.metadata->>'payment_item_key') ILIKE '%exam%'
+               OR (p.metadata->>'purpose') ILIKE '%exam%'
+             )
            ) AS collected_examination,
-           COUNT(*) FILTER (WHERE p.status = 'completed') AS collected_count,
+           COUNT(*) FILTER (WHERE p.status IN ('completed', 'successful')) AS collected_count,
            SUM(p.amount) FILTER (
              WHERE p.status IN ('pending', 'pending_transfer', 'processing', 'pending_verification')
            ) AS pending_total
@@ -1236,10 +1291,11 @@ class FinanceService {
          LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
          LEFT JOIN jupeb_registrations r3 ON r3.id = p.registration_id
          WHERE (
-           (p.jupeb_university_id = u.id AND p.jupeb_session_id = sess.id)
+           (p.jupeb_university_id = u.id AND (p.jupeb_session_id = sess.id OR p.jupeb_session_id IS NULL))
            OR (r3.session_id = sess.id AND r3.university_id = u.id)
          )
        ) coll ON true
+       WHERE u.deleted_at IS NULL
        ORDER BY u.name ASC`,
       [sessionId]
     );

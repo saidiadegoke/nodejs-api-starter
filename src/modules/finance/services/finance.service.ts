@@ -842,6 +842,16 @@ export class FinanceService {
       outstanding_balance: outstanding,
       total_collected: paid,
       total_projected: expected,
+      // Flat compatibility fields
+      total_affiliation_fee_collected: current.collected.affiliation_fee,
+      total_examination_fee_collected: current.collected.examination_fee,
+      outstanding_affiliation_fee: current.outstanding_by_fee.affiliation_fee,
+      outstanding_examination_fee: current.outstanding_by_fee.examination_fee,
+      candidates_count: current.numberOfCandidates,
+      number_of_candidates: this._growthCard(
+        current.numberOfCandidates,
+        prev?.numberOfCandidates,
+      ),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year || previousSession.academicYear }
         : null,

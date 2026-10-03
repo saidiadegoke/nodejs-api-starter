@@ -72,6 +72,30 @@ export class ListRegistrationsQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alternative search query parameter',
+    example: 'Adewale',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alternative search query parameter',
+    example: 'Adewale',
+  })
+  @IsOptional()
+  @IsString()
+  query?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alternative search query parameter',
+    example: 'Adewale',
+  })
+  @IsOptional()
+  @IsString()
+  keyword?: string;
 }
 
 export class ClaimCodeDto {

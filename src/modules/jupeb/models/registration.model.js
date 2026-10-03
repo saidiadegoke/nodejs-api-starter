@@ -269,14 +269,30 @@ class RegistrationModel {
     // word — filters by the coarse pending / approved / rejected /
     // withdrawn grouping; any other `status` is an exact raw-status match.
     // `pending` is "not yet decided" — every status that isn't terminal.
-    const BUCKET_WORDS = ['pending', 'approved', 'rejected', 'withdrawn'];
+    const BUCKET_WORDS = [
+      'pending',
+      'approved',
+      'rejected',
+      'withdrawn',
+      'awaiting_action',
+      'pending_institution_review',
+      'awaiting_review',
+      'awaiting_approval',
+    ];
     const bucketFilter = bucket || (BUCKET_WORDS.includes(status) ? status : null);
     const rawStatus = bucketFilter ? null : status;
     if (rawStatus) {
       where.push(`r.status = $${idx++}`);
       values.push(rawStatus);
     }
-    if (bucketFilter === 'pending') {
+    if (
+      bucketFilter === 'awaiting_action' ||
+      bucketFilter === 'pending_institution_review' ||
+      bucketFilter === 'awaiting_review' ||
+      bucketFilter === 'awaiting_approval'
+    ) {
+      where.push(`r.status IN ('pending_institution_review', 'submitted')`);
+    } else if (bucketFilter === 'pending') {
       where.push(`r.status NOT IN ('approved', 'rejected', 'withdrawn')`);
     } else if (bucketFilter) {
       where.push(`r.status = $${idx++}`);
@@ -289,10 +305,14 @@ class RegistrationModel {
           COALESCE(p.display_name, '') ILIKE $${idx} OR
           COALESCE(p.first_name, '')   ILIKE $${idx} OR
           COALESCE(p.last_name, '')    ILIKE $${idx} OR
+          CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, '')) ILIKE $${idx} OR
+          CONCAT(COALESCE(p.last_name, ''), ' ', COALESCE(p.first_name, '')) ILIKE $${idx} OR
           COALESCE(u.email, '')        ILIKE $${idx} OR
+          COALESCE(u.phone, '')        ILIKE $${idx} OR
           COALESCE(r.provisional_candidate_code, '') ILIKE $${idx} OR
           COALESCE(r.jupeb_candidate_number, '')      ILIKE $${idx} OR
           COALESCE(r.institution_issued_code, '')     ILIKE $${idx} OR
+          COALESCE(nv.nin_last4, '')                  ILIKE $${idx} OR
           COALESCE(nv.intake_payload->>'name', '')    ILIKE $${idx} OR
           COALESCE(nv.intake_payload->>'email', '')   ILIKE $${idx} OR
           COALESCE(TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))), '') ILIKE $${idx}
