@@ -57,3 +57,131 @@ This document tracks architectural enhancements, migrations, and technical debt 
   - Integrate secret management (e.g., AWS Secrets Manager, Doppler, or HashiCorp Vault) for multi-environment deployments.
   - Add strict runtime environment auditing for production secrets.
 - **Benefit**: Enhanced security and credential rotation without redeploying code.
+
+---
+
+## 7. External Integrations: Synchronization Status & Prompts (CRMS & Attendance)
+
+This section tracks the implementation and verification status of synchronization endpoints between Registration Portal, Attendance System, and CRMS (RMS).
+
+### 📊 Integration Status Matrix
+
+| Integration Domain | Attendance System | CRMS / RMS System | Current Status |
+| :--- | :--- | :--- | :--- |
+| **Candidates (Students)** | `POST /api/auth/sync-students` | `POST /api/candidates/sync` | ✅ **Fully Live & Verified** |
+| **Institutions (Centres)** | `POST /api/auth/sync-institutions` | `POST /api/institutions/sync` | ✅ **Fully Live & Verified** |
+| **Subjects (Catalog)** | `POST /api/auth/sync-subjects` | `POST /api/subjects/sync` | ✅ **Fully Live & Verified** |
+
+---
+
+### 7.1 ✅ Live Endpoints Reference (Implemented & Active)
+
+#### 1. Attendance System — Subjects (`POST /api/auth/sync-subjects`)
+- **Request Payload**:
+```json
+{
+  "subjects": [
+    { "subjectCode": "MUS", "subjectName": "Music" },
+    { "subjectCode": "LIT", "subjectName": "Literature" }
+  ]
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "message": "Subject sync completed.",
+  "summary": { "created": 2, "updated": 0, "failed": 0, "total": 2 },
+  "results": [
+    { "subjectCode": "MUS", "status": "created", "subject_id": "..." }
+  ]
+}
+```
+
+#### 2. Attendance System — Institutions (`POST /api/auth/sync-institutions`)
+- **Payload**:
+```json
+{
+  "institutions": [
+    {
+      "institutionCode": "001",
+      "institutionName": "University of Lagos",
+      "address": "Akoka, Yaba, Lagos State, Nigeria",
+      "coordinates": { "latitude": 6.5173, "longitude": 3.3869 },
+      "lectureRadius": 100
+    }
+  ]
+}
+```
+
+#### 2. CRMS System — Subjects (`POST /api/subjects/sync`)
+- **Payload**:
+```json
+[
+  {
+    "code": "MTH",
+    "name": "Mathematics",
+    "category": "Sciences",
+    "hasPractical": false,
+    "isActive": true
+  },
+  {
+    "code": "PHY",
+    "name": "Physics",
+    "category": "Sciences",
+    "hasPractical": true,
+    "isActive": true
+  }
+]
+```
+
+#### 3. CRMS System — Institutions (`POST /api/institutions/sync`)
+- **Payload**:
+```json
+[
+  {
+    "code": "001",
+    "name": "University of Lagos",
+    "shortCode": "UNILAG",
+    "category": "Federal",
+    "state": "Lagos",
+    "city": "Akoka",
+    "isActive": true
+  }
+]
+```
+
+#### 4. CRMS System — Candidates (`POST /api/candidates/sync`)
+- **Payload**:
+```json
+[
+  {
+    "candidateNumber": "280010001",
+    "jupebNumber": "280010001",
+    "firstName": "John",
+    "lastName": "Doe",
+    "middleName": "Emeka",
+    "institutionCode": "001",
+    "academicYear": "2028",
+    "subjects": ["MTH", "PHY", "CHM"],
+    "stdInstNumber": "DEMO/2026/0001",
+    "isActive": true
+  }
+]
+```
+
+---
+
+### 7.3 Additional Integration Items (Future Enhancements)
+
+| Gap / Future Endpoint | Target System | HTTP Method & Path | Rationale & Impact |
+| :--- | :--- | :--- | :--- |
+| **Candidate Invalidation / Deactivation** | **Attendance** | `DELETE /api/auth/sync-students/:id`<br>or `POST /api/auth/deactivate-student` | When a candidate registration is withdrawn, cancelled, or disqualified in Registration Portal, Attendance can revoke biometric/scanner access. |
+| **Batch Sync Status Verification** | **Attendance** | `GET /api/auth/sync/status/:batchId` | After bulk syncing candidate records, inspect individual barcode/biometric errors. |
+| **Institution / Subject Invalidation** | **Attendance** | `DELETE /api/auth/sync-institutions/:id`<br>`DELETE /api/auth/sync-subjects/:id` | Archiving endpoint for retired universities or deprecated subject syllabi. |
+| **Admin Bulk Results Query** | **CRMS** | `GET /api/results/session/:sessionId`<br>or `GET /api/results/institution/:universityId` | Administrative bulk export endpoint for portal result publication workflows. |
+| **Candidate Invalidation / Deletion** | **CRMS** | `DELETE /api/candidates/:candidateNumber` | Flag candidate as withdrawn if registration is cancelled prior to examinations. |
+
+
+
+

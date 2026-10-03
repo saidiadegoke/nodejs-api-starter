@@ -131,6 +131,16 @@ export class AnalyticsQueryDto {
   @Type(() => Number)
   limit?: number;
 
+  @ApiPropertyOptional({ example: 'affiliation_fee', description: 'Payment item code or UUID' })
+  @IsOptional()
+  @IsString()
+  payment_item?: string;
+
+  @ApiPropertyOptional({ example: 'd3b07384-d113-40f4-8a4e-379e4971c260', description: 'Payment item UUID or code' })
+  @IsOptional()
+  @IsString()
+  payment_item_id?: string;
+
   @ApiPropertyOptional({ example: 'unilag' })
   @IsOptional()
   @IsString()

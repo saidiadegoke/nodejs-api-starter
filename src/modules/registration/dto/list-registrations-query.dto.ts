@@ -2,7 +2,6 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  IsIn,
   IsArray,
   IsInt,
   Min,
@@ -73,6 +72,30 @@ export class ListRegistrationsQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alternative search query parameter',
+    example: 'Adewale',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alternative search query parameter',
+    example: 'Adewale',
+  })
+  @IsOptional()
+  @IsString()
+  query?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alternative search query parameter',
+    example: 'Adewale',
+  })
+  @IsOptional()
+  @IsString()
+  keyword?: string;
 }
 
 export class ClaimCodeDto {
@@ -96,21 +119,28 @@ export class ConfirmSubjectsDto {
 }
 
 export class BatchRegistrationActionDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Array of registration UUIDs to execute batch action upon',
     example: ['d3b07384-d113-40f4-8a4e-379e4971c260'],
   })
+  @IsOptional()
   @IsArray()
-  @IsUUID('4', { each: true })
-  registration_ids: string[];
+  registration_ids?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Array of registration UUIDs (alternative key)',
+    example: ['d3b07384-d113-40f4-8a4e-379e4971c260'],
+  })
+  @IsOptional()
+  @IsArray()
+  ids?: string[];
 
   @ApiProperty({
     description: 'Batch action to apply',
-    enum: ['approve', 'reject', 'withdraw'],
+    enum: ['approve', 'reject', 'withdraw', 'delete', 'unlock', 'lock'],
     example: 'approve',
   })
   @IsString()
-  @IsIn(['approve', 'reject', 'withdraw'])
   action: string;
 
   @ApiPropertyOptional({
@@ -120,6 +150,8 @@ export class BatchRegistrationActionDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  [key: string]: any;
 }
 
 export class CreateNextOfKinDto {

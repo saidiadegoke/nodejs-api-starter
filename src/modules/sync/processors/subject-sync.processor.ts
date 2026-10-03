@@ -77,9 +77,15 @@ export class SubjectSyncProcessor extends WorkerHost {
 
       // 1. Sync to Attendance
       try {
+        const attPayload = {
+          subjects: subjects.map((s) => ({
+            subjectCode: s.code,
+            subjectName: s.name,
+          })),
+        };
         const att = attendanceProvider.get();
         if (typeof att.syncSubjects === 'function') {
-          await att.syncSubjects(payload);
+          await att.syncSubjects(attPayload);
           attendanceSuccess = true;
           this.logger.log(`[AttendanceSync] ${subjects.length} subjects synced successfully`);
         }

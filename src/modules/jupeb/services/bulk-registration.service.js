@@ -64,6 +64,67 @@ function isRowEmpty(rowObj) {
   return values.every((val) => val == null || String(val).trim() === '');
 }
 
+function parseCombinationInput(rawInput) {
+  if (!rawInput) return { raw: '', codePart: '', codeCandidates: [], subjectCodes: [] };
+  const raw = String(rawInput).trim().replace(/^['’`"]+|['’`"]+$/g, '').trim();
+
+  // Extract subjects inside parentheses if present: "(CRS, GOV, IGB)" or "(CRS / GOV / IGB)"
+  let extractedSubjects = [];
+  const parenMatch = raw.match(/\(([^)]+)\)/);
+  if (parenMatch) {
+    extractedSubjects = parenMatch[1]
+      .split(/[,/|+]/)
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+  }
+
+  // Remove parentheses part to isolate the code part
+  let codeWithoutParen = raw.replace(/\([^)]*\)/g, '').trim();
+  codeWithoutParen = codeWithoutParen.replace(/^[\s\-:|]+|[\s\-:|]+$/g, '').trim();
+
+  // If no parentheses were found, check if there's a dash or colon separating code and subjects, e.g. "SC-002 - CRS, GOV, IGB"
+  if (extractedSubjects.length === 0 && codeWithoutParen.includes('-')) {
+    const parts = codeWithoutParen.split('-');
+    if (parts.length === 2 && parts[1].includes(',')) {
+      codeWithoutParen = parts[0].trim();
+      extractedSubjects = parts[1]
+        .split(/[,/|+]/)
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
+    }
+  }
+
+  // If still no subjects found, but string is like "CRS, GOV, IGB" (comma separated codes)
+  if (extractedSubjects.length === 0 && raw.includes(',')) {
+    const parts = raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (parts.length >= 2 && parts.every((p) => p.length <= 10 && !p.includes(' '))) {
+      extractedSubjects = parts;
+    }
+  }
+
+  // Generate code candidates
+  const codeCandidates = new Set();
+  if (codeWithoutParen) {
+    codeCandidates.add(codeWithoutParen.toLowerCase());
+    const noJupeb = codeWithoutParen.replace(/^jupeb[\s_-]*/i, '').trim();
+    if (noJupeb) {
+      codeCandidates.add(noJupeb.toLowerCase());
+      codeCandidates.add(noJupeb.replace(/[\s_-]+/g, '').toLowerCase());
+    }
+    if (!/^jupeb/i.test(codeWithoutParen)) {
+      codeCandidates.add(`jupeb ${codeWithoutParen}`.toLowerCase());
+      codeCandidates.add(`jupeb-${codeWithoutParen}`.toLowerCase());
+    }
+  }
+
+  return {
+    raw,
+    codePart: codeWithoutParen,
+    codeCandidates: Array.from(codeCandidates),
+    subjectCodes: extractedSubjects,
+  };
+}
+
 function extractCandidate(rowObj) {
   const clean = {};
   for (const [key, val] of Object.entries(rowObj)) {
@@ -74,13 +135,22 @@ function extractCandidate(rowObj) {
     clean[k] = strVal;
   }
 
-  const firstName = clean.firstname || '';
-  const lastName = clean.lastname || '';
-  const middleName = clean.middlename || '';
-  const email = clean.email || '';
-  const phone = clean.phone || '';
-  const nin = clean.nin || '';
-  const combinationCode = clean.combinationcode || '';
+  const firstName = clean.firstname || clean.first || '';
+  const lastName = clean.lastname || clean.surname || clean.last || '';
+  const middleName = clean.middlename || clean.middle || clean.othername || clean.othernames || '';
+  const email = clean.email || clean.emailaddress || '';
+  const phone = clean.phone || clean.phonenumber || clean.telephoneno || clean.mobile || clean.tel || '';
+  const nin = clean.nin || clean.nationalid || clean.ninnumber || '';
+  const combinationCode =
+    clean.combinationcode ||
+    clean.subjectcombination ||
+    clean.combination ||
+    clean.subjectcombinationcode ||
+    clean.subjects ||
+    clean.subjectcombinations ||
+    clean.coursecombination ||
+    clean.course ||
+    '';
   const jupebPrefix = cleanJupebPrefix(clean.jupebprefix || clean.prefix || '');
 
   const name = [firstName, middleName, lastName].filter(Boolean).join(' ');
@@ -174,23 +244,109 @@ class BulkRegistrationService {
     await assertInstitutionRegistration(userId);
     await assertInstitutionUniversityAccess(userId, university_id);
 
-    // Cache verified subject combinations for fast validation by code
+    // Preload active combinations and their subject items for this university
+    const activeCombos = await subjectCombinationModel.findPublicActive({ universityId: university_id });
+    const comboIds = activeCombos.map((c) => c.id);
+    const comboItemsMap = await subjectCombinationModel.listItemsForCombinations(comboIds);
+
+    const comboList = activeCombos.map((combo) => {
+      const items = comboItemsMap.get(combo.id) || [];
+      const subjectCodes = items.map((it) => String(it.code || '').trim().toUpperCase()).filter(Boolean);
+      const sortedSubjectCodes = [...subjectCodes].sort().join(',');
+      const rawCode = String(combo.code || '').trim();
+      const noPrefixCode = rawCode.replace(/^jupeb[\s_-]*/i, '').trim();
+
+      const codeVariants = new Set([
+        rawCode.toLowerCase(),
+        noPrefixCode.toLowerCase(),
+        rawCode.replace(/[\s_-]+/g, '').toLowerCase(),
+        noPrefixCode.replace(/[\s_-]+/g, '').toLowerCase(),
+        `jupeb ${noPrefixCode}`.toLowerCase(),
+        `jupeb-${noPrefixCode}`.toLowerCase(),
+      ]);
+
+      return {
+        ...combo,
+        items,
+        subjectCodes,
+        sortedSubjectCodes,
+        codeVariants,
+      };
+    });
+
     const comboCache = new Map();
-    const getValidatedCombo = async (code) => {
-      if (!code) return null;
-      const key = String(code).trim().toLowerCase();
-      if (comboCache.has(key)) return comboCache.get(key);
+    const getValidatedCombo = async (rawCode) => {
+      if (!rawCode) return null;
+      const cacheKey = String(rawCode).trim().toLowerCase();
+      if (comboCache.has(cacheKey)) return comboCache.get(cacheKey);
 
-      const combo = await subjectCombinationModel.findByCode(code);
-      if (!combo || combo.status !== 'active') {
-        throw httpError(422, `Subject combination '${code}' not found or inactive`);
-      }
-      if (!combo.is_global && combo.university_id !== university_id) {
-        throw httpError(422, `Subject combination '${code}' is not available for this university`);
+      const parsed = parseCombinationInput(rawCode);
+
+      // Strategy 1: Match both code candidate AND subject codes (e.g. "JUPEB SC-002 - (CRS, GOV, IGB)")
+      if (parsed.codeCandidates.length > 0 && parsed.subjectCodes.length > 0) {
+        const sortedTarget = [...parsed.subjectCodes].sort().join(',');
+        for (const c of comboList) {
+          const codeMatches = parsed.codeCandidates.some((cand) => c.codeVariants.has(cand));
+          if (
+            codeMatches &&
+            (c.sortedSubjectCodes === sortedTarget ||
+              parsed.subjectCodes.every((sc) => c.subjectCodes.includes(sc)))
+          ) {
+            comboCache.set(cacheKey, c);
+            return c;
+          }
+        }
       }
 
-      comboCache.set(key, combo);
-      return combo;
+      // Strategy 2: Match by code candidate (e.g. "JUPEB SC-002" or "SC-002")
+      if (parsed.codeCandidates.length > 0) {
+        for (const c of comboList) {
+          const codeMatches = parsed.codeCandidates.some((cand) => c.codeVariants.has(cand));
+          if (codeMatches) {
+            comboCache.set(cacheKey, c);
+            return c;
+          }
+        }
+      }
+
+      // Strategy 3: Match by subject codes alone (e.g. "(CRS, GOV, IGB)" or "CRS, GOV, IGB")
+      if (parsed.subjectCodes.length > 0) {
+        const sortedTarget = [...parsed.subjectCodes].sort().join(',');
+        for (const c of comboList) {
+          if (
+            c.sortedSubjectCodes === sortedTarget ||
+            (parsed.subjectCodes.length === c.subjectCodes.length &&
+              parsed.subjectCodes.every((sc) => c.subjectCodes.includes(sc)))
+          ) {
+            comboCache.set(cacheKey, c);
+            return c;
+          }
+        }
+      }
+
+      // Strategy 4: Match by combo title
+      if (parsed.raw) {
+        const lowRaw = parsed.raw.toLowerCase();
+        for (const c of comboList) {
+          if (c.title && (c.title.toLowerCase() === lowRaw || c.title.toLowerCase().includes(lowRaw))) {
+            comboCache.set(cacheKey, c);
+            return c;
+          }
+        }
+      }
+
+      // Fallback: direct database query by code
+      const directCode = parsed.codePart || parsed.raw;
+      const dbCombo = await subjectCombinationModel.findByCode(directCode);
+      if (dbCombo && dbCombo.status === 'active') {
+        if (!dbCombo.is_global && dbCombo.university_id !== university_id) {
+          throw httpError(422, `Subject combination '${rawCode}' is not available for this university`);
+        }
+        comboCache.set(cacheKey, dbCombo);
+        return dbCombo;
+      }
+
+      throw httpError(422, `Subject combination '${rawCode}' not found or inactive`);
     };
 
     const rawRows = this.parseSpreadsheet(buffer);
@@ -307,6 +463,7 @@ class BulkRegistrationService {
           name: candidate.name,
           email: candidate.email,
           phone: candidate.phone,
+          nin: normalizedNin || candidate.nin,
           nin_last4: ninLast4(normalizedNin),
           combination_code: candidate.combination_code,
           error_code: 'duplicate_in_file',
@@ -368,6 +525,7 @@ class BulkRegistrationService {
           name: candidate.name,
           email: candidate.email,
           phone: candidate.phone,
+          nin: candidate.normalizedNin || candidate.nin,
           nin_last4: ninLast4(candidate.normalizedNin),
           combination_code: candidate.combination_code,
           error_code: 'invalid_subject_combination',
@@ -387,6 +545,7 @@ class BulkRegistrationService {
           name: candidate.name,
           email: candidate.email,
           phone: candidate.phone,
+          nin: candidate.normalizedNin || candidate.nin,
           nin_last4: ninLast4(candidate.normalizedNin),
           combination_code: comboRow.code,
           error_code: 'already_registered',
@@ -408,6 +567,7 @@ class BulkRegistrationService {
           name: candidate.name,
           email: candidate.email,
           phone: candidate.phone,
+          nin: candidate.normalizedNin || candidate.nin,
           nin_last4: ninLast4(candidate.normalizedNin),
           combination_code: comboRow.code,
           error_code: 'already_registered',
@@ -496,6 +656,7 @@ class BulkRegistrationService {
             name: candidate.name,
             email: candidate.email,
             phone: candidate.phone,
+            nin: candidate.normalizedNin || candidate.nin,
             nin_last4: ninLast4(candidate.normalizedNin),
             combination_code: comboRow.code,
             error_code: 'nin_unavailable',
@@ -542,6 +703,7 @@ class BulkRegistrationService {
             name: candidate.name,
             email: candidate.email,
             phone: candidate.phone,
+            nin: candidate.normalizedNin || candidate.nin,
             nin_last4: ninLast4(candidate.normalizedNin),
             combination_code: comboRow.code,
             error_code: 'nin_failed',
@@ -584,6 +746,7 @@ class BulkRegistrationService {
             name: candidate.name,
             email: candidate.email,
             phone: candidate.phone,
+            nin: candidate.normalizedNin || candidate.nin,
             nin_last4: ninLast4(candidate.normalizedNin),
             combination_code: comboRow.code,
             error_code: 'nin_persistence_failed',
@@ -619,6 +782,7 @@ class BulkRegistrationService {
           name: candidate.name,
           email: candidate.email,
           phone: candidate.phone,
+          nin: candidate.normalizedNin || candidate.nin,
           nin_last4: ninLast4(candidate.normalizedNin),
           combination_code: comboRow.code,
           error_code: isDuplicate ? 'already_registered' : 'registration_failed',

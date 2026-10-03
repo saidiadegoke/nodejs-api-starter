@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
-import { SYNC_QUEUES } from '../../../infra/bullmq/queues.config';
+import { PgBossService } from '../../../infra/pg-boss/pg-boss.service';
+import { SyncExecutorService } from './sync-executor.service';
 import { EnqueueCandidateSyncDto, CandidateSyncJobPayload } from '../dto/enqueue-candidate-sync.dto';
 import { SyncLogEntity, SyncEntityType, SyncStatus, SyncTarget } from '../entities/sync-log.entity';
+
+import { SyncQueue } from '../constants/sync-events.enum';
 
 const CONTEXT = 'CandidateSyncQueueService';
 
@@ -14,14 +15,14 @@ export class CandidateSyncQueueService {
   private readonly logger = new Logger(CONTEXT);
 
   constructor(
-    @InjectQueue(SYNC_QUEUES.CANDIDATE_SYNC)
-    private readonly syncQueue: Queue<CandidateSyncJobPayload & { syncLogId?: string }>,
+    private readonly pgBossService: PgBossService,
+    private readonly syncExecutor: SyncExecutorService,
     @InjectRepository(SyncLogEntity)
     private readonly syncLogRepo: Repository<SyncLogEntity>,
   ) {}
 
   /**
-   * Enqueue candidate sync job for attendance & crms.
+   * Enqueue candidate sync job for attendance & crms via PostgreSQL pg-boss queue.
    * Tracks sync history and failure/retry status.
    */
   async enqueueCandidateSyncJob(dto: EnqueueCandidateSyncDto) {
@@ -54,30 +55,39 @@ export class CandidateSyncQueueService {
       syncLogId: syncLog.id,
     };
 
-    const job = await this.syncQueue.add('sync-candidates', jobPayload, {
-      jobId: `sync-candidates-${entityId || 'bulk'}-${Date.now()}`,
-      attempts: 5,
-      backoff: {
-        type: 'exponential',
-        delay: 10000,
-      },
-      removeOnComplete: true,
-      removeOnFail: false,
+    const jobId = await this.pgBossService.send(SyncQueue.CANDIDATE, jobPayload, {
+      retryLimit: 5,
+      retryDelay: 10,
+      retryBackoff: true,
     });
 
-    await this.syncLogRepo.update(syncLog.id, {
-      jobId: job.id,
-    });
 
-    this.logger.log(
-      `Enqueued candidate sync job ${job.id} for session ${dto.sessionId} (logId: ${syncLog.id})`,
-    );
+    if (jobId) {
+      await this.syncLogRepo.update(syncLog.id, {
+        jobId,
+      });
 
-    return {
-      jobId: job.id,
-      syncLogId: syncLog.id,
-      sessionId: dto.sessionId,
-      status: 'enqueued',
-    };
+      this.logger.log(
+        `Enqueued pg-boss candidate sync job ${jobId} for session ${dto.sessionId} (logId: ${syncLog.id})`,
+      );
+
+      return {
+        jobId,
+        syncLogId: syncLog.id,
+        sessionId: dto.sessionId,
+        status: 'enqueued',
+      };
+    } else {
+      // Fallback: sync directly if background worker is unavailable
+      this.logger.log(`pg-boss queue inactive, processing candidate sync directly for logId: ${syncLog.id}`);
+      const result = await this.syncExecutor.syncCandidates(dto.registrationIds, dto.sessionId, syncLog.id);
+      return {
+        jobId: null,
+        syncLogId: syncLog.id,
+        sessionId: dto.sessionId,
+        status: 'completed',
+        result,
+      };
+    }
   }
 }

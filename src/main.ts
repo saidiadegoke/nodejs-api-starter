@@ -16,8 +16,12 @@ async function bootstrap() {
   const logger = loggerFactory.create('Bootstrap');
   app.useLogger(logger);
 
-  // Security headers
-  app.use(helmet());
+  // Security headers (disable strict CSP so Swagger & pg-boss dashboard assets render smoothly)
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+    }),
+  );
 
   // CORS matching Express behavior
   app.enableCors(getCorsConfig());
@@ -94,8 +98,11 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
+  const dashboardPath = process.env.PGBOSS_DASHBOARD_BASE_PATH || '/admin/queues';
   logger.log(`🚀 NestJS server running on port ${port} (environment: ${process.env.NODE_ENV || 'development'})`);
   logger.log(`📚 Swagger documentation available at http://localhost:${port}/docs`);
+  logger.log(`📊 pg-boss dashboard available at http://localhost:${port}${dashboardPath}`);
+
 }
 
 if (require.main === module) {
