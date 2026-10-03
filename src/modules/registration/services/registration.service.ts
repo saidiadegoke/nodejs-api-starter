@@ -24,7 +24,10 @@ import {
   ConfirmSubjectsDto,
 } from '../dto';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CandidateSyncQueueService } from '../../sync/services/candidate-sync-queue.service';
+import { SyncEvent } from '../../sync/constants/sync-events.enum';
+
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -123,6 +126,7 @@ export class RegistrationService {
     private readonly eventsService: RegistrationEventsService,
     private readonly pdfService: RegistrationFormPdfService,
     private readonly candidateSyncQueueService: CandidateSyncQueueService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
@@ -168,37 +172,171 @@ export class RegistrationService {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
-    const details = await this.dataSource.query(
-      `SELECT r.*,
-              u.name AS university_name, u.code AS university_code,
-              p.first_name, p.last_name, p.display_name, p.gender, p.date_of_birth, p.profile_photo_url,
-              usr.email, usr.phone,
-              nv.nin_last4, nv.response_payload AS nin_payload,
-              sc.code AS subject_combination_code, sc.title AS subject_combination_title
-       FROM jupeb_registrations r
-       LEFT JOIN jupeb_universities u ON u.id = r.university_id
-       LEFT JOIN users usr ON usr.id = r.user_id
-       LEFT JOIN profiles p ON p.user_id = r.user_id
-       LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
-       LEFT JOIN jupeb_subject_combinations sc ON sc.id = r.subject_combination_id
-       WHERE r.id = $1`,
-      [registrationId],
-    );
+    const [detailsRows, nokRows, resultRows, docRows, bioRows, historyRows] = await Promise.all([
+      this.dataSource.query(
+        `SELECT r.*,
+                u.name AS university_name, u.code AS university_code, u.short_name AS university_short_name,
+                p.first_name, p.last_name, p.display_name, p.gender, p.date_of_birth, p.profile_photo_url,
+                p.residential_address, p.state_of_origin, p.lga, p.place_of_birth,
+                c.name AS country,
+                usr.email, usr.phone,
+                nv.nin_last4, nv.status AS nin_status, nv.response_payload AS nin_payload, nv.intake_payload AS nin_intake,
+                sc.code AS subject_combination_code, sc.title AS subject_combination_title
+         FROM jupeb_registrations r
+         LEFT JOIN jupeb_universities u ON u.id = r.university_id
+         LEFT JOIN users usr ON usr.id = r.user_id
+         LEFT JOIN profiles p ON p.user_id = r.user_id
+         LEFT JOIN countries c ON p.country_id = c.id
+         LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+         LEFT JOIN jupeb_subject_combinations sc ON sc.id = r.subject_combination_id
+         WHERE r.id = $1`,
+        [registrationId],
+      ),
+      this.dataSource.query(
+        `SELECT id, registration_id, name, relationship, phone, email, address, source, is_active, created_at, updated_at
+         FROM jupeb_next_of_kin
+         WHERE registration_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [registrationId],
+      ).catch(() => []),
+      this.dataSource.query(
+        `SELECT id, registration_id, source, sitting, serial, subject, grade, grade_normalized, score, origin, created_at, updated_at
+         FROM jupeb_result_entries
+         WHERE registration_id = $1
+         ORDER BY sitting ASC, serial ASC`,
+        [registrationId],
+      ).catch(() => []),
+      this.docRepo.findByRegistrationId(registrationId).catch(() => []),
+      this.dataSource.query(
+        `SELECT b.id, b.registration_id, b.capture_type, b.file_id, b.external_reference, b.quality_score, b.device_metadata, b.captured_at, b.created_at, f.file_url
+         FROM jupeb_biometric_captures b
+         LEFT JOIN files f ON f.id = b.file_id OR f.id::text = b.external_reference
+         WHERE b.registration_id = $1 AND b.replaced_at IS NULL
+         ORDER BY b.created_at DESC`,
+        [registrationId],
+      ).catch(() => []),
+      this.historyRepo.findByRegistrationId(registrationId).catch(() => []),
+    ]);
 
-    const documents = await this.docRepo.findByRegistrationId(registrationId);
-    const history = await this.historyRepo.findByRegistrationId(registrationId);
+    const row = detailsRows[0] || {};
+    const ninPayload = row.nin_payload || {};
+    const ninIntake = row.nin_intake || {};
+
+    // Demographic resolution with NIN fallback
+    const residentialAddress =
+      row.residential_address ||
+      ninPayload.residence_address ||
+      ninPayload.residential_address ||
+      ninPayload.address ||
+      null;
+    const stateOfOrigin =
+      row.state_of_origin || ninPayload.state_of_origin || ninPayload.origin_state || null;
+    const lga = row.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || null;
+    const placeOfBirth =
+      row.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place || null;
+    const firstName = row.first_name || ninPayload.first_name || ninPayload.firstname || null;
+    const lastName = row.last_name || ninPayload.last_name || ninPayload.surname || null;
+    const displayName =
+      row.display_name ||
+      (firstName && lastName ? `${firstName} ${lastName}` : null) ||
+      ninIntake.name ||
+      null;
+    const gender = row.gender || ninPayload.gender || null;
+    const dateOfBirth = row.date_of_birth || ninPayload.date_of_birth || ninPayload.birthdate || null;
+    const email = row.email || ninIntake.email || null;
+    const phone = row.phone || ninPayload.phone || ninIntake.phone || null;
+    const profilePhotoUrl =
+      row.profile_photo_url ||
+      bioRows.find((b: any) => b.capture_type === 'face')?.file_url ||
+      ninPayload.photo_url ||
+      null;
+
+    // Next of kin resolution
+    let nextOfKin = nokRows[0] || null;
+    if (!nextOfKin && ninPayload.next_of_kin && typeof ninPayload.next_of_kin === 'object') {
+      const nok = ninPayload.next_of_kin;
+      nextOfKin = {
+        name:
+          [nok.firstname, nok.middlename, nok.surname].filter(Boolean).join(' ') ||
+          nok.name ||
+          nok.full_name ||
+          null,
+        relationship: nok.relationship || null,
+        phone: nok.telephoneno || nok.phone || null,
+        email: nok.email || null,
+        address:
+          [nok.address1, nok.address2, nok.lga, nok.state].filter(Boolean).join(', ') ||
+          nok.address ||
+          null,
+        source: 'nin',
+      };
+    }
+
+    // Group result entries by examination type (e.g. WAEC, NECO, NABTEB) & sitting
+    const resultsByExam: Record<string, any[]> = {};
+    for (const r of resultRows) {
+      const key = `${r.source || 'O-Level'}${r.sitting ? ` Sitting ${r.sitting}` : ''}`;
+      if (!resultsByExam[key]) resultsByExam[key] = [];
+      resultsByExam[key].push(r);
+    }
+
+    const candidateObj = {
+      id: row.user_id || null,
+      first_name: firstName,
+      last_name: lastName,
+      display_name: displayName,
+      gender,
+      date_of_birth: dateOfBirth,
+      email,
+      phone,
+      profile_photo_url: profilePhotoUrl,
+      residential_address: residentialAddress,
+      state_of_origin: stateOfOrigin,
+      lga,
+      place_of_birth: placeOfBirth,
+      country: row.country || 'Nigeria',
+    };
 
     return {
-      ...(details[0] || reg),
-      documents,
-      status_history: history,
+      ...(detailsRows[0] || reg),
+      // Flat properties for direct access
+      residential_address: residentialAddress,
+      state_of_origin: stateOfOrigin,
+      lga,
+      place_of_birth: placeOfBirth,
+      first_name: firstName,
+      last_name: lastName,
+      display_name: displayName,
+      gender,
+      date_of_birth: dateOfBirth,
+      email,
+      phone,
+      profile_photo_url: profilePhotoUrl,
+      code:
+        row.institution_issued_code ||
+        row.provisional_candidate_code ||
+        reg.provisionalCandidateCode,
+      provisional_candidate_code: row.provisional_candidate_code || reg.provisionalCandidateCode,
+      provisional_code: row.provisional_candidate_code || reg.provisionalCandidateCode,
+      generated_code: row.provisional_candidate_code || reg.provisionalCandidateCode,
+      // Structured objects
+      candidate: candidateObj,
+      basic_information: candidateObj,
+      demographics: candidateObj,
+      next_of_kin: nextOfKin,
+      result_entries: resultRows,
+      results_by_examination: resultsByExam,
+      documents: docRows,
+      biometrics: bioRows,
+      status_history: historyRows,
     };
   }
 
   /**
    * Create an individual candidate registration record.
    */
-  async createRegistration(dto: CreateRegistrationDto, userId?: string | null): Promise<RegistrationEntity> {
+  async createRegistration(dto: CreateRegistrationDto, userId?: string | null): Promise<any> {
     const serialRows = await this.dataSource.query(
       `SELECT COALESCE(MAX(provisional_serial), 0) + 1 AS next_serial
        FROM jupeb_registrations WHERE session_id = $1`,
@@ -228,7 +366,33 @@ export class RegistrationService {
       changedBy: userId || entity.id,
     });
 
-    return entity;
+    return {
+      id: entity.id,
+      sessionId: entity.sessionId,
+      session_id: entity.sessionId,
+      universityId: entity.universityId,
+      university_id: entity.universityId,
+      subjectCombinationId: entity.subjectCombinationId,
+      subject_combination_id: entity.subjectCombinationId,
+      ninVerificationId: entity.ninVerificationId,
+      nin_verification_id: entity.ninVerificationId,
+      userId: entity.userId,
+      user_id: entity.userId,
+      institutionIssuedCode: entity.institutionIssuedCode,
+      institution_issued_code: entity.institutionIssuedCode,
+      provisionalSerial: entity.provisionalSerial,
+      provisional_serial: entity.provisionalSerial,
+      provisionalCandidateCode: entity.provisionalCandidateCode,
+      provisional_candidate_code: entity.provisionalCandidateCode,
+      code: entity.institutionIssuedCode || entity.provisionalCandidateCode,
+      generated_code: entity.provisionalCandidateCode,
+      provisional_code: entity.provisionalCandidateCode,
+      status: entity.status,
+      createdAt: entity.createdAt,
+      created_at: entity.createdAt,
+      updatedAt: entity.updatedAt,
+      updated_at: entity.updatedAt,
+    };
   }
 
   /**
@@ -248,6 +412,14 @@ export class RegistrationService {
     if (dto.status_reason !== undefined) fields.statusReason = dto.status_reason;
 
     const updated = await this.regRepo.updateById(registrationId, fields);
+
+    // Emit in-memory event for instant single candidate sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
+      registrationId,
+      userId: _userId,
+      data: fields,
+    });
+
     return updated!;
   }
 
@@ -297,17 +469,12 @@ export class RegistrationService {
       );
     }
 
-    // Trigger candidate sync to Attendance & CRMS in background
-    try {
-      await this.candidateSyncQueueService.enqueueCandidateSyncJob({
-        sessionId: reg.sessionId,
-        registrationIds: [reg.id],
-        userId: _userId,
-        triggeredBy: 'candidate_profile_update',
-      });
-    } catch (syncErr: any) {
-      this.logger.error(`Failed to enqueue candidate sync for ${registrationId}: ${syncErr.message}`);
-    }
+    // Emit in-memory event for instant single candidate sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
+      registrationId: reg.id,
+      userId: _userId,
+      data: dto,
+    });
 
     return this.getRegistrationById(registrationId);
   }
@@ -409,42 +576,98 @@ export class RegistrationService {
    * Perform batch status transitions on multiple registrations.
    */
   async batchUpdateRegistrationStatus(dto: BatchRegistrationActionDto, userId?: string | null) {
-    const targetStatus = dto.action === 'approve'
-      ? RegistrationStatus.APPROVED
-      : dto.action === 'reject'
-        ? RegistrationStatus.REJECTED
-        : RegistrationStatus.WITHDRAWN;
+    const rawIds = dto.registration_ids || dto.ids || [];
+    const ids = Array.isArray(rawIds)
+      ? rawIds.map((i: any) => String(i || '').trim()).filter((id) => Boolean(id) && UUID_REGEX.test(id))
+      : [];
+    const rawAction = dto.action ? String(dto.action).toLowerCase().trim() : 'approve';
+    const reason = dto.reason ? String(dto.reason).trim() : undefined;
 
-    const results = [];
-    for (const id of dto.registration_ids) {
-      const reg = await this.regRepo.findById(id);
-      if (!reg) continue;
+    const accepted: Array<{ id: string; status: string }> = [];
+    const rejected: Array<{ id: string; error_code: string; message: string; http_status: number }> = [];
 
-      if (!this.stateService.canTransition(reg.status, targetStatus)) {
-        continue;
+    for (const id of ids) {
+      try {
+        const reg = await this.regRepo.findById(id);
+        if (!reg) {
+          rejected.push({ id, error_code: 'not_found', message: 'Registration not found', http_status: 404 });
+          continue;
+        }
+
+        if (rawAction === 'delete') {
+          await this.dataSource.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [id]);
+          accepted.push({ id, status: 'deleted' });
+          continue;
+        }
+
+        if (rawAction === 'unlock') {
+          await this.dataSource.query(
+            `UPDATE jupeb_registrations SET dashboard_unlocked_at = NOW(), updated_at = NOW() WHERE id = $1`,
+            [id],
+          );
+          accepted.push({ id, status: reg.status });
+          continue;
+        }
+
+        if (rawAction === 'approve') {
+          await this.regRepo.setStatus(id, RegistrationStatus.APPROVED, reason, userId);
+          await this.dataSource.query(
+            `UPDATE jupeb_registrations SET status = 'approved', approved_at = NOW(), approved_by = $1, dashboard_unlocked_at = NOW(), updated_at = NOW() WHERE id = $2`,
+            [userId || id, id],
+          );
+          await this.historyRepo.create({
+            registrationId: id,
+            fromStatus: reg.status,
+            toStatus: RegistrationStatus.APPROVED,
+            reason: reason || 'Batch approved by institution admin',
+            changedBy: userId || id,
+          });
+          const fresh = await this.regRepo.findById(id);
+          if (fresh) {
+            await this.eventsService.emitRegistrationApproved(fresh, userId);
+          }
+          accepted.push({ id, status: RegistrationStatus.APPROVED });
+        } else if (rawAction === 'reject') {
+          await this.regRepo.setStatus(id, RegistrationStatus.REJECTED, reason || 'Rejected in batch', userId);
+          await this.historyRepo.create({
+            registrationId: id,
+            fromStatus: reg.status,
+            toStatus: RegistrationStatus.REJECTED,
+            reason: reason || 'Batch rejected by institution admin',
+            changedBy: userId || id,
+          });
+          accepted.push({ id, status: RegistrationStatus.REJECTED });
+        } else if (rawAction === 'withdraw') {
+          await this.regRepo.setStatus(id, RegistrationStatus.WITHDRAWN, reason || 'Withdrawn in batch', userId);
+          await this.historyRepo.create({
+            registrationId: id,
+            fromStatus: reg.status,
+            toStatus: RegistrationStatus.WITHDRAWN,
+            reason: reason || 'Batch withdrawn by institution admin',
+            changedBy: userId || id,
+          });
+          accepted.push({ id, status: RegistrationStatus.WITHDRAWN });
+        }
+      } catch (err: any) {
+        rejected.push({
+          id,
+          error_code: 'batch_error',
+          message: err.message || 'Operation failed',
+          http_status: 500,
+        });
       }
-
-      await this.regRepo.setStatus(id, targetStatus, dto.reason, userId);
-      await this.historyRepo.create({
-        registrationId: id,
-        fromStatus: reg.status,
-        toStatus: targetStatus,
-        reason: dto.reason || `Batch ${dto.action}`,
-        changedBy: userId || id,
-      });
-
-      if (targetStatus === RegistrationStatus.APPROVED) {
-        await this.eventsService.emitRegistrationApproved(reg, userId);
-      }
-
-      results.push({ id, status: targetStatus });
     }
 
     return {
-      action: dto.action,
-      total_requested: dto.registration_ids.length,
-      updated_count: results.length,
-      results,
+      action: rawAction,
+      total: ids.length,
+      total_requested: ids.length,
+      updated_count: accepted.length,
+      accepted_count: accepted.length,
+      rejected_count: rejected.length,
+      accepted,
+      rejected,
+      results: accepted,
     };
   }
 

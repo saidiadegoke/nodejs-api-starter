@@ -41,9 +41,8 @@ export function normalizeUpstreamError(serviceName: string, err: any) {
     const body = err.response.data;
     const status =
       upstreamStatus >= 500 ? 503 : upstreamStatus >= 400 ? upstreamStatus : 503;
-    const message =
-      (body && (body.message || body.error || body.error_message)) ||
-      `${serviceName} request failed`;
+    const rawMsg = (body && (body.message || body.error || body.error_message)) || `${serviceName} request failed`;
+    const message = typeof rawMsg === 'string' ? rawMsg : JSON.stringify(rawMsg);
 
     const upstreamDetails =
       body && typeof body === 'object'

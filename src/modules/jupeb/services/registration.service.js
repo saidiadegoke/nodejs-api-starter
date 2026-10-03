@@ -8,8 +8,12 @@ const ninVerificationModel = require('../models/nin-verification.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationDocumentModel = require('../models/registration-document.model');
 const resultEntriesModel = require('../models/result-entries.model');
-const FileService = require('../../files/services/file.service');
-const FileModel = require('../../files/models/file.model');
+const FileService = (() => {
+  try { return require('../../files/services/files.service'); } catch { return null; }
+})();
+const FileModel = (() => {
+  try { return require('../../files/models/file.model'); } catch { return null; }
+})();
 const { canTransition } = require('./registration-state.service');
 const { resolveCandidateDisplayName } = require('../utils/candidate-name');
 const {

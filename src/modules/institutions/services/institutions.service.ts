@@ -119,7 +119,10 @@ function parseCsv(text: string): Record<string, string>[] {
     .filter((obj) => Object.values(obj).some((v) => v != null && String(v).trim() !== ''));
 }
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InstitutionSyncQueueService } from '../../sync/services/institution-sync-queue.service';
+import { SyncEvent } from '../../sync/constants/sync-events.enum';
+
 
 @Injectable()
 export class InstitutionsService {
@@ -129,6 +132,7 @@ export class InstitutionsService {
     private readonly universityRepo: UniversityRepository,
     private readonly provisionService: InstitutionAdminProvisionService,
     private readonly institutionSyncQueueService: InstitutionSyncQueueService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(InstitutionsService.name);
@@ -299,11 +303,13 @@ export class InstitutionsService {
     const updated = await this.universityRepo.updateById(id, fields);
     if (!updated) throw new NotFoundException('University not found');
 
-    this.institutionSyncQueueService.enqueueInstitutionSyncJob({
-      universityIds: [id],
+    // Emit in-memory event for instant single institution sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.INSTITUTION_UPDATED, {
+      universityId: id,
       userId,
-      triggeredBy: 'institution_updated',
-    }).catch((err) => this.logger.error(`Failed to enqueue institution sync: ${err.message}`));
+      data: fields,
+    });
+
 
     return updated;
   }

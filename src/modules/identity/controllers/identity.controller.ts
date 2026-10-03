@@ -93,6 +93,8 @@ export class IdentityController {
   }
 
   @Patch('nin/verifications/:verificationId/intake')
+  @Post('nin/verifications/:verificationId/intake')
+  @Put('nin/verifications/:verificationId/intake')
   @RequirePermission('jupeb.identity.verify')
   @ApiOperation({
     summary: 'Update intake form metadata on verification',

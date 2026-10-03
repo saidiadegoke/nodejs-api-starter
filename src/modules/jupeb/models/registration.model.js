@@ -502,13 +502,13 @@ class RegistrationModel {
 
     return result.rows.map((row) => {
       let academicYear = '';
-      const rawYear = row.sessionAcademicYear || session?.academic_year;
-      if (rawYear) {
-        academicYear = String(rawYear).split('/')[0].trim();
+      if (row.candidateNumber && /^\d{2}/.test(row.candidateNumber)) {
+        academicYear = `20${row.candidateNumber.slice(0, 2)}`;
       } else if (row.sessionYearShort || session?.year_short) {
         academicYear = `20${row.sessionYearShort || session.year_short}`;
-      } else if (row.candidateNumber && /^\d{2}/.test(row.candidateNumber)) {
-        academicYear = `20${row.candidateNumber.slice(0, 2)}`;
+      } else if (row.sessionAcademicYear || session?.academic_year) {
+        const rawYear = String(row.sessionAcademicYear || session?.academic_year);
+        academicYear = rawYear.split('/')[0].trim();
       }
 
       return {

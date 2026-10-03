@@ -24,7 +24,9 @@ function parseCsv(text: string): Record<string, string>[] {
   });
 }
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SubjectSyncQueueService } from '../../sync/services/subject-sync-queue.service';
+import { SyncEvent } from '../../sync/constants/sync-events.enum';
 
 @Injectable()
 export class SubjectsService {
@@ -33,6 +35,7 @@ export class SubjectsService {
   constructor(
     private readonly subjectRepo: SubjectRepository,
     private readonly subjectSyncQueueService: SubjectSyncQueueService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(SubjectsService.name);
@@ -139,10 +142,12 @@ export class SubjectsService {
     const updated = await this.subjectRepo.updateById(id, fields);
     if (!updated) throw new NotFoundException('Subject not found');
 
-    this.subjectSyncQueueService.enqueueSubjectSyncJob({
-      subjectIds: [id],
-      triggeredBy: 'subject_updated',
-    }).catch((err) => this.logger.error(`Failed to enqueue subject sync: ${err.message}`));
+    // Emit in-memory event for instant single subject sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.SUBJECT_UPDATED, {
+      subjectId: id,
+      data: fields,
+    });
+
 
     return updated;
   }
