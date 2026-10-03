@@ -85,6 +85,23 @@ export class RbacService {
     return this.formatRole(role, perms);
   }
 
+  private async resolvePermission(identifier: any) {
+    if (!identifier) return null;
+    const val =
+      typeof identifier === 'string'
+        ? identifier.trim()
+        : identifier.id || identifier.name || identifier.permission_id;
+    if (!val || typeof val !== 'string') return null;
+
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (isUuid) {
+      const byId = await this.adminRepo.findPermissionById(val);
+      if (byId) return byId;
+    }
+    return this.adminRepo.findPermissionByName(val);
+  }
+
   async createRole(dto: CreateRoleDto, userId?: string | null): Promise<RoleResponseDto> {
     const existing = await this.adminRepo.findRoleByName(dto.name);
     if (existing) throw new ConflictException(`Role with name "${dto.name}" already exists`);
@@ -99,8 +116,8 @@ export class RbacService {
     });
 
     if (dto.permissions && dto.permissions.length) {
-      for (const pName of dto.permissions) {
-        const p = await this.adminRepo.findPermissionByName(pName);
+      for (const pItem of dto.permissions) {
+        const p = await this.resolvePermission(pItem);
         if (p) await this.adminRepo.attachPermissionToRole(role.id, p.id);
       }
     }
@@ -124,8 +141,8 @@ export class RbacService {
       for (const cp of currentPerms) {
         await this.adminRepo.detachPermissionFromRole(id, cp.id);
       }
-      for (const pName of dto.permissions) {
-        const p = await this.adminRepo.findPermissionByName(pName);
+      for (const pItem of dto.permissions) {
+        const p = await this.resolvePermission(pItem);
         if (p) await this.adminRepo.attachPermissionToRole(id, p.id);
       }
     }
