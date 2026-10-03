@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
-import { SYNC_QUEUES } from '../../../infra/bullmq/queues.config';
+import { PgBossService } from '../../../infra/pg-boss/pg-boss.service';
+import { SyncExecutorService } from './sync-executor.service';
 import { EnqueueInstitutionSyncDto, InstitutionSyncJobPayload } from '../dto/enqueue-institution-sync.dto';
 import { SyncLogEntity, SyncEntityType, SyncStatus, SyncTarget } from '../entities/sync-log.entity';
+
+import { SyncQueue } from '../constants/sync-events.enum';
 
 const CONTEXT = 'InstitutionSyncQueueService';
 
@@ -14,14 +15,14 @@ export class InstitutionSyncQueueService {
   private readonly logger = new Logger(CONTEXT);
 
   constructor(
-    @InjectQueue(SYNC_QUEUES.INSTITUTION_SYNC)
-    private readonly syncQueue: Queue<InstitutionSyncJobPayload>,
+    private readonly pgBossService: PgBossService,
+    private readonly syncExecutor: SyncExecutorService,
     @InjectRepository(SyncLogEntity)
     private readonly syncLogRepo: Repository<SyncLogEntity>,
   ) {}
 
   /**
-   * Enqueue institution sync job for attendance & crms.
+   * Enqueue institution sync job for attendance & crms via PostgreSQL pg-boss queue.
    */
   async enqueueInstitutionSyncJob(dto: EnqueueInstitutionSyncDto) {
     const isSingleInstitution = dto.universityIds && dto.universityIds.length === 1;
@@ -52,27 +53,34 @@ export class InstitutionSyncQueueService {
       syncLogId: syncLog.id,
     };
 
-    const job = await this.syncQueue.add('sync-institutions', jobPayload, {
-      jobId: `sync-institutions-${entityId}-${Date.now()}`,
-      attempts: 5,
-      backoff: {
-        type: 'exponential',
-        delay: 10000,
-      },
-      removeOnComplete: true,
-      removeOnFail: false,
+    const jobId = await this.pgBossService.send(SyncQueue.INSTITUTION, jobPayload, {
+      retryLimit: 5,
+      retryDelay: 10,
+      retryBackoff: true,
     });
 
-    await this.syncLogRepo.update(syncLog.id, {
-      jobId: job.id,
-    });
 
-    this.logger.log(`Enqueued institution sync job ${job.id} (logId: ${syncLog.id})`);
+    if (jobId) {
+      await this.syncLogRepo.update(syncLog.id, {
+        jobId,
+      });
 
-    return {
-      jobId: job.id,
-      syncLogId: syncLog.id,
-      status: 'enqueued',
-    };
+      this.logger.log(`Enqueued pg-boss institution sync job ${jobId} (logId: ${syncLog.id})`);
+
+      return {
+        jobId,
+        syncLogId: syncLog.id,
+        status: 'enqueued',
+      };
+    } else {
+      this.logger.log(`pg-boss queue inactive, processing institution sync directly for logId: ${syncLog.id}`);
+      const result = await this.syncExecutor.syncInstitutions(dto.universityIds, dto.syncAll, syncLog.id);
+      return {
+        jobId: null,
+        syncLogId: syncLog.id,
+        status: 'completed',
+        result,
+      };
+    }
   }
 }

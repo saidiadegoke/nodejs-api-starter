@@ -27,6 +27,11 @@ export class UserQueryDto {
   @IsString()
   search?: string;
 
+  @ApiPropertyOptional({ example: 'john', description: 'Search query alias' })
+  @IsOptional()
+  @IsString()
+  query?: string;
+
   @ApiPropertyOptional({ example: 'student', description: 'Role filter' })
   @IsOptional()
   @IsString()

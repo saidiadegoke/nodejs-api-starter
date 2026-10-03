@@ -75,6 +75,11 @@ export class UserRepository {
         OR p.first_name ILIKE $${idx}
         OR p.last_name ILIKE $${idx}
         OR p.display_name ILIKE $${idx}
+        OR (COALESCE(p.first_name, '') || ' ' || COALESCE(p.last_name, '')) ILIKE $${idx}
+        OR (COALESCE(p.last_name, '') || ' ' || COALESCE(p.first_name, '')) ILIKE $${idx}
+        OR ju.name ILIKE $${idx}
+        OR ju.short_name ILIKE $${idx}
+        OR ju.code ILIKE $${idx}
       )`);
       values.push(pattern);
       idx++;

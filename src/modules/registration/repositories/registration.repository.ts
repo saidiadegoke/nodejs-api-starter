@@ -216,6 +216,18 @@ export class RegistrationRepository {
         qb.andWhere('r.status = :status', { status: RegistrationStatus.REJECTED });
       } else if (b === 'withdrawn') {
         qb.andWhere('r.status = :status', { status: RegistrationStatus.WITHDRAWN });
+      } else if (
+        b === 'awaiting_action' ||
+        b === 'pending_institution_review' ||
+        b === 'awaiting_review' ||
+        b === 'awaiting_approval'
+      ) {
+        qb.andWhere('r.status IN (:...actionStatuses)', {
+          actionStatuses: [
+            RegistrationStatus.PENDING_INSTITUTION_REVIEW,
+            'pending_institution_review',
+          ],
+        });
       } else if (b === 'pending') {
         qb.andWhere('r.status NOT IN (:...doneStatuses)', {
           doneStatuses: [
@@ -240,7 +252,22 @@ export class RegistrationRepository {
     if (filter.q && filter.q.trim()) {
       const term = `%${filter.q.trim()}%`;
       qb.andWhere(
-        `(p.first_name ILIKE :term OR p.last_name ILIKE :term OR usr.email ILIKE :term OR usr.phone ILIKE :term OR r.provisional_candidate_code ILIKE :term OR r.jupeb_candidate_number ILIKE :term OR r.institution_issued_code ILIKE :term OR nv.nin_last4 ILIKE :term)`,
+        `(
+          p.first_name ILIKE :term OR
+          p.last_name ILIKE :term OR
+          p.display_name ILIKE :term OR
+          CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, '')) ILIKE :term OR
+          CONCAT(COALESCE(p.last_name, ''), ' ', COALESCE(p.first_name, '')) ILIKE :term OR
+          usr.email ILIKE :term OR
+          usr.phone ILIKE :term OR
+          r.provisional_candidate_code ILIKE :term OR
+          r.jupeb_candidate_number ILIKE :term OR
+          r.institution_issued_code ILIKE :term OR
+          nv.nin_last4 ILIKE :term OR
+          nv.intake_payload->>'name' ILIKE :term OR
+          nv.intake_payload->>'email' ILIKE :term OR
+          TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))) ILIKE :term
+        )`,
         { term },
       );
     }

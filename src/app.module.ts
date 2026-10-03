@@ -11,6 +11,7 @@ import {
   mailConfig,
   integrationsConfig,
 } from './config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DatabaseModule } from './database';
 import {
   SharedModule,
@@ -45,7 +46,9 @@ import { AttendanceModule } from './modules/attendance';
 import { CrmsModule } from './modules/crms';
 import { OcrModule } from './modules/ocr';
 import { BullMQModule } from './infra/bullmq/bullmq.module';
+import { PgBossModule } from './infra/pg-boss/pg-boss.module';
 import { SyncModule } from './modules/sync';
+
 
 @Module({
   imports: [
@@ -63,9 +66,12 @@ import { SyncModule } from './modules/sync';
       envFilePath: process.env.NODE_ENV === 'test' ? ['.env.test', '.env'] : ['.env'],
     }),
     DatabaseModule,
+    EventEmitterModule.forRoot({ wildcard: true }),
+    PgBossModule,
     BullMQModule,
     SharedModule,
     SyncModule,
+
     ApiKeysModule,
     UsersModule,
     AuthModule,

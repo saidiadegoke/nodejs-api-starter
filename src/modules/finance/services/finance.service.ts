@@ -395,7 +395,7 @@ export class FinanceService {
          LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
          LEFT JOIN jupeb_registrations r3 ON r3.id = p.registration_id
          WHERE (
-           (p.jupeb_university_id = u.id AND (p.jupeb_session_id = sess.id OR p.session_id = sess.id))
+           (p.jupeb_university_id = u.id AND p.jupeb_session_id = sess.id)
            OR (r3.session_id = sess.id AND r3.university_id = u.id)
          )
        ) coll ON true
@@ -619,10 +619,28 @@ export class FinanceService {
       `SELECT
          COALESCE(SUM(p.amount) FILTER (WHERE p.status IN ('successful', 'completed')), 0)::numeric AS collected_total,
          COALESCE(SUM(p.amount) FILTER (
-           WHERE p.status IN ('successful', 'completed') AND (pi.code ILIKE '%affiliation%' OR p.purpose ILIKE '%affiliation%')
+           WHERE p.status IN ('successful', 'completed') AND (
+             pi.code ILIKE '%affiliation%'
+             OR pi.fee_source = 'affiliation'
+             OR pi.name ILIKE '%affiliation%'
+             OR p.type ILIKE '%affiliation%'
+             OR p.payment_type ILIKE '%affiliation%'
+             OR (p.metadata->>'payment_item_code') ILIKE '%affiliation%'
+             OR (p.metadata->>'payment_item_key') ILIKE '%affiliation%'
+             OR (p.metadata->>'purpose') ILIKE '%affiliation%'
+           )
          ), 0)::numeric AS collected_affiliation,
          COALESCE(SUM(p.amount) FILTER (
-           WHERE p.status IN ('successful', 'completed') AND (pi.code ILIKE '%exam%' OR p.purpose ILIKE '%exam%')
+           WHERE p.status IN ('successful', 'completed') AND (
+             pi.code ILIKE '%exam%'
+             OR pi.fee_source = 'examination'
+             OR pi.name ILIKE '%exam%'
+             OR p.type ILIKE '%exam%'
+             OR p.payment_type ILIKE '%exam%'
+             OR (p.metadata->>'payment_item_code') ILIKE '%exam%'
+             OR (p.metadata->>'payment_item_key') ILIKE '%exam%'
+             OR (p.metadata->>'purpose') ILIKE '%exam%'
+           )
          ), 0)::numeric AS collected_examination,
          COUNT(*) FILTER (WHERE p.status IN ('successful', 'completed'))::int AS collected_count,
          COALESCE(SUM(p.amount) FILTER (
@@ -632,8 +650,8 @@ export class FinanceService {
        LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
        LEFT JOIN jupeb_registrations r ON r.id = p.registration_id
        WHERE (
-         (p.jupeb_university_id = $1 AND (p.jupeb_session_id = $2 OR p.session_id = $2))
-         OR (r.university_id = $1 AND r.session_id = $2)
+         (p.jupeb_university_id = $1 AND (p.jupeb_session_id = $2 OR p.jupeb_session_id IS NULL))
+         OR (r.university_id = $1 AND (r.session_id = $2 OR r.session_id IS NULL))
        )`,
       [universityId, sessionId],
     );
@@ -721,6 +739,14 @@ export class FinanceService {
         current.projected.exam_fee,
         prev?.projected.exam_fee,
       ),
+      total_affiliation_fee_paid: this._growthCard(
+        current.collected.affiliation_fee,
+        prev?.collected.affiliation_fee,
+      ),
+      total_examination_fee_paid: this._growthCard(
+        current.collected.examination_fee,
+        prev?.collected.examination_fee,
+      ),
       total_amount_paid: this._growthCard(current.collected.total, prev?.collected.total),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year || previousSession.academicYear }
@@ -730,7 +756,11 @@ export class FinanceService {
       candidates_count: current.numberOfCandidates,
       total_projected: current.projected.total,
       total_collected: current.collected.total,
+      total_affiliation_fee_collected: current.collected.affiliation_fee,
+      total_examination_fee_collected: current.collected.examination_fee,
       outstanding_balance: current.outstanding,
+      outstanding_affiliation_fee: current.outstanding_by_fee.affiliation_fee,
+      outstanding_examination_fee: current.outstanding_by_fee.examination_fee,
     };
   }
 
@@ -748,11 +778,20 @@ export class FinanceService {
     }
 
     const itemRows = await this.dataSource.query(
-      `SELECT * FROM payment_items WHERE (id::text = $1 OR code = $1) AND is_active = true LIMIT 1`,
+      `SELECT * FROM payment_items WHERE (id::text = $1 OR LOWER(code) = LOWER($1) OR code ILIKE $1) AND (deleted_at IS NULL) LIMIT 1`,
       [itemRef],
     );
-    const item = itemRows[0];
-    if (!item) throw new NotFoundException('Payment item not found or inactive');
+    let item = itemRows[0];
+    if (!item) {
+      const lower = String(itemRef).toLowerCase();
+      if (lower.includes('affiliation')) {
+        item = { id: null, code: 'affiliation_fee', name: 'Affiliation Fee', fee_source: 'affiliation' };
+      } else if (lower.includes('exam')) {
+        item = { id: null, code: 'examination_fee', name: 'Examination Fee', fee_source: 'examination' };
+      } else {
+        throw new NotFoundException('Payment item not found or inactive');
+      }
+    }
 
     const current = await this.resolveInstitutionFeeDetails(universityId, session);
 
@@ -771,7 +810,10 @@ export class FinanceService {
       }
     }
 
-    const isAffiliation = item.fee_source === 'affiliation' || item.code.includes('affiliation');
+    const isAffiliation =
+      item.fee_source === 'affiliation' ||
+      item.code?.toLowerCase().includes('affiliation') ||
+      item.name?.toLowerCase().includes('affiliation');
     const expected = isAffiliation ? current.projected.affiliation_fee : current.projected.exam_fee;
     const paid = isAffiliation ? current.collected.affiliation_fee : current.collected.examination_fee;
     const outstanding = isAffiliation ? current.outstanding_by_fee.affiliation_fee : current.outstanding_by_fee.examination_fee;
@@ -788,9 +830,28 @@ export class FinanceService {
       total_expected: this._growthCard(expected, prevExpected),
       paid: this._growthCard(paid, prevPaid),
       outstanding: this._growthCard(outstanding, prevOutstanding),
+      // UI card aliases
       total_expected_payment: this._growthCard(expected, prevExpected),
       fee_paid: this._growthCard(paid, prevPaid),
+      total_amount_paid: this._growthCard(paid, prevPaid),
+      total_expected_affiliation_fee: this._growthCard(current.projected.affiliation_fee, prev?.projected.affiliation_fee),
+      total_expected_examination_fee: this._growthCard(current.projected.exam_fee, prev?.projected.exam_fee),
+      total_affiliation_fee_paid: this._growthCard(current.collected.affiliation_fee, prev?.collected.affiliation_fee),
+      total_examination_fee_paid: this._growthCard(current.collected.examination_fee, prev?.collected.examination_fee),
       outstanding_fees: this._growthCard(outstanding, prevOutstanding),
+      outstanding_balance: outstanding,
+      total_collected: paid,
+      total_projected: expected,
+      // Flat compatibility fields
+      total_affiliation_fee_collected: current.collected.affiliation_fee,
+      total_examination_fee_collected: current.collected.examination_fee,
+      outstanding_affiliation_fee: current.outstanding_by_fee.affiliation_fee,
+      outstanding_examination_fee: current.outstanding_by_fee.examination_fee,
+      candidates_count: current.numberOfCandidates,
+      number_of_candidates: this._growthCard(
+        current.numberOfCandidates,
+        prev?.numberOfCandidates,
+      ),
       compared_to: previousSession
         ? { session_id: previousSession.id, label: previousSession.academic_year || previousSession.academicYear }
         : null,

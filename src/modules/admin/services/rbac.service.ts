@@ -28,22 +28,37 @@ export class RbacService {
     this.logger = this.loggerFactory.create(RbacService.name);
   }
 
+  private formatRole(role: any, perms: any[]): RoleResponseDto {
+    const permissionObjects = perms.map((p) => ({
+      id: p.id,
+      name: p.name,
+      display_name: p.description || p.name,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
+      description: p.description || null,
+      created_at: p.createdAt,
+    }));
+
+    return {
+      id: role.id,
+      name: role.name,
+      display_name: role.displayName || null,
+      description: role.description || null,
+      is_system: role.isSystem,
+      status: role.status,
+      permissions: permissionObjects,
+      permission_names: perms.map((p) => p.name),
+      created_at: role.createdAt,
+      updated_at: role.updatedAt || role.createdAt,
+    };
+  }
+
   async listRoles(query: ListRbacQueryDto) {
     const res = await this.adminRepo.listRoles(query);
     const rolesWithPerms: RoleResponseDto[] = [];
 
     for (const r of res.roles) {
       const perms = await this.adminRepo.getRolePermissions(r.id);
-      rolesWithPerms.push({
-        id: r.id,
-        name: r.name,
-        display_name: r.displayName || null,
-        description: r.description || null,
-        is_system: r.isSystem,
-        status: r.status,
-        permissions: perms.map((p) => p.name),
-        created_at: r.createdAt,
-      });
+      rolesWithPerms.push(this.formatRole(r, perms));
     }
 
     return {
@@ -67,16 +82,24 @@ export class RbacService {
     if (!role) throw new NotFoundException('Role not found');
 
     const perms = await this.adminRepo.getRolePermissions(role.id);
-    return {
-      id: role.id,
-      name: role.name,
-      display_name: role.displayName || null,
-      description: role.description || null,
-      is_system: role.isSystem,
-      status: role.status,
-      permissions: perms.map((p) => p.name),
-      created_at: role.createdAt,
-    };
+    return this.formatRole(role, perms);
+  }
+
+  private async resolvePermission(identifier: any) {
+    if (!identifier) return null;
+    const val =
+      typeof identifier === 'string'
+        ? identifier.trim()
+        : identifier.id || identifier.name || identifier.permission_id;
+    if (!val || typeof val !== 'string') return null;
+
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (isUuid) {
+      const byId = await this.adminRepo.findPermissionById(val);
+      if (byId) return byId;
+    }
+    return this.adminRepo.findPermissionByName(val);
   }
 
   async createRole(dto: CreateRoleDto, userId?: string | null): Promise<RoleResponseDto> {
@@ -93,8 +116,8 @@ export class RbacService {
     });
 
     if (dto.permissions && dto.permissions.length) {
-      for (const pName of dto.permissions) {
-        const p = await this.adminRepo.findPermissionByName(pName);
+      for (const pItem of dto.permissions) {
+        const p = await this.resolvePermission(pItem);
         if (p) await this.adminRepo.attachPermissionToRole(role.id, p.id);
       }
     }
@@ -118,8 +141,8 @@ export class RbacService {
       for (const cp of currentPerms) {
         await this.adminRepo.detachPermissionFromRole(id, cp.id);
       }
-      for (const pName of dto.permissions) {
-        const p = await this.adminRepo.findPermissionByName(pName);
+      for (const pItem of dto.permissions) {
+        const p = await this.resolvePermission(pItem);
         if (p) await this.adminRepo.attachPermissionToRole(id, p.id);
       }
     }
@@ -141,7 +164,7 @@ export class RbacService {
     return perms.map((p) => ({
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
     }));
   }
@@ -157,11 +180,21 @@ export class RbacService {
   }
 
   async listPermissions(query: ListRbacQueryDto) {
+    if (query.group_by === 'role') {
+      const groups = await this.adminRepo.listPermissionsGroupedByRole(query);
+      return {
+        success: true,
+        message: 'Permissions grouped by role retrieved successfully',
+        data: groups,
+        roles: groups,
+      };
+    }
+
     const res = await this.adminRepo.listPermissions(query);
     const permissions = res.permissions.map((p) => ({
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
       created_at: p.createdAt,
     }));
@@ -187,7 +220,7 @@ export class RbacService {
     return {
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
       created_at: p.createdAt,
     };
@@ -199,14 +232,14 @@ export class RbacService {
 
     const p = await this.adminRepo.createPermission({
       name: dto.name.trim(),
-      module: dto.module || 'general',
+      resource: dto.module || (dto.name.includes('.') ? dto.name.split('.')[0] : 'general'),
       description: dto.description || null,
     });
 
     return {
       id: p.id,
       name: p.name,
-      module: p.module,
+      module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description,
       created_at: p.createdAt,
     };
@@ -217,14 +250,14 @@ export class RbacService {
     if (!p) throw new NotFoundException('Permission not found');
 
     const updates: any = {};
-    if (dto.module !== undefined) updates.module = dto.module;
+    if (dto.module !== undefined) updates.resource = dto.module;
     if (dto.description !== undefined) updates.description = dto.description;
 
     const updated = await this.adminRepo.updatePermission(id, updates);
     return {
       id: updated!.id,
       name: updated!.name,
-      module: updated!.module,
+      module: updated!.resource || (updated!.name ? updated!.name.split('.')[0] : 'general'),
       description: updated!.description,
       created_at: updated!.createdAt,
     };

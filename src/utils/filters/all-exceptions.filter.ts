@@ -11,6 +11,7 @@ import { CommodLogger } from '../../logger/commod-logger.service';
 export interface StandardErrorResponse {
   success: false;
   message: string;
+  error_code?: string;
   details?: any;
 }
 
@@ -26,6 +27,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal Server Error';
     let details: any = undefined;
+    let errorCode: string | undefined = undefined;
 
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
@@ -37,12 +39,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else if (typeof res === 'object' && res !== null) {
         const errorObj = res as Record<string, any>;
         message = errorObj.message || exception.message || 'An error occurred';
+        if (errorObj.error_code) {
+          errorCode = errorObj.error_code;
+        }
         // Handle class-validator validation errors where message is an array
         if (Array.isArray(errorObj.message)) {
           message = 'Validation failed';
           details = errorObj.message;
         } else if (errorObj.details) {
           details = errorObj.details;
+          if (!errorCode && typeof errorObj.details === 'object' && errorObj.details?.error_code) {
+            errorCode = errorObj.details.error_code;
+          }
         } else if (errorObj.error_code) {
           details = { error_code: errorObj.error_code };
         }
@@ -51,8 +59,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (details === undefined || details === null) {
         if (anyErr.details) {
           details = anyErr.details;
+          if (!errorCode && typeof anyErr.details === 'object' && anyErr.details?.error_code) {
+            errorCode = anyErr.details.error_code;
+          }
         } else if (anyErr.error_code) {
           details = { error_code: anyErr.error_code };
+          errorCode = anyErr.error_code;
         }
       }
     } else if (exception instanceof Error) {
@@ -63,8 +75,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else if (anyErr.status && typeof anyErr.status === 'number') {
         statusCode = anyErr.status;
       }
+      if (anyErr.error_code) {
+        errorCode = anyErr.error_code;
+      }
       if (anyErr.details) {
         details = anyErr.details;
+        if (!errorCode && typeof anyErr.details === 'object' && anyErr.details?.error_code) {
+          errorCode = anyErr.details.error_code;
+        }
       } else if (anyErr.error_code) {
         details = { error_code: anyErr.error_code };
       }
@@ -89,6 +107,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
       success: false,
       message: Array.isArray(message) ? 'Validation failed' : message,
     };
+
+    if (errorCode) {
+      errorPayload.error_code = errorCode;
+    }
 
     if (details !== undefined && details !== null) {
       errorPayload.details = details;
