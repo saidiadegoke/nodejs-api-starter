@@ -11,14 +11,14 @@ const PROVIDERS = {
   [speedysms.name]: speedysms,
 };
 
-const DEFAULT_PROVIDER = 'mock';
+const DEFAULT_PROVIDER = 'speedysms';
 
 function list() {
   return Object.keys(PROVIDERS);
 }
 
 function resolveName() {
-  const raw = process.env.JUPEB_NIN_PROVIDER;
+  const raw = process.env.JUPEB_NIN_PROVIDER || process.env.NIN_PROVIDER;
   const name = (raw || DEFAULT_PROVIDER).toLowerCase();
   return PROVIDERS[name] ? name : DEFAULT_PROVIDER;
 }

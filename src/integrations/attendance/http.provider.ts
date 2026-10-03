@@ -263,6 +263,14 @@ export async function syncInstitutions(payload: any) {
 }
 
 export async function syncSubjects(payload: any) {
-  const data = Array.isArray(payload) ? { subjects: payload } : payload;
+  let subjects = Array.isArray(payload) ? payload : payload?.subjects;
+  if (Array.isArray(subjects)) {
+    subjects = subjects.map((s: any) => ({
+      subjectCode: s.subjectCode || s.code,
+      subjectName: s.subjectName || s.name,
+    }));
+  }
+  const data = { subjects: subjects || [] };
   return request('POST', '/api/auth/sync-subjects', { data });
 }
+

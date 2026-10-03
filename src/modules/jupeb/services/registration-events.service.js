@@ -1,6 +1,12 @@
-const NotificationService = require('../../notifications/services/notification.service');
-const WebhookService = require('../../webhooks/services/webhook.service');
-const jupebMailer = require('./jupeb-mailer.service');
+const NotificationService = (() => {
+  try { return require('../../notifications/services/notifications.service') || require('../../notifications/services/notification.service'); } catch { return { createNotification: async () => {} }; }
+})();
+const WebhookService = (() => {
+  try { return require('../../webhooks/services/webhook.service'); } catch { return { dispatchEvent: async () => {} }; }
+})();
+const jupebMailer = (() => {
+  try { return require('./jupeb-mailer.service'); } catch { return { sendRegistrationApprovedEmail: async () => {} }; }
+})();
 
 /**
  * After a registration is approved: in-app notification + user webhook

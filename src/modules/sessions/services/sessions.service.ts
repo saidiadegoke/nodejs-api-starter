@@ -378,7 +378,8 @@ export class SessionsService {
       triggeredBy: 'finalize_candidate_numbers',
     });
 
-    this.logger.info(`Finalized ${assignedCount} candidate numbers for session ${id}`);
+    this.logger.log(`Finalized ${assignedCount} candidate numbers for session ${id}`);
+
 
     return {
       session_id: id,

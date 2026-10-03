@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { PgBossModule } from '../../infra/pg-boss/pg-boss.module';
 import { BullMQModule } from '../../infra/bullmq/bullmq.module';
 import { SyncLogEntity } from './entities/sync-log.entity';
 import { SubjectEntity } from '../subjects/entities/subject.entity';
@@ -9,6 +10,9 @@ import { CandidateSyncQueueService } from './services/candidate-sync-queue.servi
 import { SubjectSyncQueueService } from './services/subject-sync-queue.service';
 import { InstitutionSyncQueueService } from './services/institution-sync-queue.service';
 import { SyncService } from './services/sync.service';
+import { SyncExecutorService } from './services/sync-executor.service';
+import { PgBossSyncWorkerService } from './services/pgboss-sync-worker.service';
+import { SyncEventListener } from './listeners/sync-event.listener';
 import { CandidateSyncProcessor } from './processors/candidate-sync.processor';
 import { SubjectSyncProcessor } from './processors/subject-sync.processor';
 import { InstitutionSyncProcessor } from './processors/institution-sync.processor';
@@ -16,6 +20,7 @@ import { SyncController } from './controllers/sync.controller';
 
 @Module({
   imports: [
+    PgBossModule,
     BullMQModule,
     TypeOrmModule.forFeature([
       SyncLogEntity,
@@ -30,6 +35,9 @@ import { SyncController } from './controllers/sync.controller';
     SubjectSyncQueueService,
     InstitutionSyncQueueService,
     SyncService,
+    SyncExecutorService,
+    PgBossSyncWorkerService,
+    SyncEventListener,
     CandidateSyncProcessor,
     SubjectSyncProcessor,
     InstitutionSyncProcessor,
@@ -39,6 +47,7 @@ import { SyncController } from './controllers/sync.controller';
     SubjectSyncQueueService,
     InstitutionSyncQueueService,
     SyncService,
+    SyncExecutorService,
   ],
 })
 export class SyncModule {}

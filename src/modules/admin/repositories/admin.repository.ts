@@ -101,17 +101,48 @@ export class AdminRepository {
     if (query.q) {
       qb.andWhere('(p.name ILIKE :q OR p.description ILIKE :q)', { q: `%${query.q}%` });
     }
-    if (query.module) {
-      qb.andWhere('p.module = :module', { module: query.module });
+    if (query.module || query.resource) {
+      const mod = query.module || query.resource;
+      qb.andWhere('(p.resource ILIKE :module OR p.name ILIKE :modPrefix)', {
+        module: mod,
+        modPrefix: `${mod}.%`,
+      });
     }
 
-    qb.orderBy('p.module', 'ASC')
-      .addOrderBy('p.name', 'ASC')
+    qb.orderBy('p.name', 'ASC')
       .limit(limit)
       .offset(offset);
 
     const [permissions, total] = await qb.getManyAndCount();
     return { permissions, total, page, limit };
+  }
+
+  async listPermissionsGroupedByRole(query: ListRbacQueryDto) {
+    const rolesResult = await this.listRoles({
+      page: query.page,
+      limit: query.limit || 200,
+      q: query.q,
+      status: query.status,
+      is_system: query.is_system,
+    });
+
+    const groups = [];
+    for (const role of rolesResult.roles) {
+      const perms = await this.getRolePermissions(role.id);
+      groups.push({
+        role_id: role.id,
+        role_name: role.name,
+        display_name: role.displayName || role.name,
+        permissions: perms.map((p) => ({
+          id: p.id,
+          name: p.name,
+          module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
+          description: p.description,
+          created_at: p.createdAt,
+        })),
+      });
+    }
+    return groups;
   }
 
   async findPermissionById(id: string): Promise<PermissionEntity | null> {

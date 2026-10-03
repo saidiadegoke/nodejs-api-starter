@@ -5,6 +5,7 @@ import { DatabaseModule } from '../database.module';
 import { UserSeedModule } from './user/user-seed.module';
 import { RbacSeedModule } from './rbac/rbac-seed.module';
 import { JupebSeedModule } from './jupeb/jupeb-seed.module';
+import { CandidateSeedModule } from './candidate/candidate-seed.module';
 import { SeedService } from './seed.service';
 
 @Module({
@@ -18,8 +19,9 @@ import { SeedService } from './seed.service';
     UserSeedModule,
     RbacSeedModule,
     JupebSeedModule,
+    CandidateSeedModule,
   ],
   providers: [SeedService],
-  exports: [SeedService],
+  exports: [SeedService, CandidateSeedModule],
 })
 export class SeedModule {}

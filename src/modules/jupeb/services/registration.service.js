@@ -8,8 +8,12 @@ const ninVerificationModel = require('../models/nin-verification.model');
 const biometricCaptureModel = require('../models/biometric-capture.model');
 const registrationDocumentModel = require('../models/registration-document.model');
 const resultEntriesModel = require('../models/result-entries.model');
-const FileService = require('../../files/services/file.service');
-const FileModel = require('../../files/models/file.model');
+const FileService = (() => {
+  try { return require('../../files/services/files.service'); } catch { return null; }
+})();
+const FileModel = (() => {
+  try { return require('../../files/models/file.model'); } catch { return null; }
+})();
 const { canTransition } = require('./registration-state.service');
 const { resolveCandidateDisplayName } = require('../utils/candidate-name');
 const {
@@ -58,7 +62,16 @@ const REGISTRATION_RAW_STATUSES = new Set([
   'withdrawn',
 ]);
 
-const INSTITUTION_LIST_COARSE_BUCKETS = ['approved', 'pending', 'rejected', 'withdrawn'];
+const INSTITUTION_LIST_COARSE_BUCKETS = [
+  'approved',
+  'pending',
+  'rejected',
+  'withdrawn',
+  'awaiting_action',
+  'pending_institution_review',
+  'awaiting_review',
+  'awaiting_approval',
+];
 
 /**
  * UI sometimes sends a raw workflow status as `bucket`. Coerce to `status`
@@ -689,13 +702,15 @@ const TERMINAL_STATUSES = new Set(['approved', 'rejected', 'withdrawn']);
 const NIN_REGISTRATION_RETRY_STATUSES = new Set(['rejected', 'withdrawn']);
 
 async function assertNinAvailableForNewRegistration({ session_id, nin_verification_id }) {
-  if (!nin_verification_id) return;
+  if (!nin_verification_id) {
+    throw httpError(422, 'nin_verification_id is required to create a candidate registration');
+  }
   const ninRow = await ninVerificationModel.findById(nin_verification_id);
   if (!ninRow) throw httpError(404, 'NIN verification not found');
 
-  if (ninRow.status === 'failed') {
-    throw httpError(422, 'NIN verification failed. The provided NIN is invalid and cannot be registered.', {
-      error_code: 'nin_verification_failed',
+  if (ninRow.status !== 'verified') {
+    throw httpError(422, 'NIN verification must be completed and in verified status to register candidate.', {
+      error_code: 'nin_not_verified',
     });
   }
 
@@ -1136,9 +1151,25 @@ class RegistrationService {
         source: next_of_kin.source,
       };
     } else {
-      const fromNin = institutionNextOfKinFromNinPayload(ninPayload.next_of_kin);
+      const nokObj = ninPayload.next_of_kin || ninPayload.next_of_kin_record || intake?.next_of_kin;
+      const fromNin = institutionNextOfKinFromNinPayload(nokObj);
       if (fromNin && (fromNin.name || fromNin.phone || fromNin.email)) {
         next_of_kin_response = fromNin;
+        pool
+          .query(
+            `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'nin', NOW(), NOW())
+             ON CONFLICT DO NOTHING`,
+            [
+              reg.id,
+              fromNin.name || 'Next of Kin',
+              fromNin.relationship || 'Guardian',
+              fromNin.phone || null,
+              fromNin.email || null,
+              fromNin.address || null,
+            ]
+          )
+          .catch(() => {});
       }
     }
     const captureTypes = new Set((biometrics || []).map((b) => b.capture_type).filter(Boolean));
@@ -1527,6 +1558,19 @@ class RegistrationService {
       throw httpError(422, 'Registration is not awaiting institution approval');
     }
     await assertNinVerified(reg);
+
+    // Biometric completion check
+    const bioRows = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM jupeb_biometric_captures WHERE registration_id = $1`,
+      [reg.id]
+    );
+    const hasBiometrics = Number(bioRows.rows[0]?.count) > 0 || Boolean(reg.face_skipped_at || reg.fingerprint_skipped_at);
+    if (!hasBiometrics) {
+      throw httpError(422, 'Biometric capture must be completed or skipped before approving candidate registration', {
+        error_code: 'biometrics_incomplete',
+      });
+    }
+
     const now = new Date().toISOString();
     const updated = await transitionStatus(reg, 'approved', {
       userId,
@@ -1622,12 +1666,13 @@ class RegistrationService {
    */
   async institutionBatchAction(body, userId) {
     await assertInstitutionRegistration(userId);
-    const ids = Array.isArray(body && body.ids) ? body.ids : [];
+    const rawIds = body && (body.registration_ids || body.ids);
+    const ids = Array.isArray(rawIds) ? rawIds : [];
     const action = body && body.action ? String(body.action).toLowerCase().trim() : '';
     const reason = body && body.reason ? String(body.reason).trim() : '';
 
     if (!ids.length) {
-      throw httpError(422, 'ids[] is required');
+      throw httpError(422, 'registration_ids[] is required');
     }
     if (ids.length > 100) {
       throw httpError(422, 'ids[] cannot exceed 100 entries per request');

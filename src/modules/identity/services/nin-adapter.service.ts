@@ -16,9 +16,9 @@ export class NinAdapterService {
   }
 
   resolveProviderName(): string {
-    const raw = process.env.JUPEB_NIN_PROVIDER;
-    const name = (raw || 'mock').toLowerCase();
-    return this.providers.has(name) ? name : 'mock';
+    const raw = process.env.JUPEB_NIN_PROVIDER || process.env.NIN_PROVIDER;
+    const name = (raw || 'speedysms').toLowerCase();
+    return this.providers.has(name) ? name : 'speedysms';
   }
 
   getProvider(name?: string): INinProvider {

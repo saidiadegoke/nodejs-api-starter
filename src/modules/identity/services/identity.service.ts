@@ -245,7 +245,23 @@ export class IdentityService {
     const row = await this.ninRepo.findById(verificationId);
     if (!row) throw new NotFoundException('Verification not found');
 
-    const merged = await this.ninRepo.mergeIntakePayload(verificationId, dto.intake_payload);
+    const rawPayload = dto || {};
+    const nested =
+      (rawPayload.intake_payload && typeof rawPayload.intake_payload === 'object'
+        ? rawPayload.intake_payload
+        : rawPayload.intakePayload && typeof rawPayload.intakePayload === 'object'
+          ? rawPayload.intakePayload
+          : {}) || {};
+
+    const flat: Record<string, any> = {};
+    for (const [k, v] of Object.entries(rawPayload)) {
+      if (!['intake_payload', 'intakePayload'].includes(k) && v !== undefined) {
+        flat[k] = v;
+      }
+    }
+
+    const mergedToPersist = { ...nested, ...flat };
+    const merged = await this.ninRepo.mergeIntakePayload(verificationId, mergedToPersist);
     return this.sanitizeVerification(merged || row)!;
   }
 
