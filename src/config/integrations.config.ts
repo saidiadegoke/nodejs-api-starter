@@ -11,6 +11,10 @@ class EnvironmentVariablesValidator {
 
   @IsString()
   @IsOptional()
+  SPEEDYSMS_SIGNING_SECRET?: string;
+
+  @IsString()
+  @IsOptional()
   SPEEDYSMS_API_BASE_URL?: string;
 
   @IsInt()
@@ -149,6 +153,7 @@ export const integrationsConfig = registerAs<IntegrationsConfig>('integrations',
   return {
     speedysms: {
       apiKey: env.SPEEDYSMS_API_KEY || process.env.SPEEDYSMS_API_KEY,
+      signingSecret: env.SPEEDYSMS_SIGNING_SECRET || process.env.SPEEDYSMS_SIGNING_SECRET || process.env.JUPEB_SPEEDYSMS_SIGNING_SECRET,
       baseUrl: env.SPEEDYSMS_API_BASE_URL || process.env.SPEEDYSMS_API_BASE_URL || 'https://api.speedysms.com.ng',
       ninTimeoutMs: env.SPEEDYSMS_NIN_TIMEOUT_MS || parseInt(process.env.SPEEDYSMS_NIN_TIMEOUT_MS || '15000', 10),
       smsTimeoutMs: env.SPEEDYSMS_SMS_TIMEOUT_MS || parseInt(process.env.SPEEDYSMS_SMS_TIMEOUT_MS || '15000', 10),

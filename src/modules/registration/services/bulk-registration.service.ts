@@ -27,62 +27,175 @@ export interface BulkRegistrationResult {
   successful: number;
   failed: number;
   errors: BulkRegistrationError[];
-  registrations: RegistrationEntity[];
+  registrations?: RegistrationEntity[];
+  succeeded_count?: number;
+  failed_count?: number;
+  data?: any;
+  success?: boolean;
 }
 
+function normalizeSubjectToken(token: string): string {
+  return String(token || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, '');
+}
+
+const KNOWN_SUBJECT_ALIASES: Record<string, string> = {
+  MTH: 'MAT',
+  MATH: 'MAT',
+  MATHS: 'MAT',
+  MATHEMATICS: 'MAT',
+  CHM: 'CHE',
+  CHEMISTRY: 'CHE',
+  CRK: 'CRS',
+  'CRK-CRS': 'CRS',
+  'CHRISTIAN-RELIGIOUS-STUDIES': 'CRS',
+  'CHRISTIAN-RELIGIOUS-KNOWLEDGE': 'CRS',
+  IRK: 'IRS',
+  'ISLAMIC-RELIGIOUS-STUDIES': 'IRS',
+  'ISLAMIC-RELIGIOUS-KNOWLEDGE': 'IRS',
+  ECO: 'ECN',
+  ECONOMICS: 'ECN',
+  ACT: 'ACC',
+  ACCOUNTING: 'ACC',
+  'FINANCIAL-ACCOUNTING': 'ACC',
+  'PRINCIPLES-OF-ACCOUNTING': 'ACC',
+  'PRINCIPLES-OF-ACCOUNTS': 'ACC',
+  LIT: 'LIT',
+  'LIT-IN-ENG': 'LIT',
+  LITERATURE: 'LIT',
+  'LITERATURE-IN-ENGLISH': 'LIT',
+  FAA: 'VIS',
+  ART: 'VIS',
+  'FINE-ARTS': 'VIS',
+  'VISUAL-ARTS': 'VIS',
+  AGRIC: 'AGR',
+  AGRICULTURE: 'AGR',
+  'AGRICULTURAL-SCIENCE': 'AGR',
+  BMS: 'BUS',
+  'BUSINESS-STUDIES': 'BUS',
+  'BUSINESS-MANAGEMENT': 'BUS',
+  FRN: 'FRE',
+  FRENCH: 'FRE',
+  IGB: 'IBO',
+  IGBO: 'IBO',
+  YOR: 'YOR',
+  YORUBA: 'YOR',
+  HAU: 'HAU',
+  HAUSA: 'HAU',
+  GEO: 'GEO',
+  GEOGRAPHY: 'GEO',
+  HIS: 'HIS',
+  HISTORY: 'HIS',
+  GOV: 'GOV',
+  GOVERNMENT: 'GOV',
+  BIO: 'BIO',
+  BIOLOGY: 'BIO',
+  PHY: 'PHY',
+  PHYSICS: 'PHY',
+  MUS: 'MUS',
+  MUSIC: 'MUS',
+};
+
+const STANDARD_JUPEB_SUBJECTS: Record<string, { code: string; name: string }> = {
+  BIO: { code: 'BIO', name: 'Biology' },
+  CHE: { code: 'CHE', name: 'Chemistry' },
+  PHY: { code: 'PHY', name: 'Physics' },
+  MAT: { code: 'MAT', name: 'Mathematics' },
+  MTH: { code: 'MAT', name: 'Mathematics' },
+  ECN: { code: 'ECN', name: 'Economics' },
+  ECO: { code: 'ECN', name: 'Economics' },
+  GOV: { code: 'GOV', name: 'Government' },
+  LIT: { code: 'LIT', name: 'Literature in English' },
+  CRS: { code: 'CRS', name: 'Christian Religious Studies' },
+  CRK: { code: 'CRS', name: 'Christian Religious Studies' },
+  IRS: { code: 'IRS', name: 'Islamic Religious Studies' },
+  IRK: { code: 'IRS', name: 'Islamic Religious Studies' },
+  ACC: { code: 'ACC', name: 'Accounting' },
+  ACT: { code: 'ACC', name: 'Accounting' },
+  BUS: { code: 'BUS', name: 'Business Studies' },
+  BMS: { code: 'BUS', name: 'Business Management' },
+  GEO: { code: 'GEO', name: 'Geography' },
+  HIS: { code: 'HIS', name: 'History' },
+  AGR: { code: 'AGR', name: 'Agricultural Science' },
+  AGRIC: { code: 'AGR', name: 'Agricultural Science' },
+  YOR: { code: 'YOR', name: 'Yoruba' },
+  HAU: { code: 'HAU', name: 'Hausa' },
+  IBO: { code: 'IBO', name: 'Igbo' },
+  IGB: { code: 'IBO', name: 'Igbo' },
+  FRE: { code: 'FRE', name: 'French' },
+  FRN: { code: 'FRE', name: 'French' },
+  MUS: { code: 'MUS', name: 'Music' },
+  VIS: { code: 'VIS', name: 'Visual Arts' },
+  FAA: { code: 'VIS', name: 'Fine Arts' },
+};
+
 function parseCombinationInput(rawInput: any) {
-  if (!rawInput) return { raw: '', codePart: '', codeCandidates: [] as string[], subjectCodes: [] as string[] };
+  if (!rawInput) {
+    return {
+      raw: '',
+      codePart: '',
+      codeCandidates: [] as string[],
+      subjectTokens: [] as string[],
+    };
+  }
   const raw = String(rawInput).trim().replace(/^['’`"]+|['’`"]+$/g, '').trim();
 
-  let extractedSubjects: string[] = [];
-  const parenMatch = raw.match(/\(([^)]+)\)/);
-  if (parenMatch) {
-    extractedSubjects = parenMatch[1]
+  let subjectTokens: string[] = [];
+
+  // 1. Check for parentheses or brackets: "JUPEB SC-001 - (BIO / GOV / LIT)" or "[BIO, GOV, LIT]"
+  const bracketMatch = raw.match(/[([]([^)\]]+)[)\]]/);
+  if (bracketMatch) {
+    subjectTokens = bracketMatch[1]
       .split(/[,/|+]/)
-      .map((s) => s.trim().toUpperCase())
+      .map((s) => s.trim())
       .filter(Boolean);
   }
 
-  let codeWithoutParen = raw.replace(/\([^)]*\)/g, '').trim();
-  codeWithoutParen = codeWithoutParen.replace(/^[\s\-:|]+|[\s\-:|]+$/g, '').trim();
+  // 2. Extract code part outside brackets
+  let codeWithoutBrackets = raw.replace(/[([][^)\]]*[)\]]/g, '').trim();
+  codeWithoutBrackets = codeWithoutBrackets.replace(/^[\s\-:|]+|[\s\-:|]+$/g, '').trim();
 
-  if (extractedSubjects.length === 0 && codeWithoutParen.includes('-')) {
-    const parts = codeWithoutParen.split('-');
-    if (parts.length === 2 && parts[1].includes(',')) {
-      codeWithoutParen = parts[0].trim();
-      extractedSubjects = parts[1]
-        .split(/[,/|+]/)
-        .map((s) => s.trim().toUpperCase())
-        .filter(Boolean);
-    }
-  }
-
-  if (extractedSubjects.length === 0 && raw.includes(',')) {
-    const parts = raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-    if (parts.length >= 2 && parts.every((p) => p.length <= 10 && !p.includes(' '))) {
-      extractedSubjects = parts;
+  // 3. If no brackets, check if string is separated by delimiters (e.g. "BIO / GOV / LIT", "BIO, GOV, LIT", "BIO - GOV - LIT")
+  if (subjectTokens.length === 0) {
+    if (raw.includes('/') || raw.includes('|') || raw.includes('+')) {
+      const parts = raw.split(/[/|+]/).map((s) => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        subjectTokens = parts;
+      }
+    } else if (raw.includes(',')) {
+      const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        subjectTokens = parts;
+      }
+    } else if (raw.includes(' - ')) {
+      const parts = raw.split(' - ').map((s) => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        subjectTokens = parts;
+      }
     }
   }
 
   const codeCandidates = new Set<string>();
-  if (codeWithoutParen) {
-    codeCandidates.add(codeWithoutParen.toLowerCase());
-    const noJupeb = codeWithoutParen.replace(/^jupeb[\s_-]*/i, '').trim();
+  if (codeWithoutBrackets) {
+    codeCandidates.add(codeWithoutBrackets.toLowerCase());
+    const noJupeb = codeWithoutBrackets.replace(/^jupeb[\s_-]*/i, '').trim();
     if (noJupeb) {
       codeCandidates.add(noJupeb.toLowerCase());
       codeCandidates.add(noJupeb.replace(/[\s_-]+/g, '').toLowerCase());
     }
-    if (!/^jupeb/i.test(codeWithoutParen)) {
-      codeCandidates.add(`jupeb ${codeWithoutParen}`.toLowerCase());
-      codeCandidates.add(`jupeb-${codeWithoutParen}`.toLowerCase());
+    if (!/^jupeb/i.test(codeWithoutBrackets)) {
+      codeCandidates.add(`jupeb ${codeWithoutBrackets}`.toLowerCase());
+      codeCandidates.add(`jupeb-${codeWithoutBrackets}`.toLowerCase());
     }
   }
 
   return {
     raw,
-    codePart: codeWithoutParen,
+    codePart: codeWithoutBrackets,
     codeCandidates: Array.from(codeCandidates),
-    subjectCodes: extractedSubjects,
+    subjectTokens,
   };
 }
 
@@ -131,22 +244,105 @@ export class BulkRegistrationService {
       };
     }
 
-    // Preload active combinations with items for matching
+    // 1. Preload all active subjects for code & name lookup
+    const allSubjects: { id: string; code: string; name: string }[] = await this.dataSource.query(
+      `SELECT id, code, name FROM jupeb_subjects WHERE deleted_at IS NULL ORDER BY code ASC`,
+    );
+
+    const subjectByCode = new Map<string, { id: string; code: string; name: string }>();
+    const subjectByName = new Map<string, { id: string; code: string; name: string }>();
+
+    for (const sub of allSubjects) {
+      const normCode = normalizeSubjectToken(sub.code);
+      const normName = normalizeSubjectToken(sub.name);
+      if (normCode) subjectByCode.set(normCode, sub);
+      if (normName) subjectByName.set(normName, sub);
+    }
+
+    const resolveSingleSubject = async (
+      token: string,
+    ): Promise<{ id: string; code: string; name: string } | null> => {
+      if (!token) return null;
+      const cleanToken = normalizeSubjectToken(token);
+      if (!cleanToken) return null;
+
+      if (subjectByCode.has(cleanToken)) return subjectByCode.get(cleanToken)!;
+      if (subjectByName.has(cleanToken)) return subjectByName.get(cleanToken)!;
+
+      const aliasCode = KNOWN_SUBJECT_ALIASES[cleanToken];
+      if (aliasCode && subjectByCode.has(aliasCode)) {
+        return subjectByCode.get(aliasCode)!;
+      }
+
+      // Fuzzy match by code prefix or name includes
+      for (const sub of allSubjects) {
+        const c = normalizeSubjectToken(sub.code);
+        const n = normalizeSubjectToken(sub.name);
+        if (c === cleanToken || n === cleanToken) return sub;
+        if (cleanToken.length >= 3 && (c.startsWith(cleanToken) || cleanToken.startsWith(c))) {
+          return sub;
+        }
+        if (cleanToken.length >= 4 && (n.includes(cleanToken) || cleanToken.includes(n))) {
+          return sub;
+        }
+      }
+
+      // Auto-provision standard JUPEB subject if not present in DB
+      const stdSub = STANDARD_JUPEB_SUBJECTS[cleanToken] || (aliasCode ? STANDARD_JUPEB_SUBJECTS[aliasCode] : null);
+      if (stdSub) {
+        try {
+          const insertRes = await this.dataSource.query(
+            `INSERT INTO jupeb_subjects (code, name, status, created_at, updated_at)
+             VALUES ($1, $2, 'active', NOW(), NOW())
+             RETURNING id, code, name`,
+            [stdSub.code, stdSub.name],
+          );
+          if (insertRes[0]) {
+            const sub = insertRes[0];
+            allSubjects.push(sub);
+            subjectByCode.set(normalizeSubjectToken(sub.code), sub);
+            subjectByName.set(normalizeSubjectToken(sub.name), sub);
+            return sub;
+          }
+        } catch {
+          // If already exists or concurrent insertion, query it
+          const existing = await this.dataSource.query(
+            `SELECT id, code, name FROM jupeb_subjects WHERE code = $1 LIMIT 1`,
+            [stdSub.code],
+          );
+          if (existing[0]) {
+            const sub = existing[0];
+            allSubjects.push(sub);
+            subjectByCode.set(normalizeSubjectToken(sub.code), sub);
+            subjectByName.set(normalizeSubjectToken(sub.name), sub);
+            return sub;
+          }
+        }
+      }
+
+      return null;
+    };
+
+    // 2. Preload active combinations with items for matching
     const activeCombos: any[] = await this.dataSource.query(
       `SELECT sc.id, sc.code, sc.title, sc.is_global, sc.university_id,
-              COALESCE(ARRAY_AGG(s.code ORDER BY sci.position) FILTER (WHERE s.code IS NOT NULL), '{}') as subject_codes
+              COALESCE(ARRAY_AGG(s.id ORDER BY sci.position) FILTER (WHERE s.id IS NOT NULL), '{}') as subject_ids,
+              COALESCE(ARRAY_AGG(s.code ORDER BY sci.position) FILTER (WHERE s.code IS NOT NULL), '{}') as subject_codes,
+              COALESCE(ARRAY_AGG(s.name ORDER BY sci.position) FILTER (WHERE s.name IS NOT NULL), '{}') as subject_names
        FROM jupeb_subject_combinations sc
        LEFT JOIN jupeb_subject_combination_items sci ON sci.combination_id = sc.id
        LEFT JOIN jupeb_subjects s ON s.id = sci.subject_id
-       WHERE sc.deleted_at IS NULL AND sc.status = 'active'
-         AND (sc.is_global = true OR sc.university_id = $1)
+       WHERE sc.deleted_at IS NULL AND (sc.status = 'active' OR sc.status IS NULL)
+         AND (sc.is_global = true OR sc.university_id = $1 OR sc.university_id IS NULL)
        GROUP BY sc.id, sc.code, sc.title, sc.is_global, sc.university_id`,
       [universityId],
     );
 
     const comboList = activeCombos.map((combo) => {
       const subjectCodes: string[] = (combo.subject_codes || []).map((c: string) => String(c).trim().toUpperCase());
+      const subjectIds: string[] = (combo.subject_ids || []).map((id: string) => String(id).trim());
       const sortedSubjectCodes = [...subjectCodes].sort().join(',');
+      const sortedSubjectIds = [...subjectIds].sort().join(',');
       const rawCode = String(combo.code || '').trim();
       const noPrefixCode = rawCode.replace(/^jupeb[\s_-]*/i, '').trim();
 
@@ -162,29 +358,83 @@ export class BulkRegistrationService {
       return {
         ...combo,
         subjectCodes,
+        subjectIds,
         sortedSubjectCodes,
+        sortedSubjectIds,
         codeVariants,
       };
     });
 
-    const resolveCombo = (rawCode?: string) => {
+    const resolveCombo = async (rawCode?: string) => {
       if (!rawCode || !String(rawCode).trim()) return null;
       const parsed = parseCombinationInput(rawCode);
 
-      if (parsed.codeCandidates.length > 0 && parsed.subjectCodes.length > 0) {
-        const sortedTarget = [...parsed.subjectCodes].sort().join(',');
-        for (const c of comboList) {
-          const codeMatches = parsed.codeCandidates.some((cand) => c.codeVariants.has(cand));
-          if (
-            codeMatches &&
-            (c.sortedSubjectCodes === sortedTarget ||
-              parsed.subjectCodes.every((sc) => c.subjectCodes.includes(sc)))
-          ) {
-            return c;
+      // A. If subject tokens (e.g. "BIO", "GOV", "LIT") are present in the dropdown/sheet:
+      if (parsed.subjectTokens.length > 0) {
+        const resolvedSubs: { id: string; code: string; name: string }[] = [];
+        for (const t of parsed.subjectTokens) {
+          const sub = await resolveSingleSubject(t);
+          if (sub) resolvedSubs.push(sub);
+        }
+
+        if (resolvedSubs.length >= 2) {
+          const targetIds = resolvedSubs.map((s) => s.id);
+          const sortedTargetIds = [...targetIds].sort().join(',');
+          const targetCodes = resolvedSubs.map((s) => s.code.toUpperCase());
+          const sortedTargetCodes = [...targetCodes].sort().join(',');
+
+          // 1. Check existing combinations with exact subject matches
+          for (const c of comboList) {
+            if (
+              c.sortedSubjectIds === sortedTargetIds ||
+              c.sortedSubjectCodes === sortedTargetCodes ||
+              (c.subjectCodes.length === targetCodes.length &&
+                targetCodes.every((tc: string) => c.subjectCodes.includes(tc)))
+            ) {
+              return c;
+            }
+          }
+
+          // 2. If all subjects are valid active subjects but combination record doesn't exist yet, auto-create it
+          if (resolvedSubs.length >= 3) {
+            try {
+              const comboCode = `SC-${targetCodes.join('-')}`.slice(0, 40);
+              const comboTitle = targetCodes.join(' / ');
+              const insertRes = await this.dataSource.query(
+                `INSERT INTO jupeb_subject_combinations (code, title, status, is_global, university_id, created_at, updated_at)
+                 VALUES ($1, $2, 'active', false, $3, NOW(), NOW())
+                 RETURNING id, code, title, is_global, university_id`,
+                [comboCode, comboTitle, universityId],
+              );
+              const newCombo = insertRes[0];
+              for (let pos = 0; pos < resolvedSubs.length; pos++) {
+                await this.dataSource.query(
+                  `INSERT INTO jupeb_subject_combination_items (combination_id, subject_id, position, created_at)
+                   VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING`,
+                  [newCombo.id, resolvedSubs[pos].id, pos + 1],
+                );
+              }
+              const createdComboObj = {
+                ...newCombo,
+                subjectCodes: targetCodes,
+                subjectIds: targetIds,
+                sortedSubjectCodes: sortedTargetCodes,
+                sortedSubjectIds: sortedTargetIds,
+                codeVariants: new Set<string>([
+                  comboCode.toLowerCase(),
+                  comboCode.replace(/[\s_-]+/g, '').toLowerCase(),
+                ]),
+              };
+              comboList.push(createdComboObj);
+              return createdComboObj;
+            } catch {
+              // Ignore unique constraint conflict and fallback
+            }
           }
         }
       }
 
+      // B. Match by code & code variants (e.g. "SC-001", "JUPEB-SC-001")
       if (parsed.codeCandidates.length > 0) {
         for (const c of comboList) {
           if (parsed.codeCandidates.some((cand) => c.codeVariants.has(cand))) {
@@ -193,23 +443,20 @@ export class BulkRegistrationService {
         }
       }
 
-      if (parsed.subjectCodes.length > 0) {
-        const sortedTarget = [...parsed.subjectCodes].sort().join(',');
+      // C. Match by title
+      if (parsed.raw) {
+        const lowRaw = parsed.raw.toLowerCase();
         for (const c of comboList) {
-          if (
-            c.sortedSubjectCodes === sortedTarget ||
-            (parsed.subjectCodes.length === c.subjectCodes.length &&
-              parsed.subjectCodes.every((sc) => c.subjectCodes.includes(sc)))
-          ) {
+          if (c.title && (c.title.toLowerCase() === lowRaw || c.title.toLowerCase().includes(lowRaw))) {
             return c;
           }
         }
       }
 
-      if (parsed.raw) {
-        const lowRaw = parsed.raw.toLowerCase();
+      // D. Match by UUID directly
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.raw)) {
         for (const c of comboList) {
-          if (c.title && (c.title.toLowerCase() === lowRaw || c.title.toLowerCase().includes(lowRaw))) {
+          if (c.id.toLowerCase() === parsed.raw.toLowerCase()) {
             return c;
           }
         }
@@ -221,6 +468,7 @@ export class BulkRegistrationService {
     const errors: BulkRegistrationError[] = [];
     const registrations: RegistrationEntity[] = [];
     let successful = 0;
+    let validRowsCount = 0;
 
     const maxSerialRecord = await this.registrationRepo
       .createQueryBuilder('r')
@@ -259,6 +507,12 @@ export class BulkRegistrationService {
         row['combination_code'] ||
         '';
 
+      // Skip completely blank rows (e.g. empty template rows with default dropdown values)
+      if (!rawNin && !firstName && !lastName && !email && !phone) {
+        continue;
+      }
+      validRowsCount += 1;
+
       const normNin = normalizeNin(rawNin);
 
       if (!normNin || normNin.length !== 11) {
@@ -296,7 +550,7 @@ export class BulkRegistrationService {
       }
       seenNinsInBatch.add(normNin);
 
-      const matchedCombo = resolveCombo(rawCombo);
+      const matchedCombo = await resolveCombo(rawCombo);
       if (rawCombo && !matchedCombo) {
         errors.push({
           row: rowNumber,
@@ -384,12 +638,34 @@ export class BulkRegistrationService {
       }
     }
 
-    return {
-      total_rows: rows.length,
+    const failed = errors.length;
+    const totalRowsCount = validRowsCount || rows.length;
+    const resultData = {
+      total_rows: totalRowsCount,
+      totalRows: totalRowsCount,
       successful,
-      failed: errors.length,
+      succeeded_count: successful,
+      succeededCount: successful,
+      failed,
+      failed_count: failed,
+      failedCount: failed,
       errors,
       registrations,
     };
+
+    return {
+      success: failed === 0 || successful > 0,
+      total_rows: totalRowsCount,
+      totalRows: totalRowsCount,
+      successful,
+      succeeded_count: successful,
+      succeededCount: successful,
+      failed,
+      failed_count: failed,
+      failedCount: failed,
+      errors,
+      registrations,
+      data: resultData,
+    } as any;
   }
 }
