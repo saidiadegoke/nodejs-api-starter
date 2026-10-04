@@ -21,11 +21,45 @@ function withPersonalInfoFields(user: any, roles: string[] = []) {
     user.display_name ||
     [user.first_name, user.last_name].filter(Boolean).join(' ').trim() ||
     null;
+
+  const candidateCount =
+    user.expected_candidate_count != null ? Number(user.expected_candidate_count) : null;
+
+  let institutionObj = null;
+  if (user.jupeb_university_id || user.university_id) {
+    institutionObj = {
+      id: user.jupeb_university_id || user.university_id,
+      university_id: user.jupeb_university_id || user.university_id,
+      institution_id: user.university_code || user.jupeb_university_id || user.university_id,
+      code: user.university_code || null,
+      name: user.university_name || null,
+      short_name: user.university_short_name || null,
+      prefix: user.jupeb_prefix || null,
+      jupeb_prefix: user.jupeb_prefix || null,
+      email: user.university_email || null,
+      phone: user.university_phone || null,
+      address: user.university_address || null,
+      expected_candidate_count: candidateCount,
+      number_of_allocated_candidates: candidateCount,
+      allocated_candidates: candidateCount,
+      university_type: user.university_type || null,
+    };
+  }
+
   return {
     ...user,
     full_name: fullName,
     professional_title: user.title || null,
     position: formatRoleLabel(roles[0]) || null,
+    institution: institutionObj,
+    // Flat convenience aliases for UI forms
+    prefix: user.jupeb_prefix || null,
+    institution_id: user.university_code || user.jupeb_university_id || user.university_id || null,
+    institution_name: user.university_name || null,
+    institution_email: user.university_email || null,
+    number_of_allocated_candidates: candidateCount,
+    allocated_candidates: candidateCount,
+    expected_candidate_count: candidateCount,
   };
 }
 

@@ -11,6 +11,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  HttpException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -55,7 +56,24 @@ export class IdentityController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.identityService.verifyNin(dto, userId);
+    const data = await this.identityService.verifyNin(dto, userId);
+    if (data && data.status === 'failed') {
+      const failureMsg =
+        (data.error && (data.error.message || data.error.error_message)) ||
+        data.error_message ||
+        'NIN verification failed. The provided NIN is invalid or could not be verified.';
+      throw new HttpException(
+        {
+          message: failureMsg,
+          error_code: (data.error && data.error.code) || 'nin_verification_failed',
+          verification_id: data.id,
+          details: data.error || null,
+          data,
+        },
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+    return data;
   }
 
   @Post('nin/verifications/:verificationId/retry')
@@ -73,7 +91,24 @@ export class IdentityController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.identityService.retryVerification(verificationId, userId);
+    const data = await this.identityService.retryVerification(verificationId, userId);
+    if (data && data.status === 'failed') {
+      const failureMsg =
+        (data.error && (data.error.message || data.error.error_message)) ||
+        data.error_message ||
+        'NIN verification failed.';
+      throw new HttpException(
+        {
+          message: failureMsg,
+          error_code: (data.error && data.error.code) || 'nin_verification_failed',
+          verification_id: data.id,
+          details: data.error || null,
+          data,
+        },
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+    return data;
   }
 
   @Get('nin/verifications/:verificationId')

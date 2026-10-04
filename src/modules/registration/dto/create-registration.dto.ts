@@ -3,7 +3,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsUUID,
-  IsEmail,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -66,6 +65,11 @@ export class PatchRegistrationDto {
   @IsUUID('4')
   subject_combination_id?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID('4')
+  subjectCombinationId?: string;
+
   @ApiPropertyOptional({
     description: 'Update institution issued code',
     example: 'UNILAG/2026/002',
@@ -74,6 +78,19 @@ export class PatchRegistrationDto {
   @IsString()
   institution_issued_code?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  institutionIssuedCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Status modification (e.g. withdrawn, approved, rejected)',
+    example: 'withdrawn',
+  })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
   @ApiPropertyOptional({
     description: 'Status modification reason or review remark',
     example: 'Subject combination adjusted by department',
@@ -81,23 +98,72 @@ export class PatchRegistrationDto {
   @IsOptional()
   @IsString()
   status_reason?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  statusReason?: string;
 }
 
 export class PatchCandidateDto {
+  @ApiPropertyOptional({ description: 'Nested info object from frontend forms' })
+  @IsOptional()
+  info?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'Assigned subject combination UUID' })
+  @IsOptional()
+  @IsUUID('4')
+  subject_combination_id?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID('4')
+  subjectCombinationId?: string;
+
+  @ApiPropertyOptional({ description: 'Institution issued student identifier' })
+  @IsOptional()
+  @IsString()
+  institution_issued_code?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  institutionIssuedCode?: string;
+
   @ApiPropertyOptional({ example: 'Adewale' })
   @IsOptional()
   @IsString()
   first_name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  firstName?: string;
 
   @ApiPropertyOptional({ example: 'Adeyemi' })
   @IsOptional()
   @IsString()
   last_name?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
   @ApiPropertyOptional({ example: 'Oluwaseun' })
   @IsOptional()
   @IsString()
   middle_name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  middleName?: string;
+
+  @ApiPropertyOptional({ example: 'Mr' })
+  @IsOptional()
+  @IsString()
+  title?: string;
 
   @ApiPropertyOptional({ example: 'male' })
   @IsOptional()
@@ -109,6 +175,16 @@ export class PatchCandidateDto {
   @IsString()
   date_of_birth?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dob?: string;
+
   @ApiPropertyOptional({ example: '+2348012345678' })
   @IsOptional()
   @IsString()
@@ -116,13 +192,18 @@ export class PatchCandidateDto {
 
   @ApiPropertyOptional({ example: 'candidate@example.com' })
   @IsOptional()
-  @IsEmail()
+  @IsString()
   email?: string;
 
   @ApiPropertyOptional({ example: 'Lagos State' })
   @IsOptional()
   @IsString()
   state_of_origin?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  stateOfOrigin?: string;
 
   @ApiPropertyOptional({ example: 'Ikeja' })
   @IsOptional()
@@ -133,4 +214,36 @@ export class PatchCandidateDto {
   @IsOptional()
   @IsString()
   residential_address?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  residentialAddress?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'Ikeja' })
+  @IsOptional()
+  @IsString()
+  place_of_birth?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  placeOfBirth?: string;
+
+  @ApiPropertyOptional({ description: 'Next of kin details' })
+  @IsOptional()
+  next_of_kin?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  nextOfKin?: any;
+
+  @ApiPropertyOptional({ description: 'Uploaded documents array' })
+  @IsOptional()
+  documents?: any[];
 }

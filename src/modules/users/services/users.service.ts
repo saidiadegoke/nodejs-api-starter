@@ -13,6 +13,36 @@ export class UsersService {
     private readonly profileRepo: ProfileRepository,
   ) {}
 
+  private formatUser(row: any) {
+    if (!row) return null;
+    const fullName = [row.first_name, row.last_name].filter(Boolean).join(' ') || row.display_name || row.email;
+    const institution = row.jupeb_university_id
+      ? {
+          id: row.jupeb_university_id,
+          code: row.jupeb_university_code,
+          short_name: row.jupeb_university_short_name,
+          name: row.jupeb_university_name,
+        }
+      : null;
+
+    return {
+      ...row,
+      full_name: fullName,
+      fullName,
+      name: fullName,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      institution,
+      university: institution,
+      institution_id: row.jupeb_university_id,
+      institution_name: row.jupeb_university_name,
+      institution_code: row.jupeb_university_code,
+      roles: Array.isArray(row.roles) ? row.roles : [],
+    };
+  }
+
   async getAllUsers(
     page = 1,
     limit = 10,
@@ -37,9 +67,10 @@ export class UsersService {
 
     const users = await this.userRepo.findAll(limitNum, offset, filterOptions.q, filterOptions);
     const total = await this.userRepo.count(filterOptions.q, filterOptions);
+    const formatted = users.map((u: any) => this.formatUser(u));
 
     return {
-      users,
+      users: formatted,
       total,
       page: pageNum,
       limit: limitNum,
@@ -52,7 +83,7 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    return user;
+    return this.formatUser(user);
   }
 
   async updateUser(userId: string, updateData: Partial<UserEntity> & { first_name?: string; last_name?: string }) {
@@ -114,5 +145,41 @@ export class UsersService {
 
   async softDelete(userId: string) {
     return await this.userRepo.softDelete(userId);
+  }
+
+  async getUsersStats() {
+    const rows = await (this.userRepo as any).dataSource.query(`
+      SELECT
+        COUNT(*)::int AS total_users,
+        COUNT(*) FILTER (WHERE status = 'active')::int AS active_users,
+        COUNT(*) FILTER (WHERE status <> 'active')::int AS inactive_users,
+        COUNT(*) FILTER (WHERE email_verified = true)::int AS verified_emails
+      FROM users
+      WHERE deleted_at IS NULL
+    `);
+
+    const adminCountRows = await (this.userRepo as any).dataSource.query(`
+      SELECT COUNT(DISTINCT ur.user_id)::int AS count
+      FROM user_roles ur
+      JOIN roles r ON r.id = ur.role_id
+      WHERE r.name IN ('institution_admin', 'admin', 'super_admin')
+    `);
+
+    const roleCountRows = await (this.userRepo as any).dataSource.query(`
+      SELECT COUNT(*)::int AS count
+      FROM roles
+      WHERE status = 'active' OR status IS NULL
+    `);
+
+    const totalRoles = Number(roleCountRows[0]?.count) || 0;
+    const r = rows[0] || {};
+    return {
+      total_users: Number(r.total_users) || 0,
+      active_users: Number(r.active_users) || 0,
+      inactive_users: Number(r.inactive_users) || 0,
+      verified_emails: Number(r.verified_emails) || 0,
+      institution_admins: Number(adminCountRows[0]?.count) || 0,
+      total_roles: totalRoles,
+    };
   }
 }

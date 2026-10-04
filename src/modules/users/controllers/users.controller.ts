@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -75,6 +77,41 @@ export class UsersController {
     };
   }
 
+  @Get('stats')
+  @RequirePermission('users.view')
+  @ApiOperation({
+    summary: 'User stats summary',
+    description: 'Aggregate counts: total, active, inactive users, verified emails, institution admins.',
+  })
+  @ApiOkResponse({ description: 'User stats retrieved successfully' })
+  async getStats() {
+    return this.usersService.getUsersStats();
+  }
+
+  @Get(':userId')
+  @RequirePermission('users.view')
+  @ApiOperation({
+    summary: 'Get user details by ID',
+    description: 'Retrieves a single user by their UUID. Requires users.view permission.',
+  })
+  @ApiParam({ name: 'userId', description: 'Target user UUID' })
+  @ApiOkResponse({ description: 'User retrieved successfully' })
+  async getUserById(@Param('userId') userId: string) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      if (userId === 'stats') {
+        return this.getStats();
+      }
+      throw new NotFoundException('User not found');
+    }
+    const user = await this.usersService.getUserById(userId);
+    return {
+      success: true,
+      message: 'User retrieved successfully',
+      data: user,
+      ...user,
+    };
+  }
+
   @Patch(':userId')
   @RequirePermission('users.update')
   @ApiOperation({
@@ -91,6 +128,22 @@ export class UsersController {
     return {
       message: 'User updated successfully',
       data: user,
+    };
+  }
+
+  @Delete(':userId')
+  @RequirePermission('users.delete', 'users.update', 'user.delete')
+  @ApiOperation({
+    summary: 'Delete user account',
+    description: 'Soft-deletes a user account. Requires users.delete or admin permission.',
+  })
+  @ApiParam({ name: 'userId', description: 'Target user UUID' })
+  @ApiOkResponse({ description: 'User deleted successfully' })
+  async deleteUser(@Param('userId') userId: string) {
+    await this.usersService.softDelete(userId);
+    return {
+      success: true,
+      message: 'User deleted successfully',
     };
   }
 

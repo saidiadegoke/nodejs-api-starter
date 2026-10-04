@@ -163,22 +163,72 @@ class Payment {
     university_id,
     session_id,
     payment_item_id,
+    payment_item,
     status,
     q,
     limit = 20,
     offset = 0,
   }) {
-    const values = [university_id, session_id];
-    let idx = 3;
-    const scope = `(
-      (p.jupeb_university_id = $1 AND p.jupeb_session_id = $2)
-      OR (r.university_id = $1 AND r.session_id = $2)
-    )`;
-    let where = `WHERE ${scope}`;
-    if (payment_item_id) {
-      where += ` AND p.payment_item_id = $${idx++}`;
-      values.push(payment_item_id);
+    const values = [university_id];
+    let idx = 2;
+    let sessionClause = '';
+    if (session_id) {
+      sessionClause = ` AND (p.jupeb_session_id = $${idx} OR r.session_id = $${idx} OR p.jupeb_session_id IS NULL)`;
+      values.push(session_id);
+      idx += 1;
     }
+    const scope = `(
+      (p.jupeb_university_id = $1)
+      OR (r.university_id = $1)
+    )${sessionClause}`;
+    let where = `WHERE ${scope}`;
+
+    const rawItem = (payment_item || payment_item_id || '').trim();
+    if (rawItem) {
+      const lower = rawItem.toLowerCase();
+      const isAffiliation = lower === 'affiliation_fee' || lower.includes('affiliation');
+      const isExam = lower === 'examination_fee' || lower === 'exam_fee' || lower.includes('exam');
+
+      if (isAffiliation) {
+        where += ` AND (
+          pi.code ILIKE '%affiliation%'
+          OR pi.fee_source = 'affiliation'
+          OR pi.name ILIKE '%affiliation%'
+          OR p.type ILIKE '%affiliation%'
+          OR p.payment_type ILIKE '%affiliation%'
+          OR (p.metadata->>'payment_item_code') ILIKE '%affiliation%'
+          OR (p.metadata->>'payment_item_key') ILIKE '%affiliation%'
+          OR (p.metadata->>'purpose') ILIKE '%affiliation%'
+        )`;
+      } else if (isExam) {
+        where += ` AND (
+          pi.code ILIKE '%exam%'
+          OR pi.fee_source = 'examination'
+          OR pi.name ILIKE '%exam%'
+          OR p.type ILIKE '%exam%'
+          OR p.payment_type ILIKE '%exam%'
+          OR (p.metadata->>'payment_item_code') ILIKE '%exam%'
+          OR (p.metadata->>'payment_item_key') ILIKE '%exam%'
+          OR (p.metadata->>'purpose') ILIKE '%exam%'
+        )`;
+      } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawItem)) {
+        where += ` AND (p.payment_item_id = $${idx} OR pi.id = $${idx})`;
+        values.push(rawItem);
+        idx += 1;
+      } else {
+        where += ` AND (
+          pi.code ILIKE $${idx}
+          OR pi.name ILIKE $${idx}
+          OR p.type ILIKE $${idx}
+          OR p.payment_type ILIKE $${idx}
+          OR (p.metadata->>'payment_item_code') ILIKE $${idx}
+          OR (p.metadata->>'payment_item_key') ILIKE $${idx}
+        )`;
+        values.push(`%${rawItem}%`);
+        idx += 1;
+      }
+    }
+
     if (status) {
       where += ` AND p.status = $${idx++}`;
       values.push(status);
@@ -188,6 +238,7 @@ class Payment {
         p.payment_id ILIKE $${idx}
         OR COALESCE(p.purpose, '') ILIKE $${idx}
         OR COALESCE(pi.name, '') ILIKE $${idx}
+        OR COALESCE(p.metadata->>'description', '') ILIKE $${idx}
       )`;
       values.push(`%${q}%`);
       idx += 1;

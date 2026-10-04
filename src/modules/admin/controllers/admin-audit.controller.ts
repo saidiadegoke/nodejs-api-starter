@@ -16,23 +16,7 @@ import {
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../../utils';
 import { AdminAuditService, AuditListFilters } from '../services/admin-audit.service';
-
-// ── Query DTO (re-use inline — the filters are simple query strings) ────────
-
-class AuditListQueryDto {
-  admin_user_id?: string;
-  actor_user_id?: string;
-  action?: string;
-  resource_type?: string;
-  resource_id?: string;
-  university_id?: string;
-  jupeb_university_id?: string;
-  start_date?: string;
-  end_date?: string;
-  q?: string;
-  page?: number;
-  limit?: number;
-}
+import { AuditListQueryDto } from '../dto';
 
 @ApiTags('Admin Audit Trail')
 @Controller(['audit', 'admin/audit'])
@@ -71,7 +55,7 @@ export class AdminAuditController {
       query as AuditListFilters,
       req.user?.user_id,
     );
-    const totalPages = Math.ceil(result.total / (result.limit || 20));
+    const totalPages = Math.ceil(result.total / (result.limit || 20)) || 1;
     return {
       success: true,
       message: 'Audit logs retrieved successfully',
@@ -80,6 +64,8 @@ export class AdminAuditController {
       total: result.total,
       page: result.page,
       limit: result.limit,
+      totalPages,
+      total_pages: totalPages,
       pagination: {
         total: result.total,
         page: result.page,

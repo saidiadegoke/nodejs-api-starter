@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
@@ -30,6 +31,11 @@ import {
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(id?: string | null): boolean {
+  if (!id) return false;
+  return UUID_REGEX.test(String(id).trim());
+}
 
 const PRIVILEGED_ROLES = new Set([
   'super_admin',
@@ -77,28 +83,189 @@ export class IdentityService {
     return roles.some((r) => PRIVILEGED_ROLES.has(r));
   }
 
-  private sanitizeVerification(row: any): NinVerificationResponseDto | null {
+  private async hasBlockingRegistration(ninHash: string, sessionId?: string | null): Promise<boolean> {
+    if (!ninHash) return false;
+    const params: any[] = [ninHash];
+    let query = `
+      SELECT 1 FROM jupeb_registrations r
+      JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+      WHERE nv.nin_hash = $1
+        AND r.status NOT IN ('rejected', 'withdrawn')
+    `;
+    if (sessionId) {
+      params.push(sessionId);
+      query += ` AND r.session_id = $2`;
+    }
+    query += ` LIMIT 1`;
+    const rows = await this.dataSource.query(query, params).catch(() => []);
+    return rows.length > 0;
+  }
+
+  private async enrichVerifyContext(rowId: string, userId?: string | null): Promise<Record<string, any>> {
+    const extra: Record<string, any> = {};
+    if (!userId || !isUuid(userId)) return extra;
+    try {
+      const [callerRows, regRows] = await Promise.all([
+        this.dataSource.query(
+          `SELECT u.id, u.email, u.phone, u.email_verified, u.phone_verified, u.last_login_at,
+                  p.title AS profile_title, p.first_name, p.last_name, p.display_name,
+                  p.date_of_birth, p.gender, p.profile_photo_url, p.residential_address,
+                  p.state_of_origin, p.lga, p.place_of_birth
+             FROM users u
+             LEFT JOIN profiles p ON p.user_id = u.id
+            WHERE u.id = $1
+            LIMIT 1`,
+          [userId],
+        ),
+        this.dataSource.query(
+          `SELECT r.id, r.status, r.session_id, r.university_id, r.subject_combination_id,
+                  r.user_id, r.nin_verification_id, r.institution_issued_code,
+                  r.provisional_candidate_code, r.jupeb_candidate_number,
+                  r.claimed_at, r.submitted_at, r.approved_at, r.created_at, r.updated_at
+             FROM jupeb_registrations r
+            WHERE r.nin_verification_id = $1
+            ORDER BY r.updated_at DESC NULLS LAST, r.created_at DESC
+            LIMIT 1`,
+          [rowId],
+        ),
+      ]);
+
+      const c = callerRows[0];
+      if (c) {
+        extra.caller_user = {
+          id: c.id,
+          email: c.email,
+          phone: c.phone,
+          email_verified: c.email_verified,
+          phone_verified: c.phone_verified,
+          last_login_at: c.last_login_at,
+          profile: {
+            title: c.profile_title,
+            first_name: c.first_name,
+            last_name: c.last_name,
+            display_name: c.display_name,
+            date_of_birth: c.date_of_birth,
+            gender: c.gender,
+            profile_photo_url: c.profile_photo_url,
+            residential_address: c.residential_address,
+            state_of_origin: c.state_of_origin,
+            lga: c.lga,
+            place_of_birth: c.place_of_birth,
+          },
+        };
+      }
+      if (regRows[0]) {
+        extra.registration = regRows[0];
+      }
+    } catch {
+      // non-fatal
+    }
+    return extra;
+  }
+
+  private async resolveSubjectCombination(
+    intakePayload?: any,
+    extraReg?: any,
+  ): Promise<any> {
+    const intakeCombId =
+      intakePayload?.subject_combination_id ||
+      intakePayload?.subjectCombinationId;
+    const regCombId = extraReg?.subject_combination_id;
+    const targetId = intakeCombId || regCombId;
+
+    if (!targetId || !isUuid(String(targetId))) return null;
+
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT sc.id, sc.code, sc.title, sc.status, sc.is_active, sc.university_id, sc.created_at, sc.updated_at,
+                COALESCE(
+                  json_agg(
+                    json_build_object(
+                      'id', s.id,
+                      'code', s.code,
+                      'name', s.name,
+                      'position', sci.position
+                    ) ORDER BY sci.position ASC
+                  ) FILTER (WHERE s.id IS NOT NULL),
+                  '[]'::json
+                ) AS subject_items
+         FROM jupeb_subject_combinations sc
+         LEFT JOIN jupeb_subject_combination_items sci ON sci.combination_id = sc.id
+         LEFT JOIN jupeb_subjects s ON s.id = sci.subject_id AND s.deleted_at IS NULL
+         WHERE sc.id = $1 AND sc.deleted_at IS NULL
+         GROUP BY sc.id`,
+        [targetId],
+      );
+      if (rows[0]) {
+        return rows[0];
+      }
+    } catch {
+      // non-fatal
+    }
+    return null;
+  }
+
+  private async sanitizeVerification(row: any, userId?: string | null): Promise<any> {
     if (!row) return null;
-    return {
+    const rawPayload =
+      (row.responsePayload ?? row.response_payload) &&
+      typeof (row.responsePayload ?? row.response_payload) === 'object'
+        ? (row.responsePayload ?? row.response_payload)
+        : {};
+    const intakePayloadObj =
+      (row.intakePayload ?? row.intake_payload) &&
+      typeof (row.intakePayload ?? row.intake_payload) === 'object'
+        ? (row.intakePayload ?? row.intake_payload)
+        : {};
+    const errorPayload =
+      (row.errorPayload ?? row.error_payload) &&
+      typeof (row.errorPayload ?? row.error_payload) === 'object'
+        ? (row.errorPayload ?? row.error_payload)
+        : {};
+    const ninLast4Val = row.ninLast4 ?? row.nin_last4;
+
+    const profile = {
+      ...rawPayload,
+      nin_last4: ninLast4Val,
+    };
+
+    const out: any = {
       id: row.id,
-      nin_last4: row.ninLast4 ?? row.nin_last4,
-      provider: row.provider,
-      provider_reference: row.providerReference ?? row.provider_reference,
+      verification_id: row.id,
       status: row.status,
-      response_payload: row.responsePayload ?? row.response_payload,
-      error: row.errorPayload ?? row.error_payload,
+      nin_last4: ninLast4Val,
+      provider: row.provider,
+      provider_reference: row.providerReference ?? row.provider_reference ?? null,
+      profile,
+      response_payload: rawPayload,
+      intake_payload: intakePayloadObj,
+      error: errorPayload,
       error_message: (row.errorPayload ?? row.error_payload)?.message || null,
-      verified_at: (row.verifiedAt ?? row.verified_at)?.toISOString?.() || row.verifiedAt || row.verified_at,
-      retry_after: (row.retryAfter ?? row.retry_after)?.toISOString?.() || row.retryAfter || row.retry_after,
-      intake_payload: row.intakePayload ?? row.intake_payload,
+      verified_at: (row.verifiedAt ?? row.verified_at)?.toISOString?.() || row.verifiedAt || row.verified_at || null,
+      retry_after: (row.retryAfter ?? row.retry_after)?.toISOString?.() || row.retryAfter || row.retry_after || null,
+      last_error_code: row.lastErrorCode ?? row.last_error_code ?? null,
       created_at: (row.createdAt ?? row.created_at)?.toISOString?.() || row.createdAt || row.created_at,
     };
+
+    if (row.status === 'pending') {
+      if (errorPayload?.message || errorPayload?.error_message) {
+        out.error_message = errorPayload.message || errorPayload.error_message;
+      }
+    }
+
+    const extra = await this.enrichVerifyContext(row.id, userId);
+    const subjectCombination = await this.resolveSubjectCombination(intakePayloadObj, extra.registration);
+    if (subjectCombination) {
+      out.subject_combination = subjectCombination;
+    }
+    Object.assign(out, extra);
+    return out;
   }
 
   async verifyNin(
     dto: VerifyNinDto,
     userId?: string | null,
-  ): Promise<NinVerificationResponseDto> {
+  ): Promise<any> {
     const normalized = normalizeNin(dto.nin);
     if (normalized.length !== 11) {
       throw new UnprocessableEntityException('NIN must be an 11-digit number');
@@ -108,14 +275,36 @@ export class IdentityService {
     const last4 = ninLast4(normalized);
     const intakePayload = dto.intake_payload || {};
 
+    const targetSessionId = dto.session_id || (intakePayload as any)?.session_id || null;
+    if (targetSessionId) {
+      const blockedInSession = await this.hasBlockingRegistration(hashed, targetSessionId);
+      if (blockedInSession) {
+        throw new ConflictException({
+          message: 'This NIN is already registered for this academic session. Duplicate NINs cannot be registered.',
+          error_code: 'duplicate_nin_session',
+          session_id: targetSessionId,
+          nin_last4: last4,
+        });
+      }
+    }
+
+    const blockedGlobally = await this.hasBlockingRegistration(hashed);
+    if (blockedGlobally) {
+      throw new ConflictException({
+        message: 'This NIN is already registered with an active candidate in the system. Duplicate NINs cannot be registered.',
+        error_code: 'duplicate_nin',
+        nin_last4: last4,
+      });
+    }
+
     if (dto.idempotency_key) {
       const existing = await this.ninRepo.findByIdempotencyKey(dto.idempotency_key);
       if (existing) {
         if (Object.keys(intakePayload).length) {
           const merged = await this.ninRepo.mergeIntakePayload(existing.id, intakePayload);
-          return this.sanitizeVerification(merged || existing)!;
+          return this.sanitizeVerification(merged || existing, userId);
         }
-        return this.sanitizeVerification(existing)!;
+        return this.sanitizeVerification(existing, userId);
       }
     }
 
@@ -124,9 +313,9 @@ export class IdentityService {
       if (cached) {
         if (Object.keys(intakePayload).length) {
           const merged = await this.ninRepo.mergeIntakePayload(cached.id, intakePayload);
-          return this.sanitizeVerification(merged || cached)!;
+          return this.sanitizeVerification(merged || cached, userId);
         }
-        return this.sanitizeVerification(cached)!;
+        return this.sanitizeVerification(cached, userId);
       }
     }
 
@@ -150,7 +339,7 @@ export class IdentityService {
         intakePayload,
       });
       await this.ninEvents.emitNinResolved(created.id, 'verified');
-      return this.sanitizeVerification(created)!;
+      return this.sanitizeVerification(created, userId);
     }
 
     if (result.outcome === 'pending') {
@@ -169,7 +358,7 @@ export class IdentityService {
         attemptCount: 1,
         lastAttemptAt: new Date(),
       });
-      return this.sanitizeVerification(created)!;
+      return this.sanitizeVerification(created, userId);
     }
 
     // Failed
@@ -188,14 +377,14 @@ export class IdentityService {
       lastAttemptAt: new Date(),
     });
     await this.ninEvents.emitNinResolved(created.id, 'failed');
-    return this.sanitizeVerification(created)!;
+    return this.sanitizeVerification(created, userId);
   }
 
-  async retryVerification(verificationId: string, _userId?: string | null): Promise<NinVerificationResponseDto> {
+  async retryVerification(verificationId: string, userId?: string | null): Promise<any> {
     const row = await this.ninRepo.findById(verificationId);
     if (!row) throw new NotFoundException('Verification not found');
     if (row.status === NinVerificationStatus.VERIFIED) {
-      return this.sanitizeVerification(row)!;
+      return this.sanitizeVerification(row, userId);
     }
 
     // Re-trigger adapter
@@ -211,7 +400,7 @@ export class IdentityService {
         provider_reference: result.provider_reference,
       });
       await this.ninEvents.emitNinResolved(verificationId, 'verified');
-      return this.sanitizeVerification(updated)!;
+      return this.sanitizeVerification(updated, userId);
     }
 
     if (result.outcome === 'pending') {
@@ -220,7 +409,7 @@ export class IdentityService {
         last_error_code: result.error?.code || null,
         error_payload: (result.error as Record<string, unknown>) || {},
       });
-      return this.sanitizeVerification(updated || row)!;
+      return this.sanitizeVerification(updated || row, userId);
     }
 
     const updated = await this.ninRepo.markFailed(verificationId, {
@@ -228,13 +417,13 @@ export class IdentityService {
       last_error_code: result.error?.code || null,
     });
     await this.ninEvents.emitNinResolved(verificationId, 'failed');
-    return this.sanitizeVerification(updated || row)!;
+    return this.sanitizeVerification(updated || row, userId);
   }
 
-  async getVerification(verificationId: string, _userId?: string | null): Promise<NinVerificationResponseDto> {
+  async getVerification(verificationId: string, userId?: string | null): Promise<any> {
     const row = await this.ninRepo.findById(verificationId);
     if (!row) throw new NotFoundException('Verification not found');
-    return this.sanitizeVerification(row)!;
+    return this.sanitizeVerification(row, userId);
   }
 
   async patchNinIntake(
@@ -262,7 +451,7 @@ export class IdentityService {
 
     const mergedToPersist = { ...nested, ...flat };
     const merged = await this.ninRepo.mergeIntakePayload(verificationId, mergedToPersist);
-    return this.sanitizeVerification(merged || row)!;
+    return this.sanitizeVerification(merged || row, _userId);
   }
 
   private sanitizeBiometric(entity: BiometricCaptureEntity): BiometricResponseDto {

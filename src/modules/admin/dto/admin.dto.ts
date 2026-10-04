@@ -91,9 +91,50 @@ export class PatchPermissionDto {
 }
 
 export class SetUserRolesDto {
-  @ApiProperty({ example: ['admin', 'registrar'] })
+  @ApiPropertyOptional({ example: ['admin', 'registrar'] })
+  @IsOptional()
   @IsArray()
-  roles: string[];
+  roles?: string[];
+
+  @ApiPropertyOptional({ example: ['436641bf-9448-4a90-a36f-a4ab7bed24e3'] })
+  @IsOptional()
+  @IsArray()
+  role_ids?: string[];
+
+  @ApiPropertyOptional({ example: ['436641bf-9448-4a90-a36f-a4ab7bed24e3'] })
+  @IsOptional()
+  @IsArray()
+  roleIds?: string[];
+
+  @ApiPropertyOptional({ example: ['admin'] })
+  @IsOptional()
+  @IsArray()
+  add?: string[];
+
+  @ApiPropertyOptional({ example: ['admin'] })
+  @IsOptional()
+  @IsArray()
+  remove?: string[];
+
+  @ApiPropertyOptional({ example: ['admin'] })
+  @IsOptional()
+  @IsArray()
+  add_roles?: string[];
+
+  @ApiPropertyOptional({ example: ['admin'] })
+  @IsOptional()
+  @IsArray()
+  remove_roles?: string[];
+
+  @ApiPropertyOptional({ example: ['436641bf-9448-4a90-a36f-a4ab7bed24e3'] })
+  @IsOptional()
+  @IsArray()
+  add_role_ids?: string[];
+
+  @ApiPropertyOptional({ example: ['436641bf-9448-4a90-a36f-a4ab7bed24e3'] })
+  @IsOptional()
+  @IsArray()
+  remove_role_ids?: string[];
 }
 
 export class ListRbacQueryDto {
@@ -137,15 +178,27 @@ export class ListRbacQueryDto {
   @IsString()
   group_by?: string;
 
-  @ApiPropertyOptional({ example: true })
+  @ApiPropertyOptional({ example: false })
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === 'true' || value === true || value === 1 || value === '1') return true;
-    if (value === 'false' || value === false || value === 0 || value === '0') return false;
-    return value;
+  @Transform(({ value, obj }) => {
+    const raw = value !== undefined ? value : obj?.isSystem;
+    if (raw === 'true' || raw === true || raw === 1 || raw === '1') return true;
+    if (raw === 'false' || raw === false || raw === 0 || raw === '0') return false;
+    return raw;
   })
   @IsBoolean()
   is_system?: boolean;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @Transform(({ value, obj }) => {
+    const raw = value !== undefined ? value : obj?.is_system;
+    if (raw === 'true' || raw === true || raw === 1 || raw === '1') return true;
+    if (raw === 'false' || raw === false || raw === 0 || raw === '0') return false;
+    return raw;
+  })
+  @IsBoolean()
+  isSystem?: boolean;
 }
 
 export class RolePermissionItemDto {
@@ -192,6 +245,9 @@ export class RoleResponseDto {
 
   @ApiPropertyOptional({ example: ['candidate.view'], type: [String] })
   permission_names?: string[];
+
+  @ApiPropertyOptional({ example: ['p0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'], type: [String] })
+  permission_ids?: string[];
 
   @ApiProperty({ example: '2026-09-29T12:00:00.000Z' })
   created_at: Date;
@@ -470,4 +526,195 @@ export class ClearDbResultDto {
 
   @ApiProperty({ example: { jupeb_registrations: 120, jupeb_biometric_captures: 95 } })
   cleared: Record<string, number>;
+}
+
+// ----------------------------------------------------
+// Audit Trail DTOs
+// ----------------------------------------------------
+
+export class AuditListQueryDto {
+  @ApiPropertyOptional({ example: 1, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ example: 20, default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  limit?: number = 20;
+
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  query?: string;
+
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  keyword?: string;
+
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  filter?: string;
+
+  @ApiPropertyOptional({ example: 'session.update' })
+  @IsOptional()
+  @IsString()
+  action?: string;
+
+  @ApiPropertyOptional({ example: 'sessions' })
+  @IsOptional()
+  @IsString()
+  resource_type?: string;
+
+  @ApiPropertyOptional({ example: 'sessions' })
+  @IsOptional()
+  @IsString()
+  resourceType?: string;
+
+  @ApiPropertyOptional({ example: 'admin' })
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @ApiPropertyOptional({ example: 'admin' })
+  @IsOptional()
+  @IsString()
+  actor_role?: string;
+
+  @ApiPropertyOptional({ example: 'admin' })
+  @IsOptional()
+  @IsString()
+  actorRole?: string;
+
+  @ApiPropertyOptional({ example: 'admin' })
+  @IsOptional()
+  @IsString()
+  user_role?: string;
+
+  @ApiPropertyOptional({ example: '436641bf-9448-4a90-a36f-a4ab7bed24e3' })
+  @IsOptional()
+  @IsString()
+  role_id?: string;
+
+  @ApiPropertyOptional({ example: 'sessions' })
+  @IsOptional()
+  @IsString()
+  resource?: string;
+
+  @ApiPropertyOptional({ example: 'sessions' })
+  @IsOptional()
+  @IsString()
+  module?: string;
+
+  @ApiPropertyOptional({ example: 'abd441c7-2ce4-4fc4-b61c-1224ae64de2e' })
+  @IsOptional()
+  @IsString()
+  resource_id?: string;
+
+  @ApiPropertyOptional({ example: 'abd441c7-2ce4-4fc4-b61c-1224ae64de2e' })
+  @IsOptional()
+  @IsString()
+  resourceId?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  admin_user_id?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  adminUserId?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  actor_user_id?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  actorUserId?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  user_id?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  university_id?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  universityId?: string;
+
+  @ApiPropertyOptional({ example: '5f323872-4e80-49e7-b9fd-4e20c56cbdf4' })
+  @IsOptional()
+  @IsString()
+  jupeb_university_id?: string;
+
+  @ApiPropertyOptional({ example: '2026-01-01' })
+  @IsOptional()
+  @IsString()
+  start_date?: string;
+
+  @ApiPropertyOptional({ example: '2026-01-01' })
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiPropertyOptional({ example: '2026-01-01' })
+  @IsOptional()
+  @IsString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-01-01' })
+  @IsOptional()
+  @IsString()
+  from_date?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsOptional()
+  @IsString()
+  end_date?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsOptional()
+  @IsString()
+  to?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsOptional()
+  @IsString()
+  to_date?: string;
 }
