@@ -8,15 +8,18 @@ const TRANSITIONS: Record<string, string[]> = {
     RegistrationStatus.PENDING_STUDENT_CONFIRM,
     RegistrationStatus.PENDING_DOCUMENTS,
     RegistrationStatus.PENDING_INSTITUTION_REVIEW,
+    RegistrationStatus.APPROVED,
     RegistrationStatus.WITHDRAWN,
   ],
   [RegistrationStatus.PENDING_STUDENT_CONFIRM]: [
     RegistrationStatus.PENDING_DOCUMENTS,
     RegistrationStatus.PENDING_INSTITUTION_REVIEW,
+    RegistrationStatus.APPROVED,
     RegistrationStatus.WITHDRAWN,
   ],
   [RegistrationStatus.PENDING_DOCUMENTS]: [
     RegistrationStatus.PENDING_INSTITUTION_REVIEW,
+    RegistrationStatus.APPROVED,
     RegistrationStatus.WITHDRAWN,
   ],
   [RegistrationStatus.PENDING_INSTITUTION_REVIEW]: [
@@ -24,15 +27,24 @@ const TRANSITIONS: Record<string, string[]> = {
     RegistrationStatus.REJECTED,
     RegistrationStatus.WITHDRAWN,
   ],
-  [RegistrationStatus.APPROVED]: [],
-  [RegistrationStatus.REJECTED]: [],
+  [RegistrationStatus.APPROVED]: [RegistrationStatus.WITHDRAWN],
+  [RegistrationStatus.REJECTED]: [RegistrationStatus.PENDING_INSTITUTION_REVIEW, RegistrationStatus.WITHDRAWN],
   [RegistrationStatus.WITHDRAWN]: [],
+  // Aliases and legacy states
+  submitted: [RegistrationStatus.APPROVED, RegistrationStatus.REJECTED, RegistrationStatus.WITHDRAWN],
+  pending: [RegistrationStatus.APPROVED, RegistrationStatus.REJECTED, RegistrationStatus.WITHDRAWN],
+  registered: [RegistrationStatus.APPROVED, RegistrationStatus.REJECTED, RegistrationStatus.WITHDRAWN],
 };
 
 @Injectable()
 export class RegistrationStateService {
   canTransition(from: string, to: string): boolean {
-    const next = TRANSITIONS[from];
-    return Array.isArray(next) && next.includes(to);
+    if (!from || !to) return false;
+    const normFrom = String(from).toLowerCase().trim();
+    const normTo = String(to).toLowerCase().trim();
+    if (normFrom === normTo) return true;
+    if (normTo === RegistrationStatus.WITHDRAWN) return true;
+    const next = TRANSITIONS[normFrom];
+    return Array.isArray(next) && next.includes(normTo);
   }
 }

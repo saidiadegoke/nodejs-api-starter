@@ -222,37 +222,131 @@ export class FinanceService {
     }
     if (query.session_id) {
       values.push(query.session_id);
-      conditions.push(`p.jupeb_session_id = $${values.length}`);
+      conditions.push(`(p.jupeb_session_id = $${values.length} OR r.session_id = $${values.length})`);
     }
     if (query.university_id) {
       values.push(query.university_id);
-      conditions.push(`p.jupeb_university_id = $${values.length}`);
+      conditions.push(`(p.jupeb_university_id = $${values.length} OR r.university_id = $${values.length})`);
     }
+
+    const rawItem = (query.payment_item || query.payment_item_id || '').trim();
+    if (rawItem) {
+      const lowerItem = rawItem.toLowerCase();
+      const isAffiliation = lowerItem === 'affiliation_fee' || lowerItem.includes('affiliation');
+      const isExam = lowerItem === 'examination_fee' || lowerItem === 'exam_fee' || lowerItem.includes('exam');
+
+      if (isAffiliation) {
+        conditions.push(`(
+          pi.code ILIKE '%affiliation%'
+          OR pi.fee_source = 'affiliation'
+          OR pi.name ILIKE '%affiliation%'
+          OR p.type ILIKE '%affiliation%'
+          OR p.payment_type ILIKE '%affiliation%'
+          OR (p.metadata->>'payment_item_code') ILIKE '%affiliation%'
+          OR (p.metadata->>'payment_item_key') ILIKE '%affiliation%'
+          OR (p.metadata->>'purpose') ILIKE '%affiliation%'
+        )`);
+      } else if (isExam) {
+        conditions.push(`(
+          pi.code ILIKE '%exam%'
+          OR pi.fee_source = 'examination'
+          OR pi.name ILIKE '%exam%'
+          OR p.type ILIKE '%exam%'
+          OR p.payment_type ILIKE '%exam%'
+          OR (p.metadata->>'payment_item_code') ILIKE '%exam%'
+          OR (p.metadata->>'payment_item_key') ILIKE '%exam%'
+          OR (p.metadata->>'purpose') ILIKE '%exam%'
+        )`);
+      } else if (UUID_REGEX.test(rawItem)) {
+        values.push(rawItem);
+        conditions.push(`(p.payment_item_id = $${values.length} OR pi.id = $${values.length})`);
+      } else {
+        values.push(`%${rawItem}%`);
+        const idx = values.length;
+        conditions.push(`(
+          pi.code ILIKE $${idx}
+          OR pi.name ILIKE $${idx}
+          OR p.type ILIKE $${idx}
+          OR p.payment_type ILIKE $${idx}
+          OR (p.metadata->>'payment_item_code') ILIKE $${idx}
+          OR (p.metadata->>'payment_item_key') ILIKE $${idx}
+        )`);
+      }
+    }
+
     if (query.q) {
       values.push(`%${query.q}%`);
-      conditions.push(`(p.payment_id ILIKE $${values.length} OR p.transaction_ref ILIKE $${values.length})`);
+      const idx = values.length;
+      conditions.push(`(
+        p.payment_id ILIKE $${idx}
+        OR p.transaction_ref ILIKE $${idx}
+        OR (p.metadata->>'description') ILIKE $${idx}
+        OR pi.name ILIKE $${idx}
+      )`);
     }
+
+    const fromClause = `
+      FROM payments p
+      LEFT JOIN payment_items pi ON pi.id = p.payment_item_id
+      LEFT JOIN payment_structures ps ON ps.id = p.payment_structure_id
+      LEFT JOIN jupeb_registrations r ON r.id = p.registration_id
+      LEFT JOIN users u ON u.id = p.user_id
+      LEFT JOIN jupeb_universities ju ON ju.id = COALESCE(p.jupeb_university_id, r.university_id)
+    `;
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const countRes = await this.dataSource.query(
-      `SELECT COUNT(*)::int as total FROM payments p ${where}`,
+      `SELECT COUNT(*)::int as total ${fromClause} ${where}`,
       values,
     );
     const total = countRes[0]?.total || 0;
 
     const rows = await this.dataSource.query(
-      `SELECT p.*, u.email as user_email, ju.name as university_name
-       FROM payments p
-       LEFT JOIN users u ON u.id = p.user_id
-       LEFT JOIN jupeb_universities ju ON ju.id = p.jupeb_university_id
+      `SELECT p.*,
+              pi.code as item_code, pi.name as item_name,
+              ps.code as structure_code, ps.name as structure_name,
+              u.email as user_email, ju.name as university_name
+       ${fromClause}
        ${where}
-       ORDER BY p.created_at DESC
+       ORDER BY COALESCE(p.paid_at, p.created_at) DESC
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       [...values, limit, offset],
     );
 
-    return { rows, page, limit, total };
+    const enriched = rows.map((p: any) => {
+      let paymentTypeObj = null;
+      if (p.item_name) {
+        paymentTypeObj = { code: p.item_code, name: p.item_name };
+      } else if (p.payment_type) {
+        paymentTypeObj = { code: p.payment_type, name: p.payment_type.replace(/_/g, ' ') };
+      } else if (p.type) {
+        paymentTypeObj = { code: p.type, name: p.type.replace(/_/g, ' ') };
+      }
+
+      return {
+        id: p.id,
+        payment_id: p.payment_id,
+        transaction_id: p.payment_id,
+        transaction_ref: p.transaction_ref,
+        payment_type: paymentTypeObj,
+        payment_item: p.item_name ? { code: p.item_code, name: p.item_name } : null,
+        payment_structure: p.structure_name ? { code: p.structure_code, name: p.structure_name } : null,
+        description: p.purpose || p.metadata?.description || null,
+        payment_method: p.payment_method,
+        amount: Number(p.amount),
+        currency: p.currency || 'NGN',
+        date: p.paid_at || p.created_at,
+        created_at: p.created_at,
+        paid_at: p.paid_at,
+        status: p.status,
+        user_email: p.user_email,
+        university_name: p.university_name,
+        metadata: p.metadata || {},
+      };
+    });
+
+    return { rows: enriched, page, limit, total };
   }
 
   async getPaymentSummary(registrationId: string, _actorUserId: string) {

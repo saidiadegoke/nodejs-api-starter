@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { RegistrationEntity, RegistrationStatus } from '../entities/registration.entity';
 
 export interface RegistrationListFilter {
@@ -19,6 +19,7 @@ export class RegistrationRepository {
   constructor(
     @InjectRepository(RegistrationEntity)
     private readonly repo: Repository<RegistrationEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findById(id: string): Promise<RegistrationEntity | null> {
@@ -136,20 +137,33 @@ export class RegistrationRepository {
 
   async setStatus(
     id: string,
-    status: RegistrationStatus,
+    status: RegistrationStatus | string,
     reason?: string | null,
     approvedBy?: string | null,
   ): Promise<RegistrationEntity | null> {
-    const updatePayload: Partial<RegistrationEntity> = {
-      status,
-      statusReason: reason || null,
-      updatedAt: new Date(),
-    };
-    if (status === RegistrationStatus.APPROVED) {
-      updatePayload.approvedAt = new Date();
-      updatePayload.approvedBy = approvedBy || null;
+    const isApproved = status === RegistrationStatus.APPROVED || status === 'approved';
+    if (isApproved) {
+      await this.dataSource.query(
+        `UPDATE jupeb_registrations
+         SET status = $1,
+             status_reason = $2,
+             approved_at = NOW(),
+             approved_by = $3,
+             dashboard_unlocked_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $4`,
+        [String(status), reason || null, approvedBy || null, id],
+      );
+    } else {
+      await this.dataSource.query(
+        `UPDATE jupeb_registrations
+         SET status = $1,
+             status_reason = $2,
+             updated_at = NOW()
+         WHERE id = $3`,
+        [String(status), reason || null, id],
+      );
     }
-    await this.repo.update(id, updatePayload);
     return this.findById(id);
   }
 

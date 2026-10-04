@@ -77,10 +77,12 @@ export interface MailConfig {
 export interface IntegrationsConfig {
   speedysms: {
     apiKey?: string;
+    signingSecret?: string;
     baseUrl?: string;
     ninTimeoutMs: number;
     smsTimeoutMs: number;
     senderId?: string;
+    provider?: string;
   };
   attendance: {
     baseUrl?: string;

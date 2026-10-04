@@ -11,6 +11,32 @@ function joinNonEmpty(parts: (string | null | undefined)[], sep: string): string
   return parts.filter((p): p is string => typeof p === 'string' && p.trim() !== '').join(sep) || null;
 }
 
+/**
+ * Request signing (SpeedySMS "signed requests" — docs/SIGNED_REQUESTS_DESIGN.md).
+ * Returns {} when SPEEDYSMS_SIGNING_SECRET is unset,
+ * else X-Timestamp / X-Nonce / X-Signature over a canonical string binding
+ * method + path + body + time + a single-use nonce.
+ */
+function signedHeaders(
+  method: string,
+  path: string,
+  bodyStr: string,
+  secret?: string,
+): Record<string, string> {
+  const s = String(secret || '').replace(/^["']|["']$/g, '').trim();
+  if (!s) return {};
+  const ts = Date.now().toString();
+  const nonce = crypto.randomUUID();
+  const bodyHash = crypto.createHash('sha256').update(bodyStr).digest('hex');
+  const canonical = [method.toUpperCase(), path, bodyHash, ts, nonce].join('\n');
+  const signature = crypto.createHmac('sha256', s).update(canonical).digest('hex');
+  return {
+    'X-Timestamp': ts,
+    'X-Nonce': nonce,
+    'X-Signature': signature,
+  };
+}
+
 function mapProfile(lookupResult: any) {
   const env = lookupResult && typeof lookupResult === 'object' ? lookupResult : {};
   const data = env.data && typeof env.data === 'object' ? env.data : {};
@@ -80,19 +106,35 @@ export class SpeedySmsNinProvider implements INinProvider {
   readonly name = 'speedysms';
 
   private get apiKey(): string {
-    return process.env.SPEEDYSMS_API_KEY || process.env.JUPEB_SPEEDYSMS_API_KEY || '';
+    return (
+      process.env.SPEEDYSMS_API_KEY ||
+      process.env.JUPEB_SPEEDYSMS_API_KEY ||
+      ''
+    ).replace(/^["']|["']$/g, '').trim();
+  }
+
+  private get signingSecret(): string {
+    return (
+      process.env.SPEEDYSMS_SIGNING_SECRET ||
+      process.env.JUPEB_SPEEDYSMS_SIGNING_SECRET ||
+      ''
+    ).replace(/^["']|["']$/g, '').trim();
   }
 
   private get baseUrl(): string {
     return (
       process.env.SPEEDYSMS_BASE_URL ||
+      process.env.SPEEDYSMS_API_BASE_URL ||
       process.env.JUPEB_SPEEDYSMS_BASE_URL ||
       DEFAULT_BASE_URL
     ).replace(/\/+$/, '');
   }
 
   private get timeoutMs(): number {
-    const raw = process.env.SPEEDYSMS_TIMEOUT_MS || process.env.JUPEB_SPEEDYSMS_TIMEOUT_MS;
+    const raw =
+      process.env.SPEEDYSMS_TIMEOUT_MS ||
+      process.env.SPEEDYSMS_NIN_TIMEOUT_MS ||
+      process.env.JUPEB_SPEEDYSMS_TIMEOUT_MS;
     const n = parseInt(String(raw), 10);
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
   }
@@ -114,23 +156,34 @@ export class SpeedySmsNinProvider implements INinProvider {
 
     const payload: Record<string, any> = {
       nin: normalizedNin,
-      idempotency_key: `reg-nin-${crypto.randomUUID()}`,
     };
-    if (options.provider) payload.provider = options.provider;
+    if (options.provider) payload.provider = String(options.provider);
     if (options.force_fresh) payload.force_fresh = true;
 
+    const url = `${this.baseUrl}/identity/nin`;
+    const bodyStr = JSON.stringify(payload);
+    let path = '/identity/nin';
     try {
-      const response = await axios.post(
-        `${this.baseUrl}/identity/nin`,
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: this.timeoutMs,
-        },
-      );
+      path = new URL(url).pathname;
+    } catch {
+      // keep default path
+    }
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...signedHeaders('POST', path, bodyStr, this.signingSecret),
+    };
+
+    try {
+      const response = await axios.post(url, bodyStr, {
+        headers,
+        timeout: this.timeoutMs,
+      });
+
+      console.log('response', response);
+      console.info('response', response);
 
       const body = response.data;
       const data = body?.data ?? body;

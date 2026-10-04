@@ -49,21 +49,39 @@ export class RbacController {
   @ApiOperation({ summary: 'Create a role', description: 'Creates a new custom role and optionally attaches permissions.' })
   @ApiCreatedResponse({ type: RoleResponseDto })
   async createRole(@Body() dto: CreateRoleDto, @Req() req: any) {
-    return this.rbacService.createRole(dto, req.user?.user_id);
+    const role = await this.rbacService.createRole(dto, req.user?.user_id);
+    return {
+      success: true,
+      message: 'Role created successfully',
+      data: role,
+      ...role,
+    };
   }
 
   @Get('roles/:roleId')
   @ApiOperation({ summary: 'Get role by ID', description: 'Returns a single role with its attached permission names.' })
   @ApiOkResponse({ type: RoleResponseDto })
   async getRole(@Param('roleId') roleId: string) {
-    return this.rbacService.getRole(roleId);
+    const role = await this.rbacService.getRole(roleId);
+    return {
+      success: true,
+      message: 'Role retrieved successfully',
+      data: role,
+      ...role,
+    };
   }
 
   @Patch('roles/:roleId')
   @ApiOperation({ summary: 'Patch role', description: 'Updates display_name, description, status, or replaces permission set.' })
   @ApiOkResponse({ type: RoleResponseDto })
   async patchRole(@Param('roleId') roleId: string, @Body() dto: PatchRoleDto) {
-    return this.rbacService.patchRole(roleId, dto);
+    const role = await this.rbacService.patchRole(roleId, dto);
+    return {
+      success: true,
+      message: 'Role updated successfully',
+      data: role,
+      ...role,
+    };
   }
 
   @Delete('roles/:roleId')
