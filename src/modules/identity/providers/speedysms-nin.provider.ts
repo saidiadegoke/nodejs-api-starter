@@ -23,12 +23,12 @@ function signedHeaders(
   bodyStr: string,
   secret?: string,
 ): Record<string, string> {
-  const s = String(secret || '').trim();
+  const s = String(secret || '').replace(/^["']|["']$/g, '').trim();
   if (!s) return {};
   const ts = Date.now().toString();
   const nonce = crypto.randomUUID();
   const bodyHash = crypto.createHash('sha256').update(bodyStr).digest('hex');
-  const canonical = [method, path, bodyHash, ts, nonce].join('\n');
+  const canonical = [method.toUpperCase(), path, bodyHash, ts, nonce].join('\n');
   const signature = crypto.createHmac('sha256', s).update(canonical).digest('hex');
   return {
     'X-Timestamp': ts,
@@ -110,7 +110,7 @@ export class SpeedySmsNinProvider implements INinProvider {
       process.env.SPEEDYSMS_API_KEY ||
       process.env.JUPEB_SPEEDYSMS_API_KEY ||
       ''
-    );
+    ).replace(/^["']|["']$/g, '').trim();
   }
 
   private get signingSecret(): string {
@@ -118,7 +118,7 @@ export class SpeedySmsNinProvider implements INinProvider {
       process.env.SPEEDYSMS_SIGNING_SECRET ||
       process.env.JUPEB_SPEEDYSMS_SIGNING_SECRET ||
       ''
-    );
+    ).replace(/^["']|["']$/g, '').trim();
   }
 
   private get baseUrl(): string {
@@ -156,9 +156,8 @@ export class SpeedySmsNinProvider implements INinProvider {
 
     const payload: Record<string, any> = {
       nin: normalizedNin,
-      idempotency_key: `reg-nin-${crypto.randomUUID()}`,
     };
-    if (options.provider) payload.provider = options.provider;
+    if (options.provider) payload.provider = String(options.provider);
     if (options.force_fresh) payload.force_fresh = true;
 
     const url = `${this.baseUrl}/identity/nin`;
@@ -178,7 +177,7 @@ export class SpeedySmsNinProvider implements INinProvider {
     };
 
     try {
-      const response = await axios.post(url, payload, {
+      const response = await axios.post(url, bodyStr, {
         headers,
         timeout: this.timeoutMs,
       });
