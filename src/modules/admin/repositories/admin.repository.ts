@@ -50,8 +50,9 @@ export class AdminRepository {
     if (query.status) {
       qb.andWhere('r.status = :status', { status: query.status });
     }
-    if (query.is_system !== undefined) {
-      qb.andWhere('r.is_system = :is_system', { is_system: query.is_system });
+    const isSystemFilter = query.is_system !== undefined ? query.is_system : query.isSystem;
+    if (isSystemFilter !== undefined) {
+      qb.andWhere('r.is_system = :is_system', { is_system: isSystemFilter });
     }
 
     qb.orderBy('r.is_system', 'DESC')
@@ -209,22 +210,73 @@ export class AdminRepository {
     return rows;
   }
 
-  async setUserRoles(userId: string, roleNames: string[], actorUserId?: string | null): Promise<void> {
+  async setUserRoles(
+    userId: string,
+    options: {
+      roles?: string[];
+      roleIds?: string[];
+      add?: string[];
+      remove?: string[];
+    },
+    actorUserId?: string | null,
+  ): Promise<void> {
+    const rawRoles = options.roles || options.roleIds;
+    const rawAdd = options.add;
+    const rawRemove = options.remove;
+
     await this.dataSource.transaction(async (manager) => {
-      await manager.query(`DELETE FROM user_roles WHERE user_id = $1`, [userId]);
-      if (!roleNames.length) return;
+      // 1. Full replacement mode
+      if (rawRoles !== undefined) {
+        await manager.query(`DELETE FROM user_roles WHERE user_id = $1`, [userId]);
+        if (rawRoles.length > 0) {
+          const stringTokens = rawRoles.map((r) => String(r).trim()).filter(Boolean);
+          if (stringTokens.length > 0) {
+            const roles = await manager.query(
+              `SELECT id, name FROM roles WHERE name = ANY($1) OR id::text = ANY($1)`,
+              [stringTokens],
+            );
+            for (const role of roles) {
+              await manager.query(
+                `INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
+                 VALUES ($1, $2, $3, NOW()) ON CONFLICT (user_id, role_id) DO NOTHING`,
+                [userId, role.id, actorUserId || null],
+              );
+            }
+          }
+        }
+      }
 
-      const roles = await manager.query(
-        `SELECT id, name FROM roles WHERE name = ANY($1)`,
-        [roleNames],
-      );
+      // 2. Incremental remove
+      if (rawRemove && rawRemove.length > 0) {
+        const removeTokens = rawRemove.map((r) => String(r).trim()).filter(Boolean);
+        if (removeTokens.length > 0) {
+          await manager.query(
+            `DELETE FROM user_roles
+             WHERE user_id = $1
+               AND role_id IN (
+                 SELECT id FROM roles WHERE name = ANY($2) OR id::text = ANY($2)
+               )`,
+            [userId, removeTokens],
+          );
+        }
+      }
 
-      for (const role of roles) {
-        await manager.query(
-          `INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
-           VALUES ($1, $2, $3, NOW()) ON CONFLICT (user_id, role_id) DO NOTHING`,
-          [userId, role.id, actorUserId || null],
-        );
+      // 3. Incremental add
+      if (rawAdd && rawAdd.length > 0) {
+        const addTokens = rawAdd.map((r) => String(r).trim()).filter(Boolean);
+        if (addTokens.length > 0) {
+          const roles = await manager.query(
+            `SELECT id, name FROM roles WHERE name = ANY($1) OR id::text = ANY($1)`,
+            [addTokens],
+          );
+          for (const role of roles) {
+            await manager.query(
+              `INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
+               VALUES ($1, $2, $3, NOW()) ON CONFLICT (user_id, role_id) DO NOTHING`,
+              [userId, role.id, actorUserId || null],
+            );
+          }
+        }
       }
     });
   }

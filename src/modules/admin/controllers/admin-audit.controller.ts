@@ -16,23 +16,7 @@ import {
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../../utils';
 import { AdminAuditService, AuditListFilters } from '../services/admin-audit.service';
-
-// ── Query DTO (re-use inline — the filters are simple query strings) ────────
-
-class AuditListQueryDto {
-  admin_user_id?: string;
-  actor_user_id?: string;
-  action?: string;
-  resource_type?: string;
-  resource_id?: string;
-  university_id?: string;
-  jupeb_university_id?: string;
-  start_date?: string;
-  end_date?: string;
-  q?: string;
-  page?: number;
-  limit?: number;
-}
+import { AuditListQueryDto } from '../dto';
 
 @ApiTags('Admin Audit Trail')
 @Controller(['audit', 'admin/audit'])

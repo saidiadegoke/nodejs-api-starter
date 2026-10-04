@@ -577,14 +577,25 @@ export class RegistrationService {
   /**
    * Get registration breakdown aggregated by university.
    */
-  async getRegistrationsByUniversity(query: { session_id?: string; limit?: number }, _userId?: string | null) {
+  async getRegistrationsByUniversity(
+    query: { session_id?: string; university_id?: string; limit?: number },
+    _userId?: string | null,
+  ) {
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
     const params: any[] = [];
-    let sessionClause = '';
+    const universityFilters: string[] = ['u.deleted_at IS NULL'];
+    let sessionJoinClause = '';
+
     if (query.session_id) {
       params.push(query.session_id);
-      sessionClause = `AND r.session_id = $1`;
+      sessionJoinClause = ` AND r.session_id = $${params.length}`;
     }
+
+    if (query.university_id) {
+      params.push(query.university_id);
+      universityFilters.push(`u.id = $${params.length}`);
+    }
+
     params.push(limit);
     const limitIdx = params.length;
 
@@ -610,10 +621,10 @@ export class RegistrationService {
         COUNT(r.id)::int AS total_candidates,
         COUNT(r.id)::int AS registered_count,
         COUNT(r.id)::int AS enrolled_count,
-        COUNT(CASE WHEN r.status = '${RegistrationStatus.APPROVED}' THEN 1 END)::int AS approved_candidates
+        COUNT(CASE WHEN r.status = 'approved' THEN 1 END)::int AS approved_candidates
        FROM jupeb_universities u
-       LEFT JOIN jupeb_registrations r ON r.university_id = u.id ${sessionClause}
-       WHERE u.deleted_at IS NULL
+       LEFT JOIN jupeb_registrations r ON r.university_id = u.id${sessionJoinClause}
+       WHERE ${universityFilters.join(' AND ')}
        GROUP BY u.id, u.name, u.code, u.short_name, u.university_type, u.email, u.phone, u.jupeb_prefix, u.status, u.expected_candidate_count
        ORDER BY total_candidates DESC, u.name ASC
        LIMIT $${limitIdx}`,
