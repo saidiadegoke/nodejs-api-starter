@@ -241,10 +241,23 @@ export class SessionsController {
     );
   }
 
-  @Put(["sessions/:sessionId/university-locks"])
+  @Put([
+    "sessions/:sessionId/university-locks",
+    "sessions/:sessionId/registration-lock",
+    "catalog/sessions/:sessionId/university-locks",
+    "catalog/sessions/:sessionId/registration-lock",
+  ])
   @Patch([
     "sessions/:sessionId/university-locks",
     "sessions/:sessionId/registration-lock",
+    "catalog/sessions/:sessionId/university-locks",
+    "catalog/sessions/:sessionId/registration-lock",
+  ])
+  @Post([
+    "sessions/:sessionId/university-locks",
+    "sessions/:sessionId/registration-lock",
+    "catalog/sessions/:sessionId/university-locks",
+    "catalog/sessions/:sessionId/registration-lock",
   ])
   @RequirePermission("sessions.update")
   @ApiOperation({

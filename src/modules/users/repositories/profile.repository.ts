@@ -27,7 +27,17 @@ const PROFILE_SELECT = `
   p.educational_level,
   p.employment_status,
   p.profile_completed,
-  p.jupeb_university_id
+  p.jupeb_university_id,
+  ju.id as university_id,
+  ju.code as university_code,
+  ju.name as university_name,
+  ju.short_name as university_short_name,
+  ju.jupeb_prefix,
+  ju.email as university_email,
+  ju.phone as university_phone,
+  ju.address as university_address,
+  ju.expected_candidate_count,
+  ju.university_type
 `;
 
 @Injectable()
@@ -44,6 +54,7 @@ export class ProfileRepository {
       FROM users u
       LEFT JOIN profiles p ON u.id = p.user_id
       LEFT JOIN countries c ON p.country_id = c.id
+      LEFT JOIN jupeb_universities ju ON ju.id = p.jupeb_university_id AND ju.deleted_at IS NULL
       WHERE u.id = $1
     `;
     const res = await this.dataSource.query(query, [userId]);

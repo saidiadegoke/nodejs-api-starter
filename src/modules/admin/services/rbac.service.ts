@@ -35,20 +35,21 @@ export class RbacService {
       display_name: p.description || p.name,
       module: p.resource || (p.name ? p.name.split('.')[0] : 'general'),
       description: p.description || null,
-      created_at: p.createdAt,
+      created_at: p.createdAt || p.created_at,
     }));
 
     return {
       id: role.id,
       name: role.name,
-      display_name: role.displayName || null,
+      display_name: role.displayName || role.display_name || null,
       description: role.description || null,
-      is_system: role.isSystem,
+      is_system: role.isSystem ?? role.is_system ?? false,
       status: role.status,
       permissions: permissionObjects,
       permission_names: perms.map((p) => p.name),
-      created_at: role.createdAt,
-      updated_at: role.updatedAt || role.createdAt,
+      permission_ids: perms.map((p) => p.id),
+      created_at: role.createdAt || role.created_at,
+      updated_at: role.updatedAt || role.updated_at || role.createdAt || role.created_at,
     };
   }
 
@@ -61,6 +62,8 @@ export class RbacService {
       rolesWithPerms.push(this.formatRole(r, perms));
     }
 
+    const totalPages = Math.ceil(res.total / (res.limit || 20)) || 1;
+
     return {
       success: true,
       message: 'Roles retrieved successfully',
@@ -69,10 +72,14 @@ export class RbacService {
       total: res.total,
       page: res.page,
       limit: res.limit,
+      total_pages: totalPages,
+      totalPages,
       pagination: {
         page: res.page,
         limit: res.limit,
         total: res.total,
+        totalPages,
+        total_pages: totalPages,
       },
     };
   }
@@ -87,11 +94,12 @@ export class RbacService {
 
   private async resolvePermission(identifier: any) {
     if (!identifier) return null;
-    const val =
-      typeof identifier === 'string'
-        ? identifier.trim()
-        : identifier.id || identifier.name || identifier.permission_id;
+    let val = identifier;
+    if (typeof identifier === 'object') {
+      val = identifier.id || identifier.name || identifier.permission_id;
+    }
     if (!val || typeof val !== 'string') return null;
+    val = val.trim();
 
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
@@ -99,7 +107,14 @@ export class RbacService {
       const byId = await this.adminRepo.findPermissionById(val);
       if (byId) return byId;
     }
-    return this.adminRepo.findPermissionByName(val);
+    const byName = await this.adminRepo.findPermissionByName(val);
+    if (byName) return byName;
+
+    const rows = await (this.adminRepo as any).dataSource.query(
+      `SELECT * FROM permissions WHERE id::text = $1 OR name = $1 OR name ILIKE $1 LIMIT 1`,
+      [val],
+    );
+    return rows[0] || null;
   }
 
   async createRole(dto: CreateRoleDto, userId?: string | null): Promise<RoleResponseDto> {
@@ -276,7 +291,30 @@ export class RbacService {
   }
 
   async setUserRoles(userId: string, dto: SetUserRolesDto, actorUserId?: string | null) {
-    await this.adminRepo.setUserRoles(userId, dto.roles, actorUserId);
-    return this.adminRepo.getUserRoles(userId);
+    const roles = dto.roles;
+    const roleIds = dto.role_ids || dto.roleIds;
+    const add = dto.add || dto.add_roles || dto.add_role_ids;
+    const remove = dto.remove || dto.remove_roles || dto.remove_role_ids;
+
+    await this.adminRepo.setUserRoles(
+      userId,
+      {
+        roles,
+        roleIds,
+        add,
+        remove,
+      },
+      actorUserId,
+    );
+
+    const userRoles = await this.adminRepo.getUserRoles(userId);
+    return {
+      success: true,
+      message: 'User roles updated successfully',
+      data: userRoles,
+      roles: userRoles,
+      role_names: userRoles.map((r) => r.name),
+      role_ids: userRoles.map((r) => r.id),
+    };
   }
 }

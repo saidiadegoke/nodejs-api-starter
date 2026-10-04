@@ -837,13 +837,15 @@ class FinanceService {
       const item = isUuid(itemRef)
         ? await paymentItemModel.findById(itemRef)
         : await paymentItemModel.findByCode(itemRef);
-      if (!item) throw httpError(404, 'Payment item not found');
-      paymentItemId = item.id;
+      if (item) {
+        paymentItemId = item.id;
+      }
     }
 
     const { rows, total } = await paymentModel.findInstitutionPayments({
       university_id: universityId,
-      session_id: session.id,
+      session_id: session?.id || null,
+      payment_item: itemRef || null,
       payment_item_id: paymentItemId,
       status: query.status || null,
       q: query.q ? String(query.q).trim() : null,
