@@ -119,7 +119,14 @@ export class RegistrationController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.updateRegistration(registrationId, dto, userId);
+    const result = await this.registrationService.updateRegistration(registrationId, dto, userId);
+    return {
+      success: true,
+      message: 'Registration updated successfully',
+      data: result,
+      registration: result,
+      ...result,
+    };
   }
 
   @Patch('institution/registrations/:registrationId/candidate')
@@ -134,7 +141,14 @@ export class RegistrationController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.updateCandidateProfile(registrationId, dto, userId);
+    const result = await this.registrationService.updateCandidateProfile(registrationId, dto, userId);
+    return {
+      success: true,
+      message: 'Candidate updated successfully',
+      data: result,
+      registration: result,
+      ...result,
+    };
   }
 
   @Post('institution/registrations/:registrationId/resend-code')
@@ -228,7 +242,14 @@ export class RegistrationController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getRegistrationById(registrationId, userId);
+    const result = await this.registrationService.getRegistrationById(registrationId, userId);
+    return {
+      success: true,
+      message: 'Candidate detail retrieved successfully',
+      data: result,
+      registration: result,
+      ...result,
+    };
   }
 
   @Get('institution/overview/stats')
@@ -278,7 +299,13 @@ export class RegistrationController {
     @Req() req: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.batchUpdateRegistrationStatus(dto, userId);
+    const result = await this.registrationService.batchUpdateRegistrationStatus(dto, userId);
+    return {
+      success: true,
+      message: `Batch ${dto.action || 'action'} completed`,
+      data: result,
+      ...result,
+    };
   }
 
   @Post('institution/registrations/:registrationId/approve')

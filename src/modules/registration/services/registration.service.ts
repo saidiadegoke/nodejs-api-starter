@@ -352,6 +352,20 @@ export class RegistrationService {
       candidate: candidateObj,
       basic_information: candidateObj,
       demographics: candidateObj,
+      subject_combination: row.subject_combination_id
+        ? {
+            id: row.subject_combination_id,
+            code: row.subject_combination_code || '-',
+            title: row.subject_combination_title || row.subject_combination_code || '-',
+          }
+        : null,
+      subjectCombination: row.subject_combination_id
+        ? {
+            id: row.subject_combination_id,
+            code: row.subject_combination_code || '-',
+            title: row.subject_combination_title || row.subject_combination_code || '-',
+          }
+        : null,
       next_of_kin: nextOfKin,
       result_entries: resultRows,
       results_by_examination: resultsByExam,
@@ -447,35 +461,54 @@ export class RegistrationService {
   }
 
   /**
-   * Update registration fields (subject combination, institution code, status reason).
+   * Update registration fields (subject combination, institution code, status, status reason).
    */
   async updateRegistration(
     registrationId: string,
     dto: PatchRegistrationDto,
     _userId?: string | null,
-  ): Promise<RegistrationEntity> {
+  ): Promise<any> {
     const existing = await this.regRepo.findById(registrationId);
     if (!existing) throw new NotFoundException('Registration not found');
 
-    const fields: Partial<RegistrationEntity> = {};
-    if (dto.subject_combination_id !== undefined) fields.subjectCombinationId = dto.subject_combination_id;
-    if (dto.institution_issued_code !== undefined) fields.institutionIssuedCode = dto.institution_issued_code;
-    if (dto.status_reason !== undefined) fields.statusReason = dto.status_reason;
+    const subjectCombId = dto.subject_combination_id || dto.subjectCombinationId;
+    const instCode = dto.institution_issued_code || dto.institutionIssuedCode;
+    const reason = dto.status_reason || dto.statusReason;
+    const targetStatus = dto.status ? String(dto.status).toLowerCase().trim() : undefined;
 
-    const updated = await this.regRepo.updateById(registrationId, fields);
+    if (targetStatus && targetStatus !== existing.status) {
+      await this.regRepo.setStatus(registrationId, targetStatus, reason, _userId);
+      await this.historyRepo.create({
+        registrationId,
+        fromStatus: existing.status,
+        toStatus: targetStatus,
+        reason: reason || 'Updated by admin',
+        changedBy: _userId || registrationId,
+      });
+    }
+
+    const fields: Partial<RegistrationEntity> = {};
+    if (subjectCombId !== undefined) fields.subjectCombinationId = subjectCombId;
+    if (instCode !== undefined) fields.institutionIssuedCode = instCode;
+    if (reason !== undefined) fields.statusReason = reason;
+
+    if (Object.keys(fields).length) {
+      await this.regRepo.updateById(registrationId, fields);
+    }
 
     // Emit in-memory event for instant single candidate sync to CRMS & Attendance
     this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
       registrationId,
       userId: _userId,
-      data: fields,
+      data: { ...fields, status: targetStatus },
     });
 
-    return updated!;
+    const enriched = await this.getRegistrationById(registrationId, _userId).catch(() => existing);
+    return enriched;
   }
 
   /**
-   * Update candidate profile details (names, gender, contact information).
+   * Update candidate profile details (names, gender, contact information, subject combination, NoK, documents).
    */
   async updateCandidateProfile(
     registrationId: string,
@@ -484,40 +517,139 @@ export class RegistrationService {
   ) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
-    if (!reg.userId) throw new UnprocessableEntityException('Registration does not have a linked user profile yet');
 
-    const profileFields: Record<string, any> = {};
-    if (dto.first_name) profileFields.first_name = dto.first_name.trim();
-    if (dto.last_name) profileFields.last_name = dto.last_name.trim();
-    if (dto.gender) profileFields.gender = dto.gender.trim();
-    if (dto.date_of_birth) profileFields.date_of_birth = dto.date_of_birth;
-    if (dto.state_of_origin) profileFields.state_of_origin = dto.state_of_origin;
-    if (dto.lga) profileFields.lga = dto.lga;
-    if (dto.residential_address) profileFields.residential_address = dto.residential_address;
+    const info = dto.info && typeof dto.info === 'object' ? dto.info : {};
+    const subjectCombId =
+      dto.subject_combination_id ||
+      dto.subjectCombinationId ||
+      info.subject_combination_id ||
+      info.subjectCombinationId;
+    const instCode =
+      dto.institution_issued_code ||
+      dto.institutionIssuedCode ||
+      info.institution_issued_code ||
+      info.institutionIssuedCode;
 
-    if (Object.keys(profileFields).length) {
-      const sets = Object.keys(profileFields).map((k, i) => `${k} = $${i + 2}`).join(', ');
+    const firstName = dto.first_name || dto.firstName || info.first_name || info.firstName;
+    const lastName = dto.last_name || dto.lastName || info.last_name || info.lastName;
+    const middleName = dto.middle_name || dto.middleName || info.middle_name || info.middleName;
+    const title = dto.title || info.title;
+    const gender = dto.gender || info.gender;
+    const dateOfBirth = dto.date_of_birth || dto.dateOfBirth || dto.dob || info.date_of_birth || info.dateOfBirth || info.dob;
+    const stateOfOrigin = dto.state_of_origin || dto.stateOfOrigin || info.state_of_origin || info.stateOfOrigin;
+    const lga = dto.lga || info.lga;
+    const residentialAddress = dto.residential_address || dto.residentialAddress || dto.address || info.residential_address || info.residentialAddress || info.address;
+    const placeOfBirth = dto.place_of_birth || dto.placeOfBirth || info.place_of_birth || info.placeOfBirth;
+    const email = dto.email || info.email ? String(dto.email || info.email).trim() : undefined;
+    const phone = dto.phone || info.phone ? String(dto.phone || info.phone).trim() : undefined;
+    const nok = dto.next_of_kin || dto.nextOfKin || info.next_of_kin || info.nextOfKin;
+    const docs = dto.documents || info.documents;
+
+    // 1. Update registration record fields (e.g. subject_combination_id, institution_issued_code)
+    const regSets: string[] = [];
+    const regVals: any[] = [];
+    if (subjectCombId) {
+      regVals.push(subjectCombId);
+      regSets.push(`subject_combination_id = $${regVals.length}`);
+    }
+    if (instCode) {
+      regVals.push(instCode);
+      regSets.push(`institution_issued_code = $${regVals.length}`);
+    }
+    if (regSets.length) {
+      regVals.push(registrationId);
       await this.dataSource.query(
-        `UPDATE profiles SET ${sets}, updated_at = NOW() WHERE user_id = $1`,
-        [reg.userId, ...Object.values(profileFields)],
+        `UPDATE jupeb_registrations SET ${regSets.join(', ')}, updated_at = NOW() WHERE id = $${regVals.length}`,
+        regVals,
       );
     }
 
-    if (dto.email || dto.phone) {
-      const userSets: string[] = [];
-      const userVals: any[] = [reg.userId];
-      if (dto.email) {
-        userSets.push(`email = $${userVals.length + 1}`);
-        userVals.push(dto.email.trim());
+    // 2. Update user profile and contact details
+    if (reg.userId) {
+      const profileFields: Record<string, any> = {};
+      if (firstName) profileFields.first_name = String(firstName).trim();
+      if (lastName) profileFields.last_name = String(lastName).trim();
+      if (middleName) profileFields.middle_name = String(middleName).trim();
+      if (title) profileFields.title = String(title).trim();
+      if (gender) profileFields.gender = String(gender).trim();
+      if (dateOfBirth) profileFields.date_of_birth = dateOfBirth;
+      if (stateOfOrigin) profileFields.state_of_origin = String(stateOfOrigin).trim();
+      if (lga) profileFields.lga = String(lga).trim();
+      if (residentialAddress) profileFields.residential_address = String(residentialAddress).trim();
+      if (placeOfBirth) profileFields.place_of_birth = String(placeOfBirth).trim();
+
+      if (Object.keys(profileFields).length) {
+        const sets = Object.keys(profileFields).map((k, i) => `${k} = $${i + 2}`).join(', ');
+        await this.dataSource.query(
+          `UPDATE profiles SET ${sets}, updated_at = NOW() WHERE user_id = $1`,
+          [reg.userId, ...Object.values(profileFields)],
+        );
       }
-      if (dto.phone) {
-        userSets.push(`phone = $${userVals.length + 1}`);
-        userVals.push(dto.phone.trim());
+
+      if (email || phone) {
+        const userSets: string[] = [];
+        const userVals: any[] = [reg.userId];
+        if (email) {
+          userSets.push(`email = $${userVals.length + 1}`);
+          userVals.push(email);
+        }
+        if (phone) {
+          userSets.push(`phone = $${userVals.length + 1}`);
+          userVals.push(phone);
+        }
+        await this.dataSource.query(
+          `UPDATE users SET ${userSets.join(', ')}, updated_at = NOW() WHERE id = $1`,
+          userVals,
+        );
       }
-      await this.dataSource.query(
-        `UPDATE users SET ${userSets.join(', ')}, updated_at = NOW() WHERE id = $1`,
-        userVals,
-      );
+    }
+
+    // 3. Update Next of Kin
+    if (nok && typeof nok === 'object') {
+      const nokName =
+        nok.name ||
+        [nok.first_name || nok.firstName, nok.last_name || nok.lastName].filter(Boolean).join(' ') ||
+        nok.full_name;
+      const nokRel = nok.relationship || nok.relation || 'Guardian';
+      const nokPhone = nok.phone || nok.telephone || nok.contact || nok.nok_phone;
+      const nokEmail = nok.email || nok.nok_email;
+      const nokAddress = nok.address || nok.nok_address;
+
+      if (nokName || nokPhone || nokEmail || nokAddress) {
+        await this.dataSource
+          .query(
+            `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'institution', NOW(), NOW())
+             ON CONFLICT (registration_id) DO UPDATE
+             SET name = EXCLUDED.name, relationship = EXCLUDED.relationship, phone = EXCLUDED.phone, email = EXCLUDED.email, address = EXCLUDED.address, updated_at = NOW()`,
+            [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null],
+          )
+          .catch(async () => {
+            await this.dataSource
+              .query(
+                `UPDATE jupeb_next_of_kin SET name = $2, relationship = $3, phone = $4, email = $5, address = $6, updated_at = NOW() WHERE registration_id = $1`,
+                [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null],
+              )
+              .catch(() => {});
+          });
+      }
+    }
+
+    // 4. Update documents if attached
+    if (Array.isArray(docs) && docs.length) {
+      for (const d of docs) {
+        if (d && (d.requirement_id || d.requirementId || d.file_id || d.fileId)) {
+          await this.docRepo
+            .create({
+              registrationId,
+              requirementId: d.requirement_id || d.requirementId,
+              fileId: d.file_id || d.fileId,
+              source: d.source || 'institution',
+              sitting: d.sitting || 1,
+            })
+            .catch(() => {});
+        }
+      }
     }
 
     // Emit in-memory event for instant single candidate sync to CRMS & Attendance
@@ -527,7 +659,7 @@ export class RegistrationService {
       data: dto,
     });
 
-    return this.getRegistrationById(registrationId);
+    return this.getRegistrationById(registrationId, _userId);
   }
 
   /**
@@ -555,7 +687,7 @@ export class RegistrationService {
       throw new ConflictException('Approved registration cannot be deleted');
     }
 
-    await this.regRepo.setStatus(registrationId, RegistrationStatus.WITHDRAWN, 'Deleted by admin', userId);
+    const updated = await this.regRepo.setStatus(registrationId, RegistrationStatus.WITHDRAWN, 'Deleted by admin', userId);
     await this.historyRepo.create({
       registrationId,
       fromStatus: reg.status,
@@ -564,7 +696,17 @@ export class RegistrationService {
       changedBy: userId || registrationId,
     });
 
-    return { success: true, message: 'Registration withdrawn' };
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
+
+    return {
+      success: true,
+      message: 'Registration withdrawn',
+      data: enriched,
+      registration: enriched,
+      status: RegistrationStatus.WITHDRAWN,
+      id: registrationId,
+      ...enriched,
+    };
   }
 
   /**
@@ -811,6 +953,18 @@ export class RegistrationService {
     if (!reg) throw new NotFoundException('Registration not found');
 
     if (!this.stateService.canTransition(reg.status, RegistrationStatus.APPROVED)) {
+      if (reg.status === RegistrationStatus.APPROVED) {
+        const enriched = await this.getRegistrationById(registrationId, userId).catch(() => reg);
+        return {
+          success: true,
+          message: 'Registration already approved',
+          data: enriched,
+          registration: enriched,
+          status: RegistrationStatus.APPROVED,
+          id: registrationId,
+          ...enriched,
+        };
+      }
       throw new UnprocessableEntityException(`Cannot approve registration in status ${reg.status}`);
     }
 
@@ -843,8 +997,21 @@ export class RegistrationService {
       changedBy: userId || registrationId,
     });
 
-    await this.eventsService.emitRegistrationApproved(updated!, userId);
-    return updated;
+    if (updated) {
+      await this.eventsService.emitRegistrationApproved(updated, userId);
+    }
+
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
+
+    return {
+      success: true,
+      message: 'Registration approved',
+      data: enriched,
+      registration: enriched,
+      status: RegistrationStatus.APPROVED,
+      id: registrationId,
+      ...enriched,
+    };
   }
 
   /**
@@ -855,19 +1022,42 @@ export class RegistrationService {
     if (!reg) throw new NotFoundException('Registration not found');
 
     if (!this.stateService.canTransition(reg.status, RegistrationStatus.REJECTED)) {
+      if (reg.status === RegistrationStatus.REJECTED) {
+        const enriched = await this.getRegistrationById(registrationId, userId).catch(() => reg);
+        return {
+          success: true,
+          message: 'Registration already rejected',
+          data: enriched,
+          registration: enriched,
+          status: RegistrationStatus.REJECTED,
+          id: registrationId,
+          ...enriched,
+        };
+      }
       throw new UnprocessableEntityException(`Cannot reject registration in status ${reg.status}`);
     }
 
-    const updated = await this.regRepo.setStatus(registrationId, RegistrationStatus.REJECTED, body?.reason, userId);
+    const reason = body?.reason || 'Rejected by institution admin';
+    const updated = await this.regRepo.setStatus(registrationId, RegistrationStatus.REJECTED, reason, userId);
     await this.historyRepo.create({
       registrationId,
       fromStatus: reg.status,
       toStatus: RegistrationStatus.REJECTED,
-      reason: body?.reason || 'Rejected by institution admin',
+      reason,
       changedBy: userId || registrationId,
     });
 
-    return updated;
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
+
+    return {
+      success: true,
+      message: 'Registration rejected',
+      data: enriched,
+      registration: enriched,
+      status: RegistrationStatus.REJECTED,
+      id: registrationId,
+      ...enriched,
+    };
   }
 
   /**
@@ -877,16 +1067,27 @@ export class RegistrationService {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
-    const updated = await this.regRepo.setStatus(registrationId, RegistrationStatus.WITHDRAWN, body?.reason, userId);
+    const reason = body?.reason || 'Withdrawn by institution admin';
+    const updated = await this.regRepo.setStatus(registrationId, RegistrationStatus.WITHDRAWN, reason, userId);
     await this.historyRepo.create({
       registrationId,
       fromStatus: reg.status,
       toStatus: RegistrationStatus.WITHDRAWN,
-      reason: body?.reason || 'Withdrawn by institution admin',
+      reason,
       changedBy: userId || registrationId,
     });
 
-    return updated;
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
+
+    return {
+      success: true,
+      message: 'Registration withdrawn',
+      data: enriched,
+      registration: enriched,
+      status: RegistrationStatus.WITHDRAWN,
+      id: registrationId,
+      ...enriched,
+    };
   }
 
   /**
