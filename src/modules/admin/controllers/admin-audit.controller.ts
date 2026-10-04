@@ -55,7 +55,7 @@ export class AdminAuditController {
       query as AuditListFilters,
       req.user?.user_id,
     );
-    const totalPages = Math.ceil(result.total / (result.limit || 20));
+    const totalPages = Math.ceil(result.total / (result.limit || 20)) || 1;
     return {
       success: true,
       message: 'Audit logs retrieved successfully',
@@ -64,6 +64,8 @@ export class AdminAuditController {
       total: result.total,
       page: result.page,
       limit: result.limit,
+      totalPages,
+      total_pages: totalPages,
       pagination: {
         total: result.total,
         page: result.page,

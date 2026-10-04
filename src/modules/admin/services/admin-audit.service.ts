@@ -310,9 +310,10 @@ export class AdminAuditService {
       (filters as any).userRole;
     if (explicitRole) {
       const roleStr = explicitRole.trim();
+      const roleLower = roleStr.toLowerCase();
       const isRoleAdmin =
-        roleStr.toLowerCase().includes('admin') ||
-        roleStr.toLowerCase().includes('administrator');
+        roleLower.includes('admin') ||
+        roleLower.includes('administrator');
 
       conditions.push(`EXISTS (
         SELECT 1 FROM user_roles ur_r
@@ -323,12 +324,15 @@ export class AdminAuditService {
             OR r_r.display_name ILIKE $${paramIdx}
             OR REPLACE(r_r.name, '_', ' ') ILIKE $${paramIdx}
             OR REPLACE(r_r.display_name, '_', ' ') ILIKE $${paramIdx}
+            OR $${paramIdx + 1} ILIKE ('%' || r_r.name || '%')
+            OR $${paramIdx + 1} ILIKE ('%' || REPLACE(r_r.name, '_', ' ') || '%')
+            OR $${paramIdx + 1} ILIKE ('%' || COALESCE(r_r.display_name, '') || '%')
             ${isRoleAdmin ? "OR r_r.name IN ('admin', 'super_admin', 'institution_admin', 'financial_admin')" : ''}
           )
           AND (ur_r.expires_at IS NULL OR ur_r.expires_at > NOW())
       )`);
-      params.push(`%${roleStr}%`);
-      paramIdx += 1;
+      params.push(`%${roleStr}%`, roleLower);
+      paramIdx += 2;
     }
 
     if (filters.role_id || (filters as any).roleId) {
@@ -346,6 +350,8 @@ export class AdminAuditService {
       filters.q ??
       (filters as any).query ??
       (filters as any).search ??
+      (filters as any).keyword ??
+      (filters as any).filter ??
       ''
     ).trim();
 
@@ -353,23 +359,85 @@ export class AdminAuditService {
       const pattern = `%${rawSearch}%`;
       const searchLower = rawSearch.toLowerCase();
 
-      // Find any ACTION_MAP actions whose display title matches the search
-      const matchingActionKeys = Object.entries(ACTION_MAP)
-        .filter(([, display]) => display.toLowerCase().includes(searchLower))
-        .map(([key]) => key);
+      // Common verb synonym and stem mappings
+      const VERB_SYNONYMS: Record<string, string[]> = {
+        create: ['create', 'creat', 'created', 'creating', 'creation', 'new', 'add', 'added'],
+        created: ['create', 'creat', 'created', 'creating', 'creation', 'new', 'add', 'added'],
+        creating: ['create', 'creat', 'created', 'creating', 'creation', 'new', 'add', 'added'],
+        creation: ['create', 'creat', 'created', 'creating', 'creation', 'new', 'add', 'added'],
+        update: ['update', 'updat', 'updated', 'updating', 'edit', 'edited', 'modify', 'modified', 'change', 'changed'],
+        updated: ['update', 'updat', 'updated', 'updating', 'edit', 'edited', 'modify', 'modified', 'change', 'changed'],
+        updating: ['update', 'updat', 'updated', 'updating', 'edit', 'edited', 'modify', 'modified', 'change', 'changed'],
+        delete: ['delete', 'delet', 'deleted', 'deleting', 'deletion', 'remove', 'removed'],
+        deleted: ['delete', 'delet', 'deleted', 'deleting', 'deletion', 'remove', 'removed'],
+        deleting: ['delete', 'delet', 'deleted', 'deleting', 'deletion', 'remove', 'removed'],
+        approve: ['approve', 'approv', 'approved', 'approving', 'approval'],
+        approved: ['approve', 'approv', 'approved', 'approving', 'approval'],
+        approving: ['approve', 'approv', 'approved', 'approving', 'approval'],
+        reject: ['reject', 'rejected', 'rejecting', 'rejection'],
+        rejected: ['reject', 'rejected', 'rejecting', 'rejection'],
+        rejecting: ['reject', 'rejected', 'rejecting', 'rejection'],
+        withdraw: ['withdraw', 'withdrew', 'withdrawn', 'withdrawing', 'withdrawal'],
+        withdrawn: ['withdraw', 'withdrew', 'withdrawn', 'withdrawing', 'withdrawal'],
+        withdrew: ['withdraw', 'withdrew', 'withdrawn', 'withdrawing', 'withdrawal'],
+        withdrawing: ['withdraw', 'withdrew', 'withdrawn', 'withdrawing', 'withdrawal'],
+        lock: ['lock', 'locked', 'locking'],
+        locked: ['lock', 'locked', 'locking'],
+        unlock: ['unlock', 'unlocked', 'unlocking'],
+        unlocked: ['unlock', 'unlocked', 'unlocking'],
+        open: ['open', 'opened', 'opening'],
+        opened: ['open', 'opened', 'opening'],
+        close: ['close', 'closed', 'closing'],
+        closed: ['close', 'closed', 'closing'],
+        reopen: ['reopen', 'reopened', 'reopening'],
+        reopened: ['reopen', 'reopened', 'reopening'],
+        upload: ['upload', 'uploaded', 'uploading', 'bulk'],
+        uploaded: ['upload', 'uploaded', 'uploading', 'bulk'],
+        release: ['release', 'released', 'releasing'],
+        released: ['release', 'released', 'releasing'],
+        activate: ['activate', 'activated', 'activating', 'activation'],
+        activated: ['activate', 'activated', 'activating', 'activation'],
+        deactivate: ['deactivate', 'deactivated', 'deactivating', 'deactivation'],
+        deactivated: ['deactivate', 'deactivated', 'deactivating', 'deactivation'],
+        generate: ['generate', 'generated', 'generating', 'finalize'],
+        generated: ['generate', 'generated', 'generating', 'finalize'],
+        accept: ['accept', 'accepted', 'accepting'],
+        accepted: ['accept', 'accepted', 'accepting'],
+      };
 
-      // Extract stems for common terms: updated -> update, created -> create, deleted -> delete
-      const stems: string[] = [];
+      // Collect all stems and synonyms related to searchLower
+      const relatedTerms = new Set<string>([searchLower]);
+      for (const [key, syns] of Object.entries(VERB_SYNONYMS)) {
+        if (searchLower.includes(key) || syns.some((s) => searchLower.includes(s))) {
+          syns.forEach((s) => relatedTerms.add(s));
+          relatedTerms.add(key);
+        }
+      }
+
+      // Add standard suffix stems
       if (searchLower.endsWith('ed')) {
-        stems.push(searchLower.slice(0, -1)); // updated -> update
-        stems.push(searchLower.slice(0, -2)); // updated -> updat
+        relatedTerms.add(searchLower.slice(0, -1)); // updated -> update
+        relatedTerms.add(searchLower.slice(0, -2)); // created -> creat
       }
       if (searchLower.endsWith('ing')) {
-        stems.push(searchLower.slice(0, -3));
+        relatedTerms.add(searchLower.slice(0, -3));
       }
       if (searchLower.endsWith('s')) {
-        stems.push(searchLower.slice(0, -1));
+        relatedTerms.add(searchLower.slice(0, -1));
       }
+
+      // Find any ACTION_MAP actions whose key or display title matches any related term
+      const matchingActionKeys = Object.entries(ACTION_MAP)
+        .filter(([key, display]) => {
+          const keyLower = key.toLowerCase();
+          const dispLower = display.toLowerCase();
+          return Array.from(relatedTerms).some(
+            (term) =>
+              term.length >= 3 &&
+              (keyLower.includes(term) || dispLower.includes(term)),
+          );
+        })
+        .map(([key]) => key);
 
       const searchClauses: string[] = [
         `a.action ILIKE $${paramIdx}`,
@@ -391,10 +459,15 @@ export class AdminAuditService {
       params.push(pattern);
       paramIdx += 1;
 
-      // Add stem matching to catch "updated" matching "session.update"
-      for (const stem of stems.filter((s) => s.length >= 3 && s !== searchLower)) {
+      // Add verb synonym/stem search clauses for action and resource_type
+      const validStems = Array.from(relatedTerms).filter(
+        (s) => s.length >= 3 && s !== searchLower,
+      );
+      for (const stem of validStems) {
         searchClauses.push(`a.action ILIKE $${paramIdx}`);
-        searchClauses.push(`REPLACE(REPLACE(a.action, '.', ' '), '_', ' ') ILIKE $${paramIdx}`);
+        searchClauses.push(
+          `REPLACE(REPLACE(a.action, '.', ' '), '_', ' ') ILIKE $${paramIdx}`,
+        );
         searchClauses.push(`a.resource_type ILIKE $${paramIdx}`);
         params.push(`%${stem}%`);
         paramIdx += 1;
@@ -407,7 +480,39 @@ export class AdminAuditService {
         paramIdx += 1;
       }
 
-      // Role matching (handles "Administrator", "Super Admin", "admin", "Registrar", etc.)
+      // Role matching patterns (handles "Administrator", "Super Admin", "admin", "Registrar", etc.)
+      const words = searchLower.split(/\s+/).filter((w) => w.length >= 3);
+      const rolePatterns: string[] = [];
+      if (searchLower.includes('admin') || searchLower.includes('administrator')) {
+        rolePatterns.push('%admin%', '%administrator%');
+      }
+      if (searchLower.includes('super')) {
+        rolePatterns.push('%super%');
+      }
+      if (searchLower.includes('registrar')) {
+        rolePatterns.push('%registrar%');
+      }
+      if (searchLower.includes('institution')) {
+        rolePatterns.push('%institution%');
+      }
+      if (searchLower.includes('officer')) {
+        rolePatterns.push('%officer%');
+      }
+      if (searchLower.includes('director')) {
+        rolePatterns.push('%director%');
+      }
+      if (searchLower.includes('coordinator')) {
+        rolePatterns.push('%coordinator%');
+      }
+      if (searchLower.includes('finance') || searchLower.includes('financial')) {
+        rolePatterns.push('%financ%');
+      }
+      words.forEach((w) => {
+        if (!rolePatterns.includes(`%${w}%`)) {
+          rolePatterns.push(`%${w}%`);
+        }
+      });
+
       searchClauses.push(`EXISTS (
         SELECT 1 FROM user_roles ur_s
         JOIN roles r_s ON ur_s.role_id = r_s.id
@@ -416,16 +521,22 @@ export class AdminAuditService {
             r_s.name ILIKE $${paramIdx}
             OR r_s.display_name ILIKE $${paramIdx}
             OR REPLACE(r_s.name, '_', ' ') ILIKE $${paramIdx}
-            OR REPLACE(r_s.display_name, '_', ' ') ILIKE $${paramIdx}
-            ${searchLower.includes('admin') || searchLower.includes('administrator') ? "OR r_s.name ILIKE '%admin%' OR r_s.display_name ILIKE '%admin%'" : ''}
-            ${searchLower.includes('super') ? "OR r_s.name ILIKE '%super%' OR r_s.display_name ILIKE '%super%'" : ''}
-            ${searchLower.includes('registrar') ? "OR r_s.name ILIKE '%registrar%' OR r_s.display_name ILIKE '%registrar%'" : ''}
-            ${searchLower.includes('director') ? "OR r_s.name ILIKE '%director%' OR r_s.display_name ILIKE '%director%'" : ''}
+            OR REPLACE(COALESCE(r_s.display_name, ''), '_', ' ') ILIKE $${paramIdx}
+            OR $${paramIdx + 1} ILIKE ('%' || r_s.name || '%')
+            OR $${paramIdx + 1} ILIKE ('%' || REPLACE(r_s.name, '_', ' ') || '%')
+            OR $${paramIdx + 1} ILIKE ('%' || COALESCE(r_s.display_name, '') || '%')
+            OR $${paramIdx + 1} ILIKE ('%' || REPLACE(COALESCE(r_s.display_name, ''), '_', ' ') || '%')
+            ${rolePatterns.length > 0 ? `OR r_s.name ILIKE ANY($${paramIdx + 2}) OR r_s.display_name ILIKE ANY($${paramIdx + 2}) OR REPLACE(r_s.name, '_', ' ') ILIKE ANY($${paramIdx + 2})` : ''}
           )
           AND (ur_s.expires_at IS NULL OR ur_s.expires_at > NOW())
       )`);
-      params.push(pattern);
-      paramIdx += 1;
+
+      params.push(pattern, searchLower);
+      paramIdx += 2;
+      if (rolePatterns.length > 0) {
+        params.push(rolePatterns);
+        paramIdx += 1;
+      }
 
       conditions.push(`(${searchClauses.join(' OR ')})`);
     }

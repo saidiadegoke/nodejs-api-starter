@@ -62,6 +62,8 @@ export class RbacService {
       rolesWithPerms.push(this.formatRole(r, perms));
     }
 
+    const totalPages = Math.ceil(res.total / (res.limit || 20)) || 1;
+
     return {
       success: true,
       message: 'Roles retrieved successfully',
@@ -70,10 +72,14 @@ export class RbacService {
       total: res.total,
       page: res.page,
       limit: res.limit,
+      total_pages: totalPages,
+      totalPages,
       pagination: {
         page: res.page,
         limit: res.limit,
         total: res.total,
+        totalPages,
+        total_pages: totalPages,
       },
     };
   }

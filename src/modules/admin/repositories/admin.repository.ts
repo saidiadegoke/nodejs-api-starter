@@ -43,19 +43,21 @@ export class AdminRepository {
 
     const qb = this.roleRepo.createQueryBuilder('r');
     if (query.q) {
-      qb.andWhere('(r.name ILIKE :q OR r.display_name ILIKE :q OR r.description ILIKE :q)', {
+      qb.andWhere('(r.name ILIKE :q OR r.displayName ILIKE :q OR r.description ILIKE :q)', {
         q: `%${query.q}%`,
       });
     }
     if (query.status) {
       qb.andWhere('r.status = :status', { status: query.status });
     }
-    const isSystemFilter = query.is_system !== undefined ? query.is_system : query.isSystem;
-    if (isSystemFilter !== undefined) {
-      qb.andWhere('r.is_system = :is_system', { is_system: isSystemFilter });
+    const rawIsSystem: any = query.is_system !== undefined ? query.is_system : query.isSystem;
+    if (rawIsSystem !== undefined) {
+      const isSystemVal =
+        rawIsSystem === true || rawIsSystem === 'true' || rawIsSystem === 1 || rawIsSystem === '1';
+      qb.andWhere('r.isSystem = :is_system', { is_system: isSystemVal });
     }
 
-    qb.orderBy('r.is_system', 'DESC')
+    qb.orderBy('r.isSystem', 'DESC')
       .addOrderBy('r.name', 'ASC')
       .limit(limit)
       .offset(offset);

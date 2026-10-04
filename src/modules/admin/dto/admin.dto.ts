@@ -563,6 +563,16 @@ export class AuditListQueryDto {
   @IsString()
   search?: string;
 
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  keyword?: string;
+
+  @ApiPropertyOptional({ example: 'updated' })
+  @IsOptional()
+  @IsString()
+  filter?: string;
+
   @ApiPropertyOptional({ example: 'session.update' })
   @IsOptional()
   @IsString()
