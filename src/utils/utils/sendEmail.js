@@ -1,50 +1,105 @@
-const { Worker } = require('worker_threads');
+const nodemailer = require('nodemailer');
+const fs = require('fs');
 const path = require('path');
 
-const sendEmail = ({ to, subject, templateFile, placeholders, replyTo, fromEmail }) => {
-  // No-op when SMTP isn't configured (CI / fresh local). Returning a
-  // resolved promise keeps callers' fire-and-forget chains happy without
-  // spawning a worker that would just fail at connect time.
+let transporter = null;
+
+function getTransporter() {
+  if (!transporter && process.env.SMTP_HOST && process.env.SMTP_USER) {
+    const port = Number(process.env.SMTP_PORT) || 465;
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure: port === 465,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASSWORD,
+      },
+    });
+  }
+  return transporter;
+}
+
+const sendEmail = async ({ to, subject, templateFile, placeholders, replyTo, fromEmail }) => {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER) {
-    return Promise.resolve(null);
+    return null;
   }
   if (!to) {
-    return Promise.resolve(null);
+    return null;
   }
-  // Never send real mail during the test suite. Tests load `.env` which
-  // includes real SMTP creds; left unchecked, every lifecycle event
-  // would try to connect to the live SMTP server (slow + noisy + leaks
-  // worker threads that Jest then has to force-kill). Set
-  // `JUPEB_EMAIL_FORCE=1` to bypass when manually exercising mail
-  // delivery from an integration test.
   if (process.env.NODE_ENV === 'test' && process.env.JUPEB_EMAIL_FORCE !== '1') {
-    return Promise.resolve(null);
+    return 'mock-test-message-id';
   }
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(__dirname, 'emailWorker.js'));
 
-    // Listen for messages from the worker
-    worker.on('message', (result) => {
-      if (result.success) {
-        resolve(result.messageId);
-      } else {
-        reject(new Error(result.error));
-      }
-    });
+  const transport = getTransporter();
+  if (!transport) return null;
 
-    // Listen for errors from the worker
-    worker.on('error', reject);
+  try {
+    const candidatePaths = [
+      path.join(__dirname, '../../modules/mail/mail-templates', templateFile),
+      path.join(process.cwd(), 'src/modules/mail/mail-templates', templateFile),
+      path.join(process.cwd(), 'dist/modules/mail/mail-templates', templateFile),
+      path.join(__dirname, '../emails', templateFile),
+    ];
+    const templatePath = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
+    if (!fs.existsSync(templatePath)) {
+      console.error(`Email template file not found: ${templateFile}`);
+      return null;
+    }
 
-    // Listen for exit events from the worker
-    worker.on('exit', (code) => {
-      if (code !== 0) {
-        reject(new Error(`Worker stopped with exit code ${code}`));
-      }
-    });
+    let htmlContent = fs.readFileSync(templatePath, 'utf-8');
 
-    // Send the email details to the worker
-    worker.postMessage({ to, subject, templateFile, placeholders, replyTo, fromEmail });
-  });
+    if (Array.isArray(placeholders)) {
+      let placeholderIndex = 0;
+      htmlContent = htmlContent.replace(/%s/g, (match) => {
+        if (placeholderIndex < placeholders.length) {
+          return placeholders[placeholderIndex++];
+        }
+        return match;
+      });
+    } else if (typeof placeholders === 'object' && placeholders !== null) {
+      htmlContent = htmlContent.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+        return placeholders[key] !== undefined && placeholders[key] !== null
+          ? String(placeholders[key])
+          : match;
+      });
+    }
+
+    const logoLocations = [
+      path.join(__dirname, '../../modules/mail/mail-templates/assets/logo.png'),
+      path.join(process.cwd(), 'src/modules/mail/mail-templates/assets/logo.png'),
+      path.join(__dirname, '../assets/logo.png'),
+      path.join(process.cwd(), 'logo.png'),
+    ];
+    const resolvedLogoPath = logoLocations.find((p) => fs.existsSync(p));
+
+    const attachments = [];
+    if (resolvedLogoPath) {
+      attachments.push({
+        filename: 'logo.png',
+        path: resolvedLogoPath,
+        cid: 'jupeb-logo',
+      });
+    }
+
+    const appName = process.env.APP_NAME || 'Registration Portal';
+    const from = fromEmail || process.env.FROM_EMAIL || process.env.SMTP_USER;
+
+    const mailOptions = {
+      from: `"${appName}" <${from}>`,
+      to,
+      subject,
+      html: htmlContent,
+      ...(attachments.length > 0 && { attachments }),
+      ...(replyTo && { replyTo }),
+    };
+
+    const info = await transport.sendMail(mailOptions);
+    return info.messageId;
+  } catch (error) {
+    console.error('Error sending email:', error && error.message);
+    return null;
+  }
 };
 
 module.exports = sendEmail;

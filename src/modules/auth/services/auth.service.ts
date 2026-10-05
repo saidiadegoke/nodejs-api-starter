@@ -8,8 +8,7 @@ import { AuthRepository } from '../repositories/auth.repository';
 import { UserSessionRepository } from '../repositories/user-session.repository';
 import { jwtConfig } from '../../../config/jwt.config';
 import { RegistrationStatus, RegistrationNextStep } from '../../../shared/enums';
-
-const sendEmail = require('../../../utils/utils/sendEmail');
+import { MailService } from '../../mail';
 const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
 
 function isUuid(str: string): boolean {
@@ -21,7 +20,8 @@ export class AuthService {
   constructor(
     private readonly authRepo: AuthRepository,
     private readonly sessionRepo: UserSessionRepository,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource,
+    private readonly mailService: MailService,
   ) {}
 
   static async formatPhoneNumber(phone?: string | null, countryId?: number): Promise<string | null> {
@@ -907,6 +907,9 @@ export class AuthService {
 
     const verifyUrl = AuthService._verifyUrl(rawToken);
     const appName = process.env.APP_NAME || 'Registration Portal';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const sendEmail = require('../../../utils/utils/sendEmail');
 
     setImmediate(() => {
       sendEmail({
