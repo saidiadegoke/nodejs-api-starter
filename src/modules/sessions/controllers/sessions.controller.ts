@@ -221,7 +221,11 @@ export class SessionsController {
 
   @Get([
     "sessions/:sessionId/university-locks",
+    "sessions/:sessionId/registration-lock",
     "sessions/:sessionId/registration-lock/universities",
+    "catalog/sessions/:sessionId/university-locks",
+    "catalog/sessions/:sessionId/registration-lock",
+    "catalog/sessions/:sessionId/registration-lock/universities",
   ])
   @ApiOperation({
     summary: "Get institution registration lock states for a session",
@@ -241,19 +245,7 @@ export class SessionsController {
     );
   }
 
-  @Put([
-    "sessions/:sessionId/university-locks",
-    "sessions/:sessionId/registration-lock",
-    "catalog/sessions/:sessionId/university-locks",
-    "catalog/sessions/:sessionId/registration-lock",
-  ])
   @Patch([
-    "sessions/:sessionId/university-locks",
-    "sessions/:sessionId/registration-lock",
-    "catalog/sessions/:sessionId/university-locks",
-    "catalog/sessions/:sessionId/registration-lock",
-  ])
-  @Post([
     "sessions/:sessionId/university-locks",
     "sessions/:sessionId/registration-lock",
     "catalog/sessions/:sessionId/university-locks",
