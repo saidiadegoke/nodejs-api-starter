@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 import { OtpCodeRepository } from '../repositories/otp-code.repository';
 import { resolveName, getProvider } from './sms-providers';
 
-const sendEmail = require('../../../utils/utils/sendEmail');
+import { MailService } from '../../mail';
 
 const OTP_LENGTH = 6;
 const MAX_ATTEMPTS = 5;
@@ -36,7 +36,8 @@ function hashCode(code: string): string {
 export class OtpService {
   constructor(
     private readonly otpCodeRepo: OtpCodeRepository,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource,
+    private readonly mailService: MailService,
   ) {}
 
   private async loadUser(userId: string): Promise<any | null> {
@@ -53,18 +54,13 @@ export class OtpService {
   private dispatchEmail({ user, code }: { user: any; code: string }): void {
     if (!user.email) return;
     const ttlMinutes = Math.round(ttlMs() / 60000);
-    sendEmail({
-      to: user.email,
-      subject: `${appName()} — your verification code: ${code}`,
-      templateFile: 'otp-code.html',
-      placeholders: {
-        appName: appName(),
-        firstName: user.first_name || 'there',
-        code,
-        ttlMinutes,
-        email: user.email,
-        year: new Date().getUTCFullYear(),
-      },
+    this.mailService.sendOtpEmail(user.email, {
+      appName: appName(),
+      firstName: user.first_name || 'there',
+      code,
+      ttlMinutes,
+      email: user.email,
+      year: new Date().getUTCFullYear(),
     }).catch((err: any) => {
       // eslint-disable-next-line no-console
       console.warn('[otp.dispatchEmail] send failed:', err && err.message);

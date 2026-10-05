@@ -279,7 +279,7 @@ router.get('/docs', (req, res, next) => {
         </div>
       </div>
     `).join('')}
-    <div class="footer">JUPEB Portal API v1.0.0 &nbsp;|&nbsp; OpenAPI 3.0 &nbsp;|&nbsp; Swagger UI</div>
+    <div class="footer">JUPEB Portal v1.0.0 &nbsp;|&nbsp; OpenAPI 3.0 &nbsp;|&nbsp; Swagger UI</div>
   </div>
 </body>
 </html>`);

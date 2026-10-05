@@ -6,7 +6,7 @@ import { PasswordResetRepository } from '../repositories/password-reset.reposito
 import { AuthRepository, UserWithProfile } from '../repositories/auth.repository';
 import { resolveName, getProvider } from './sms-providers';
 
-const sendEmail = require('../../../utils/utils/sendEmail');
+import { MailService } from '../../mail';
 
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 const OTP_LENGTH = 6;
@@ -54,24 +54,20 @@ export class PasswordResetService {
   constructor(
     private readonly passwordResetRepo: PasswordResetRepository,
     private readonly authRepo: AuthRepository,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource,
+    private readonly mailService: MailService,
   ) {}
 
   private dispatchOtpEmail({ user, code }: { user: any; code: string }): void {
     if (!user.email) return;
     const ttlMinutes = Math.round(otpTtlMs() / 60000);
-    sendEmail({
-      to: user.email,
-      subject: `${appName()} — your password reset code: ${code}`,
-      templateFile: 'otp-code.html',
-      placeholders: {
-        appName: appName(),
-        firstName: user.first_name || 'there',
-        code,
-        ttlMinutes,
-        email: user.email,
-        year: new Date().getUTCFullYear(),
-      },
+    this.mailService.sendOtpEmail(user.email, {
+      appName: appName(),
+      firstName: user.first_name || 'there',
+      code,
+      ttlMinutes,
+      email: user.email,
+      year: new Date().getUTCFullYear(),
     }).catch((err: any) => {
       // eslint-disable-next-line no-console
       console.warn('[password-reset.email] send failed:', err && err.message);
@@ -102,16 +98,10 @@ export class PasswordResetService {
   private dispatchTokenEmail({ user, rawToken }: { user: any; rawToken: string }): void {
     if (!user.email) return;
     const resetUrl = `${frontendUrl()}/reset-password?token=${rawToken}`;
-    sendEmail({
-      to: user.email,
-      subject: `Reset Your ${appName()} Password`,
-      templateFile: 'forgot-password.html',
-      placeholders: [
-        user.first_name || user.display_name || 'User',
-        resetUrl,
-        resetUrl,
-        user.email,
-      ],
+    this.mailService.sendForgotPasswordEmail(user.email, {
+      name: user.first_name || user.display_name || 'User',
+      resetUrl,
+      email: user.email,
     }).catch((err: any) => {
       // eslint-disable-next-line no-console
       console.warn('[password-reset.tokenEmail] send failed:', err && err.message);
