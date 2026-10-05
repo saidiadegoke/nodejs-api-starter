@@ -66,13 +66,13 @@ export class IdentityService {
     if (!userId) return [];
     try {
       const rows = await this.dataSource.query(
-        `SELECT r.slug
+        `SELECT r.name
          FROM roles r
          JOIN user_roles ur ON ur.role_id = r.id
          WHERE ur.user_id = $1`,
         [userId],
       );
-      return rows.map((r: { slug: string }) => r.slug);
+      return rows.map((r: { name: string }) => r.name);
     } catch {
       return [];
     }
