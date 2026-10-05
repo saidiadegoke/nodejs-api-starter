@@ -14,6 +14,7 @@ export class AppController {
       success: true,
       message: 'API is running',
       appType: "NestJS is here",
+      version: "0.0.1",
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
     };
