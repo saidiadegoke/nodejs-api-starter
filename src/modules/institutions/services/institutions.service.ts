@@ -274,7 +274,9 @@ export class InstitutionsService {
         institution_admin: admin.institution_admin,
       };
     } catch (err) {
-      await this.universityRepo.softDelete(university.id).catch(() => {});
+      if (university?.id) {
+        await this.universityRepo.softDelete(university.id).catch(() => {});
+      }
       throw err;
     }
   }
