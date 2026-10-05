@@ -4,6 +4,9 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { CommodLogger, LoggerFactory } from '../../../logger';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
+
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const LOWER = 'abcdefghijkmnopqrstuvwxyz';
@@ -68,7 +71,6 @@ export class InstitutionAdminProvisionService {
     // Send credentials notification asynchronously
     setImmediate(async () => {
       try {
-        const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
         if (jupebMailer?.sendInstitutionAdminCredentials) {
           await jupebMailer.sendInstitutionAdminCredentials({
             email: provisioned.user.email,
@@ -196,7 +198,7 @@ export class InstitutionAdminProvisionService {
       );
 
       const roleRows = await queryRunner.query(
-        `SELECT id FROM roles WHERE name = 'institution_admin' OR slug = 'institution_admin' LIMIT 1`,
+        `SELECT id FROM roles WHERE name = 'institution_admin' LIMIT 1`,
       );
       if (roleRows.length) {
         await queryRunner.query(
