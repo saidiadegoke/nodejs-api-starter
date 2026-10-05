@@ -3,6 +3,7 @@ import { InstitutionsService } from './services/institutions.service';
 import { InstitutionAdminProvisionService } from './services/institution-admin-provision.service';
 import { UniversityRepository } from './repositories/university.repository';
 import { InstitutionSyncQueueService, SyncEvent } from '../sync';
+import { MailService } from '../mail';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LoggerFactory } from '../../logger';
 import { DataSource } from 'typeorm';
@@ -72,6 +73,12 @@ describe('Institutions University Creation Flow (End-to-End)', () => {
         {
           provide: EventEmitter2,
           useValue: eventEmitter,
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendInstitutionAdminCredentialsEmail: jest.fn().mockResolvedValue('msg-id-123'),
+          },
         },
         {
           provide: DataSource,
