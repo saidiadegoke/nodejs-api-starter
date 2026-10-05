@@ -83,11 +83,11 @@ export class PgBossDashboardMiddleware implements NestMiddleware, OnModuleDestro
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
-        if (value !== undefined) {
+        if (value !== undefined && value !== null) {
           if (Array.isArray(value)) {
-            value.forEach((v) => headers.append(key, v));
+            value.forEach((v) => headers.append(key, String(v)));
           } else {
-            headers.set(key, value);
+            headers.set(key, String(value));
           }
         }
       }
