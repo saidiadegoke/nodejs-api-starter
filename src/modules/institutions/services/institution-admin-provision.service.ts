@@ -113,7 +113,11 @@ export class InstitutionAdminProvisionService {
 
     // Check existing user
     const existingUsers = await this.dataSource.query(
-      `SELECT * FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1`,
+      `SELECT u.*, p.first_name, p.last_name
+       FROM users u
+       LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE LOWER(u.email) = $1 AND u.deleted_at IS NULL
+       LIMIT 1`,
       [normalizedEmail],
     );
     const existing = existingUsers[0];
@@ -164,6 +168,7 @@ export class InstitutionAdminProvisionService {
     const passwordHash = await bcrypt.hash(passwordPlaintext, 10);
     const firstName = params.firstName ? String(params.firstName).trim() : '';
     const lastName = params.lastName ? String(params.lastName).trim() : '';
+    const displayName = [firstName, lastName].filter(Boolean).join(' ') || 'Institution Admin';
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -171,23 +176,36 @@ export class InstitutionAdminProvisionService {
 
     try {
       const userResult = await queryRunner.query(
-        `INSERT INTO users (email, password_hash, first_name, last_name, role, status)
-         VALUES ($1, $2, $3, $4, 'institution_admin', 'active')
+        `INSERT INTO users (email, password_hash, status, email_verified, created_at, updated_at)
+         VALUES ($1, $2, 'active', true, NOW(), NOW())
          RETURNING *`,
-        [normalizedEmail, passwordHash, firstName || null, lastName || null],
+        [normalizedEmail, passwordHash],
       );
       const user = userResult[0];
 
       await queryRunner.query(
-        `INSERT INTO profiles (user_id, first_name, last_name, jupeb_university_id)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO profiles (user_id, first_name, last_name, display_name, jupeb_university_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
          ON CONFLICT (user_id) DO UPDATE
          SET first_name = EXCLUDED.first_name,
              last_name = EXCLUDED.last_name,
+             display_name = EXCLUDED.display_name,
              jupeb_university_id = EXCLUDED.jupeb_university_id,
              updated_at = NOW()`,
-        [user.id, firstName || null, lastName || null, params.universityId],
+        [user.id, firstName || null, lastName || null, displayName, params.universityId],
       );
+
+      const roleRows = await queryRunner.query(
+        `SELECT id FROM roles WHERE name = 'institution_admin' OR slug = 'institution_admin' LIMIT 1`,
+      );
+      if (roleRows.length) {
+        await queryRunner.query(
+          `INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT DO NOTHING`,
+          [user.id, roleRows[0].id, params.createdBy || null],
+        );
+      }
 
       await queryRunner.query(
         `INSERT INTO user_universities (user_id, university_id, role, is_primary, created_by)
