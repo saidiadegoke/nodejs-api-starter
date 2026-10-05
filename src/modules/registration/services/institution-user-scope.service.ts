@@ -58,10 +58,33 @@ export class InstitutionUserScopeService {
 
   async getProfileJupebUniversityId(userId: string): Promise<string | null> {
     const rows = await this.dataSource.query(
-      `SELECT jupeb_university_id FROM profiles WHERE user_id = $1`,
+      `SELECT p.jupeb_university_id, uu.university_id, uu.jupeb_university_id AS uu_jupeb_id
+       FROM profiles p
+       LEFT JOIN user_universities uu ON uu.user_id = p.user_id AND uu.deleted_at IS NULL
+       WHERE p.user_id = $1
+       ORDER BY uu.is_primary DESC NULLS LAST
+       LIMIT 1`,
       [userId],
     );
-    return rows[0]?.jupeb_university_id || null;
+    if (!rows.length) {
+      const uuRows = await this.dataSource.query(
+        `SELECT university_id, jupeb_university_id FROM user_universities WHERE user_id = $1 AND deleted_at IS NULL ORDER BY is_primary DESC NULLS LAST LIMIT 1`,
+        [userId],
+      );
+      return uuRows[0]?.jupeb_university_id || uuRows[0]?.university_id || null;
+    }
+    const scoped = rows[0]?.jupeb_university_id || rows[0]?.uu_jupeb_id || rows[0]?.university_id || null;
+    if (scoped) return scoped;
+
+    const roleRows = await this.dataSource.query(
+      `SELECT r.owner_jupeb_university_id
+       FROM user_roles ur
+       JOIN roles r ON ur.role_id = r.id
+       WHERE ur.user_id = $1 AND r.owner_jupeb_university_id IS NOT NULL
+       LIMIT 1`,
+      [userId],
+    );
+    return roleRows[0]?.owner_jupeb_university_id || null;
   }
 
   async getUserRoles(userId: string): Promise<string[]> {
@@ -73,17 +96,20 @@ export class InstitutionUserScopeService {
   }
 
   async assertUniversityAccess(userId: string, universityId: string): Promise<void> {
+    if (!userId) return;
     const roles = await this.getUserRoles(userId);
     if (roles.includes('admin') || roles.includes('super_admin')) return;
-    if (!roles.includes('program_director') && !roles.includes('institution_admin')) return;
     const scoped = await this.getProfileJupebUniversityId(userId);
-    if (!scoped) {
+    if (scoped) {
+      if (String(scoped) !== String(universityId)) {
+        throw new ForbiddenException('University is outside your institution scope');
+      }
+      return;
+    }
+    if (roles.includes('program_director') || roles.includes('institution_admin')) {
       throw new ForbiddenException(
         'Institution users must have profiles.jupeb_university_id set for JUPEB actions',
       );
-    }
-    if (String(scoped) !== String(universityId)) {
-      throw new ForbiddenException('University is outside your institution scope');
     }
   }
 
@@ -91,22 +117,23 @@ export class InstitutionUserScopeService {
     userId: string,
     queryUniversityId?: string | null,
   ): Promise<string | null> {
+    if (!userId) return queryUniversityId || null;
     const roles = await this.getUserRoles(userId);
     if (roles.includes('admin') || roles.includes('super_admin')) {
       return queryUniversityId || null;
     }
-    if (!roles.includes('program_director') && !roles.includes('institution_admin')) {
-      return queryUniversityId || null;
-    }
     const scoped = await this.getProfileJupebUniversityId(userId);
-    if (!scoped) {
+    if (scoped) {
+      if (queryUniversityId && String(queryUniversityId) !== String(scoped)) {
+        throw new ForbiddenException('Cannot list registrations for a university outside your scope');
+      }
+      return scoped;
+    }
+    if (roles.includes('program_director') || roles.includes('institution_admin')) {
       throw new ForbiddenException(
         'Institution users must have profiles.jupeb_university_id set for JUPEB actions',
       );
     }
-    if (queryUniversityId && String(queryUniversityId) !== String(scoped)) {
-      throw new ForbiddenException('Cannot list registrations for a university outside your scope');
-    }
-    return scoped;
+    return queryUniversityId || null;
   }
 }
