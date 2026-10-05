@@ -6,6 +6,7 @@ import { normalizeNin, hashNin, ninLast4 } from '../../identity/utils/identity-c
 import { RegistrationStatus } from '../../../shared/enums';
 import { RegistrationEntity } from '../entities/registration.entity';
 import { NinVerificationEntity, NinVerificationStatus } from '../../identity/entities/nin-verification.entity';
+import { InstitutionUserScopeService } from './institution-user-scope.service';
 
 export interface BulkRegistrationError {
   row: number;
@@ -207,6 +208,7 @@ export class BulkRegistrationService {
     @InjectRepository(NinVerificationEntity)
     private readonly ninVerificationRepo: Repository<NinVerificationEntity>,
     private readonly dataSource: DataSource,
+    private readonly scopeService: InstitutionUserScopeService,
   ) {}
 
   async bulkUpload(
@@ -215,6 +217,14 @@ export class BulkRegistrationService {
     universityId: string,
     userId?: string | null,
   ): Promise<BulkRegistrationResult> {
+    if (userId) {
+      const scoped = await this.scopeService.effectiveUniversityId(userId, universityId);
+      if (scoped) universityId = scoped;
+    }
+    if (!universityId) {
+      throw new UnprocessableEntityException('university_id is required');
+    }
+
     if (!fileBuffer || !fileBuffer.length) {
       throw new UnprocessableEntityException('No file buffer uploaded');
     }

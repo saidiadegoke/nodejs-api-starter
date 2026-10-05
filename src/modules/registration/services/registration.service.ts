@@ -13,6 +13,7 @@ import { RegistrationStateService } from './registration-state.service';
 import { RegistrationKpiService } from './registration-kpi.service';
 import { RegistrationEventsService } from './registration-events.service';
 import { RegistrationFormPdfService } from './registration-form-pdf.service';
+import { InstitutionUserScopeService } from './institution-user-scope.service';
 import { RegistrationEntity, RegistrationStatus } from '../entities/registration.entity';
 import { SessionStatus } from '../../sessions/entities/academic-session.entity';
 import {
@@ -126,6 +127,7 @@ export class RegistrationService {
     private readonly eventsService: RegistrationEventsService,
     private readonly pdfService: RegistrationFormPdfService,
     private readonly candidateSyncQueueService: CandidateSyncQueueService,
+    private readonly scopeService: InstitutionUserScopeService,
     private readonly eventEmitter: EventEmitter2,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
@@ -133,21 +135,38 @@ export class RegistrationService {
     this.logger = this.loggerFactory.create(RegistrationService.name);
   }
 
+  private async resolveEffectiveUniversityId(
+    userId?: string | null,
+    rawUniversityId?: string | null,
+  ): Promise<string | null> {
+    if (!userId) return rawUniversityId || null;
+    return this.scopeService.effectiveUniversityId(userId, rawUniversityId || null);
+  }
+
+  private async assertUniversityAccess(
+    userId: string | null | undefined,
+    universityId: string,
+  ): Promise<void> {
+    if (!userId) return;
+    return this.scopeService.assertUniversityAccess(userId, universityId);
+  }
+
   // ─────────────────────────────── Institution / Admin Operations ───────────────────────────────
 
   /**
    * List candidate registrations with filtering and pagination.
    */
-  async listRegistrations(query: ListRegistrationsQueryDto, _userId?: string | null) {
+  async listRegistrations(query: ListRegistrationsQueryDto, userId?: string | null) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const offset = (page - 1) * limit;
 
     const searchTerm = query.q || query.search || query.query || query.keyword;
+    const scopedUniversityId = await this.resolveEffectiveUniversityId(userId, query.university_id);
 
     const { rows, total } = await this.regRepo.findAllPaginated({
       sessionId: query.session_id,
-      universityId: query.university_id,
+      universityId: scopedUniversityId || undefined,
       status: query.status,
       bucket: query.bucket,
       biometrics: query.biometrics,
@@ -169,10 +188,12 @@ export class RegistrationService {
   /**
    * Retrieve full registration details by registration ID.
    */
-  async getRegistrationById(registrationId: string, _userId?: string | null) {
+  async getRegistrationById(registrationId: string, userId?: string | null) {
     if (!UUID_REGEX.test(registrationId)) throw new UnprocessableEntityException('Invalid registration ID');
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
+
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
     const [detailsRows, nokRows, resultRows, docRows, bioRows, historyRows] = await Promise.all([
       this.dataSource.query(
@@ -379,6 +400,12 @@ export class RegistrationService {
    * Create an individual candidate registration record.
    */
   async createRegistration(dto: CreateRegistrationDto, userId?: string | null): Promise<any> {
+    const scopedUniversityId = await this.resolveEffectiveUniversityId(userId, dto.university_id);
+    if (!scopedUniversityId) {
+      throw new UnprocessableEntityException('university_id is required');
+    }
+    dto.university_id = scopedUniversityId;
+
     if (dto.nin_verification_id) {
       const ninRows = await this.dataSource.query(
         `SELECT id, status, nin_hash FROM jupeb_nin_verifications WHERE id = $1`,
@@ -466,10 +493,12 @@ export class RegistrationService {
   async updateRegistration(
     registrationId: string,
     dto: PatchRegistrationDto,
-    _userId?: string | null,
+    userId?: string | null,
   ): Promise<any> {
     const existing = await this.regRepo.findById(registrationId);
     if (!existing) throw new NotFoundException('Registration not found');
+
+    await this.assertUniversityAccess(userId, existing.universityId || (existing as any).university_id);
 
     const subjectCombId = dto.subject_combination_id || dto.subjectCombinationId;
     const instCode = dto.institution_issued_code || dto.institutionIssuedCode;
@@ -477,13 +506,13 @@ export class RegistrationService {
     const targetStatus = dto.status ? String(dto.status).toLowerCase().trim() : undefined;
 
     if (targetStatus && targetStatus !== existing.status) {
-      await this.regRepo.setStatus(registrationId, targetStatus, reason, _userId);
+      await this.regRepo.setStatus(registrationId, targetStatus, reason, userId);
       await this.historyRepo.create({
         registrationId,
         fromStatus: existing.status,
         toStatus: targetStatus,
         reason: reason || 'Updated by admin',
-        changedBy: _userId || registrationId,
+        changedBy: userId || registrationId,
       });
     }
 
@@ -499,11 +528,11 @@ export class RegistrationService {
     // Emit in-memory event for instant single candidate sync to CRMS & Attendance
     this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
       registrationId,
-      userId: _userId,
+      userId,
       data: { ...fields, status: targetStatus },
     });
 
-    const enriched = await this.getRegistrationById(registrationId, _userId).catch(() => existing);
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => existing);
     return enriched;
   }
 
@@ -513,10 +542,12 @@ export class RegistrationService {
   async updateCandidateProfile(
     registrationId: string,
     dto: PatchCandidateDto,
-    _userId?: string | null,
+    userId?: string | null,
   ) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
+
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
     const info = dto.info && typeof dto.info === 'object' ? dto.info : {};
     const subjectCombId =
@@ -655,19 +686,21 @@ export class RegistrationService {
     // Emit in-memory event for instant single candidate sync to CRMS & Attendance
     this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
       registrationId: reg.id,
-      userId: _userId,
+      userId,
       data: dto,
     });
 
-    return this.getRegistrationById(registrationId, _userId);
+    return this.getRegistrationById(registrationId, userId);
   }
 
   /**
    * Resend the provisional code to the candidate.
    */
-  async resendProvisionalCode(registrationId: string, _userId?: string | null) {
+  async resendProvisionalCode(registrationId: string, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
+
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
     return {
       registration_id: registrationId,
@@ -682,6 +715,8 @@ export class RegistrationService {
   async withdrawRegistration(registrationId: string, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
+
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
     if (reg.status === RegistrationStatus.APPROVED) {
       throw new ConflictException('Approved registration cannot be deleted');
@@ -712,8 +747,9 @@ export class RegistrationService {
   /**
    * Get registration overview KPIs / statistics.
    */
-  async getOverviewStats(query: { session_id?: string; university_id?: string }, _userId?: string | null) {
-    return this.kpiService.kpiCounts(query.university_id, query.session_id);
+  async getOverviewStats(query: { session_id?: string; university_id?: string }, userId?: string | null) {
+    const scopedUniversityId = await this.resolveEffectiveUniversityId(userId, query.university_id);
+    return this.kpiService.kpiCounts(scopedUniversityId || undefined, query.session_id);
   }
 
   /**
@@ -721,8 +757,9 @@ export class RegistrationService {
    */
   async getRegistrationsByUniversity(
     query: { session_id?: string; university_id?: string; limit?: number },
-    _userId?: string | null,
+    userId?: string | null,
   ) {
+    const scopedUniversityId = await this.resolveEffectiveUniversityId(userId, query.university_id);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
     const params: any[] = [];
     const universityFilters: string[] = ['u.deleted_at IS NULL'];
@@ -733,8 +770,8 @@ export class RegistrationService {
       sessionJoinClause = ` AND r.session_id = $${params.length}`;
     }
 
-    if (query.university_id) {
-      params.push(query.university_id);
+    if (scopedUniversityId) {
+      params.push(scopedUniversityId);
       universityFilters.push(`u.id = $${params.length}`);
     }
 
@@ -803,6 +840,20 @@ export class RegistrationService {
         if (!reg) {
           rejected.push({ id, error_code: 'not_found', message: 'Registration not found', http_status: 404 });
           continue;
+        }
+
+        if (userId) {
+          try {
+            await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+          } catch (scopeErr: any) {
+            rejected.push({
+              id,
+              error_code: 'forbidden',
+              message: scopeErr.message || 'University is outside your institution scope',
+              http_status: 403,
+            });
+            continue;
+          }
         }
 
         if (rawAction === 'delete') {
@@ -952,6 +1003,8 @@ export class RegistrationService {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
 
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+
     if (!this.stateService.canTransition(reg.status, RegistrationStatus.APPROVED)) {
       if (reg.status === RegistrationStatus.APPROVED) {
         const enriched = await this.getRegistrationById(registrationId, userId).catch(() => reg);
@@ -1020,6 +1073,8 @@ export class RegistrationService {
   async rejectRegistration(registrationId: string, body: { reason?: string }, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
     if (!reg) throw new NotFoundException('Registration not found');
+
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
     if (!this.stateService.canTransition(reg.status, RegistrationStatus.REJECTED)) {
       if (reg.status === RegistrationStatus.REJECTED) {
@@ -1093,10 +1148,11 @@ export class RegistrationService {
   /**
    * Export candidate registrations to CSV format.
    */
-  async exportRegistrationsCsv(query: ListRegistrationsQueryDto, _userId?: string | null): Promise<string> {
+  async exportRegistrationsCsv(query: ListRegistrationsQueryDto, userId?: string | null): Promise<string> {
+    const scopedUniversityId = await this.resolveEffectiveUniversityId(userId, query.university_id);
     const { rows } = await this.regRepo.findAllPaginated({
       sessionId: query.session_id,
-      universityId: query.university_id,
+      universityId: scopedUniversityId || undefined,
       status: query.status,
       biometrics: query.biometrics,
       q: query.q,
