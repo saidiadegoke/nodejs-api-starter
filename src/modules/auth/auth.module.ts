@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersModule } from '../users/users.module';
+import { MailModule } from '../mail';
 import { UserSessionEntity } from './entities/user-session.entity';
 import { PasswordResetEntity } from './entities/password-reset.entity';
 import { OtpCodeEntity } from './entities/otp-code.entity';
@@ -28,6 +29,7 @@ import { WellKnownController } from './controllers/well-known.controller';
       SocialAccountEntity,
     ]),
     UsersModule,
+    MailModule,
   ],
   controllers: [
     AuthController,

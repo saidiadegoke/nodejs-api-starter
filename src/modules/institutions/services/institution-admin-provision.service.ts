@@ -1,17 +1,20 @@
-import { Injectable, ConflictException, UnprocessableEntityException, NotFoundException } from '@nestjs/common';
-import * as crypto from 'crypto';
-import * as bcrypt from 'bcryptjs';
-import { DataSource } from 'typeorm';
-import { CommodLogger, LoggerFactory } from '../../../logger';
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
+import {
+  Injectable,
+  ConflictException,
+  UnprocessableEntityException,
+  NotFoundException,
+} from "@nestjs/common";
+import * as crypto from "crypto";
+import * as bcrypt from "bcryptjs";
+import { DataSource } from "typeorm";
+import { CommodLogger, LoggerFactory } from "../../../logger";
+import { MailService } from "../../mail";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-const LOWER = 'abcdefghijkmnopqrstuvwxyz';
-const DIGIT = '23456789';
-const SPECIAL = '!@#$%&*';
+const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const LOWER = "abcdefghijkmnopqrstuvwxyz";
+const DIGIT = "23456789";
+const SPECIAL = "!@#$%&*";
 
 export function generateSecurePassword(length = 12): string {
   const len = Math.max(8, length);
@@ -25,7 +28,7 @@ export function generateSecurePassword(length = 12): string {
     const j = crypto.randomInt(0, i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
-  return chars.join('');
+  return chars.join("");
 }
 
 @Injectable()
@@ -34,9 +37,12 @@ export class InstitutionAdminProvisionService {
 
   constructor(
     private readonly dataSource: DataSource,
+    private readonly mailService: MailService,
     private readonly loggerFactory: LoggerFactory,
   ) {
-    this.logger = this.loggerFactory.create(InstitutionAdminProvisionService.name);
+    this.logger = this.loggerFactory.create(
+      InstitutionAdminProvisionService.name,
+    );
   }
 
   async provisionOnUniversityCreate(
@@ -52,12 +58,12 @@ export class InstitutionAdminProvisionService {
       createdBy?: string | null;
     },
   ): Promise<{ provisionedUserId: string; institution_admin: any }> {
-    const loginEmail = String(body.email || '').trim();
+    const loginEmail = String(body.email || "").trim();
     if (!loginEmail) {
-      throw new UnprocessableEntityException('email is required');
+      throw new UnprocessableEntityException("email is required");
     }
     if (!EMAIL_RE.test(loginEmail)) {
-      throw new UnprocessableEntityException('Invalid email address');
+      throw new UnprocessableEntityException("Invalid email address");
     }
 
     const provisioned = await this.provisionAdmin({
@@ -71,13 +77,16 @@ export class InstitutionAdminProvisionService {
     // Send credentials notification asynchronously
     setImmediate(async () => {
       try {
-        if (jupebMailer?.sendInstitutionAdminCredentials) {
-          await jupebMailer.sendInstitutionAdminCredentials({
-            email: provisioned.user.email,
-            password: provisioned.passwordPlaintext,
-            firstName: provisioned.firstName || 'Admin',
-            universityName: context.universityName || 'your institution',
-          });
+        if (provisioned.passwordPlaintext) {
+          await this.mailService.sendInstitutionAdminCredentialsEmail(
+            provisioned.user.email,
+            {
+              email: provisioned.user.email,
+              password: provisioned.passwordPlaintext,
+              firstName: provisioned.firstName || "Admin",
+              universityName: context.universityName || "your institution",
+            },
+          );
         }
       } catch (err: any) {
         this.logger.error(
@@ -104,13 +113,22 @@ export class InstitutionAdminProvisionService {
     lastName?: string;
     universityId: string;
     createdBy?: string | null;
-  }): Promise<{ user: any; passwordPlaintext: string | null; firstName?: string; lastName?: string }> {
-    const normalizedEmail = String(params.email || '').trim().toLowerCase();
+  }): Promise<{
+    user: any;
+    passwordPlaintext: string | null;
+    firstName?: string;
+    lastName?: string;
+  }> {
+    const normalizedEmail = String(params.email || "")
+      .trim()
+      .toLowerCase();
     if (!normalizedEmail) {
-      throw new UnprocessableEntityException('email is required to provision an institution admin');
+      throw new UnprocessableEntityException(
+        "email is required to provision an institution admin",
+      );
     }
     if (!EMAIL_RE.test(normalizedEmail)) {
-      throw new UnprocessableEntityException('Invalid email address');
+      throw new UnprocessableEntityException("Invalid email address");
     }
 
     // Check existing user
@@ -161,16 +179,21 @@ export class InstitutionAdminProvisionService {
       }
 
       throw new ConflictException({
-        message: 'User with this email already exists',
-        details: { error_code: 'duplicate', field: 'email', value: normalizedEmail },
+        message: "User with this email already exists",
+        details: {
+          error_code: "duplicate",
+          field: "email",
+          value: normalizedEmail,
+        },
       });
     }
 
     const passwordPlaintext = generateSecurePassword(12);
     const passwordHash = await bcrypt.hash(passwordPlaintext, 10);
-    const firstName = params.firstName ? String(params.firstName).trim() : '';
-    const lastName = params.lastName ? String(params.lastName).trim() : '';
-    const displayName = [firstName, lastName].filter(Boolean).join(' ') || 'Institution Admin';
+    const firstName = params.firstName ? String(params.firstName).trim() : "";
+    const lastName = params.lastName ? String(params.lastName).trim() : "";
+    const displayName =
+      [firstName, lastName].filter(Boolean).join(" ") || "Institution Admin";
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -194,7 +217,13 @@ export class InstitutionAdminProvisionService {
              display_name = EXCLUDED.display_name,
              jupeb_university_id = EXCLUDED.jupeb_university_id,
              updated_at = NOW()`,
-        [user.id, firstName || null, lastName || null, displayName, params.universityId],
+        [
+          user.id,
+          firstName || null,
+          lastName || null,
+          displayName,
+          params.universityId,
+        ],
       );
 
       const roleRows = await queryRunner.query(
@@ -234,9 +263,11 @@ export class InstitutionAdminProvisionService {
   }
 
   async resendCredentials(email: string): Promise<any> {
-    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
     if (!normalizedEmail) {
-      throw new UnprocessableEntityException('email is required');
+      throw new UnprocessableEntityException("email is required");
     }
 
     const query = `
@@ -252,7 +283,9 @@ export class InstitutionAdminProvisionService {
     `;
     const rows = await this.dataSource.query(query, [normalizedEmail]);
     if (!rows.length) {
-      throw new NotFoundException('Institution admin user not found with this email');
+      throw new NotFoundException(
+        "Institution admin user not found with this email",
+      );
     }
 
     const user = rows[0];
@@ -264,21 +297,21 @@ export class InstitutionAdminProvisionService {
       [passwordHash, user.id],
     );
 
-    const firstName = user.first_name || 'Admin';
-    const universityName = user.university_name || 'your institution';
+    const firstName = user.first_name || "Admin";
+    const universityName = user.university_name || "your institution";
 
     try {
-      const jupebMailer = require('../../jupeb/services/jupeb-mailer.service');
-      if (jupebMailer?.sendInstitutionAdminCredentials) {
-        await jupebMailer.sendInstitutionAdminCredentials({
-          email: user.email,
-          password: passwordPlaintext,
-          firstName,
-          universityName,
-        });
-      }
+      await this.mailService.sendInstitutionAdminCredentialsEmail(user.email, {
+        email: user.email,
+        password: passwordPlaintext,
+        firstName,
+        universityName,
+      });
     } catch (err: any) {
-      this.logger.error(`Error sending credentials email: ${err.message}`, err.stack);
+      this.logger.error(
+        `Error sending credentials email: ${err.message}`,
+        err.stack,
+      );
     }
 
     return {

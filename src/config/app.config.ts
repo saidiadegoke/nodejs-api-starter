@@ -86,7 +86,7 @@ export const appConfig = registerAs<AppConfig>('app', () => {
   const env = validateConfig(process.env, EnvironmentVariablesValidator);
   return {
     nodeEnv: env.NODE_ENV || 'development',
-    name: env.APP_NAME || process.env.APP_NAME || 'JUPEB Portal API',
+    name: env.APP_NAME || process.env.APP_NAME || 'JUPEB',
     port: env.PORT || parseInt(process.env.PORT || '5269', 10),
     apiPrefix: 'api',
     apiBaseUrl: env.API_BASE_URL || process.env.API_BASE_URL || 'http://localhost:5269',

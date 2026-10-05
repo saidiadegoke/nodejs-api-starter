@@ -7,12 +7,14 @@ import { InstitutionAdminProvisionService } from './services/institution-admin-p
 import { InstitutionsController } from './controllers/institutions.controller';
 import { SharedModule } from '../../utils';
 import { SyncModule } from '../sync';
+import { MailModule } from '../mail';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([UniversityEntity]),
     SharedModule,
     SyncModule,
+    MailModule,
   ],
   controllers: [InstitutionsController],
   providers: [
