@@ -17,7 +17,7 @@ import {
   ApiCreatedResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../../utils';
+import { JwtAuthGuard, Audit } from '../../../utils';
 import { RbacService } from '../services/rbac.service';
 import {
   CreateRoleDto,
@@ -46,6 +46,7 @@ export class RbacController {
   }
 
   @Post('roles')
+  @Audit('role.create', { resourceType: 'role', resourceId: 'result:id', details: 'body' })
   @ApiOperation({ summary: 'Create a role', description: 'Creates a new custom role and optionally attaches permissions.' })
   @ApiCreatedResponse({ type: RoleResponseDto })
   async createRole(@Body() dto: CreateRoleDto, @Req() req: any) {
@@ -72,6 +73,11 @@ export class RbacController {
   }
 
   @Patch('roles/:roleId')
+  @Audit('role.update', {
+    resourceType: 'role',
+    resourceId: 'params:roleId',
+    details: 'body',
+  })
   @ApiOperation({ summary: 'Patch role', description: 'Updates display_name, description, status, or replaces permission set.' })
   @ApiOkResponse({ type: RoleResponseDto })
   async patchRole(@Param('roleId') roleId: string, @Body() dto: PatchRoleDto) {
@@ -85,6 +91,11 @@ export class RbacController {
   }
 
   @Delete('roles/:roleId')
+  @Audit('role.delete', {
+    resourceType: 'role',
+    resourceId: 'params:roleId',
+    durable: true,
+  })
   @ApiOperation({ summary: 'Delete role', description: 'Deletes a non-system role permanently.' })
   async deleteRole(@Param('roleId') roleId: string) {
     return this.rbacService.deleteRole(roleId);
@@ -99,6 +110,11 @@ export class RbacController {
   }
 
   @Post('roles/:roleId/permissions/:permissionId')
+  @Audit('role.permission_attach', {
+    resourceType: 'role',
+    resourceId: 'params:roleId',
+    details: ({ req }) => ({ permission_id: req.params?.permissionId }),
+  })
   @ApiOperation({ summary: 'Attach permission to role' })
   async attachPermission(
     @Param('roleId') roleId: string,
@@ -108,6 +124,11 @@ export class RbacController {
   }
 
   @Delete('roles/:roleId/permissions/:permissionId')
+  @Audit('role.permission_detach', {
+    resourceType: 'role',
+    resourceId: 'params:roleId',
+    details: ({ req }) => ({ permission_id: req.params?.permissionId }),
+  })
   @ApiOperation({ summary: 'Detach permission from role' })
   async detachPermission(
     @Param('roleId') roleId: string,
@@ -125,6 +146,7 @@ export class RbacController {
   }
 
   @Post('permissions')
+  @Audit('permission.create', { resourceType: 'permission', resourceId: 'result:id', details: 'body' })
   @ApiOperation({ summary: 'Create a permission' })
   @ApiCreatedResponse({ type: PermissionResponseDto })
   async createPermission(@Body() dto: CreatePermissionDto) {
@@ -139,6 +161,11 @@ export class RbacController {
   }
 
   @Patch('permissions/:permissionId')
+  @Audit('permission.update', {
+    resourceType: 'permission',
+    resourceId: 'params:permissionId',
+    details: 'body',
+  })
   @ApiOperation({ summary: 'Patch permission' })
   @ApiOkResponse({ type: PermissionResponseDto })
   async patchPermission(
@@ -149,6 +176,11 @@ export class RbacController {
   }
 
   @Delete('permissions/:permissionId')
+  @Audit('permission.delete', {
+    resourceType: 'permission',
+    resourceId: 'params:permissionId',
+    durable: true,
+  })
   @ApiOperation({ summary: 'Delete permission' })
   async deletePermission(@Param('permissionId') permissionId: string) {
     return this.rbacService.deletePermission(permissionId);
@@ -163,6 +195,13 @@ export class RbacController {
   }
 
   @Patch('users/:userId/roles')
+  @Audit('user.roles_update', {
+    resourceType: 'user',
+    resourceId: 'params:userId',
+    details: 'body',
+    // Privilege change — record it before the response is even flushed.
+    durable: true,
+  })
   @ApiOperation({ summary: 'Set user roles', description: 'Replaces the full role set for a user.' })
   async setUserRoles(
     @Param('userId') userId: string,

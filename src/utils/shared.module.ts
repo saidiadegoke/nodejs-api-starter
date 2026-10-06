@@ -1,6 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { LoggerModule } from '../logger/logger.module';
 import { ResponseEnvelopeInterceptor } from './interceptors/response-envelope.interceptor';
+import { AuditInterceptor } from './interceptors/audit.interceptor';
+import { AuditWriterService } from './services/audit-writer.service';
 import { AllExceptionsFilter } from './filters/all-exceptions.filter';
 import { RequestIdMiddleware } from './middleware/request-id.middleware';
 import { SearchAliasMiddleware } from './middleware/search-alias.middleware';
@@ -13,6 +15,8 @@ import { PermissionsGuard } from './guards/permissions.guard';
   imports: [LoggerModule],
   providers: [
     ResponseEnvelopeInterceptor,
+    AuditInterceptor,
+    AuditWriterService,
     AllExceptionsFilter,
     RequestIdMiddleware,
     SearchAliasMiddleware,
@@ -23,6 +27,8 @@ import { PermissionsGuard } from './guards/permissions.guard';
   exports: [
     LoggerModule,
     ResponseEnvelopeInterceptor,
+    AuditInterceptor,
+    AuditWriterService,
     AllExceptionsFilter,
     RequestIdMiddleware,
     SearchAliasMiddleware,

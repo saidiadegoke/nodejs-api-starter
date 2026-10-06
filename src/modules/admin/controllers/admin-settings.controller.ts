@@ -12,7 +12,7 @@ import {
   ApiOkResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../../utils';
+import { JwtAuthGuard, Audit } from '../../../utils';
 import { AdminSettingsService } from '../services/admin-settings.service';
 import { UpdatePlatformSettingDto, PlatformSettingResponseDto } from '../dto';
 
@@ -34,6 +34,12 @@ export class AdminSettingsController {
   }
 
   @Put()
+  @Audit('platform_setting.upsert', {
+    resourceType: 'platform_setting',
+    resourceId: 'result:key',
+    details: 'body',
+    durable: true,
+  })
   @ApiOperation({
     summary: 'Upsert a platform setting',
     description: 'Creates or updates a key-value runtime setting (feature flag, config override).',

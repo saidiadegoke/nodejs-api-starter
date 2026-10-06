@@ -58,7 +58,7 @@ export class InstitutionUserScopeService {
 
   async getProfileJupebUniversityId(userId: string): Promise<string | null> {
     const rows = await this.dataSource.query(
-      `SELECT p.jupeb_university_id, uu.university_id, uu.jupeb_university_id AS uu_jupeb_id
+      `SELECT p.jupeb_university_id, uu.university_id
        FROM profiles p
        LEFT JOIN user_universities uu ON uu.user_id = p.user_id AND uu.deleted_at IS NULL
        WHERE p.user_id = $1
@@ -68,12 +68,12 @@ export class InstitutionUserScopeService {
     );
     if (!rows.length) {
       const uuRows = await this.dataSource.query(
-        `SELECT university_id, jupeb_university_id FROM user_universities WHERE user_id = $1 AND deleted_at IS NULL ORDER BY is_primary DESC NULLS LAST LIMIT 1`,
+        `SELECT university_id FROM user_universities WHERE user_id = $1 AND deleted_at IS NULL ORDER BY is_primary DESC NULLS LAST LIMIT 1`,
         [userId],
       );
-      return uuRows[0]?.jupeb_university_id || uuRows[0]?.university_id || null;
+      return uuRows[0]?.university_id || null;
     }
-    const scoped = rows[0]?.jupeb_university_id || rows[0]?.uu_jupeb_id || rows[0]?.university_id || null;
+    const scoped = rows[0]?.jupeb_university_id || rows[0]?.university_id || null;
     if (scoped) return scoped;
 
     const roleRows = await this.dataSource.query(

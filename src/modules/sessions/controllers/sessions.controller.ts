@@ -41,6 +41,7 @@ import {
   JwtAuthGuard,
   PermissionsGuard,
   RequirePermission,
+  Audit,
 } from "../../../utils";
 
 @ApiTags("Academic Sessions")
@@ -148,6 +149,7 @@ export class SessionsController {
     "catalog/sessions/finalize-all-closed",
   ])
   @RequirePermission("sessions.update")
+  @Audit("session.finalize_all_closed", { resourceType: "session", details: "body" })
   @ApiOperation({
     summary: "Bulk finalize candidate numbers across all closed sessions",
     description:
@@ -176,6 +178,7 @@ export class SessionsController {
 
   @Post(["sessions/:sessionId/open", "catalog/sessions/:sessionId/open"])
   @RequirePermission("sessions.update")
+  @Audit("session.open", { resourceType: "session", resourceId: "params:sessionId" })
   @ApiOperation({
     summary: "Open an academic registration session",
     description:
@@ -191,6 +194,7 @@ export class SessionsController {
 
   @Post(["sessions/:sessionId/close", "catalog/sessions/:sessionId/close"])
   @RequirePermission("sessions.update")
+  @Audit("session.close", { resourceType: "session", resourceId: "params:sessionId" })
   @ApiOperation({
     summary: "Close an open academic session",
     description:
@@ -206,6 +210,7 @@ export class SessionsController {
 
   @Post(["sessions/:sessionId/reopen", "catalog/sessions/:sessionId/reopen"])
   @RequirePermission("system.admin")
+  @Audit("session.reopen", { resourceType: "session", resourceId: "params:sessionId" })
   @ApiOperation({
     summary: "Reopen a closed session (Super Admin only)",
     description:
@@ -252,6 +257,26 @@ export class SessionsController {
     "catalog/sessions/:sessionId/registration-lock",
   ])
   @RequirePermission("sessions.update")
+  @Audit(
+    ({ req }) => {
+      const body = req.body || {};
+      const isSelective = !!(body.university_ids || body.university_id);
+      if (isSelective) {
+        return body.locked
+          ? "session.institution_registration_lock"
+          : "session.institution_registration_unlock";
+      }
+      return body.locked ? "session.lock_registration" : "session.unlock_registration";
+    },
+    {
+      resourceType: "session",
+      resourceId: "params:sessionId",
+      details: "body",
+      // The lock state gates registration for a whole institution — do not let the
+      // audit row sit in the batch buffer.
+      durable: true,
+    },
+  )
   @ApiOperation({
     summary: "Lock or unlock registration for session or institutions",
     description:
@@ -271,6 +296,11 @@ export class SessionsController {
 
   @Post(["sessions/:sessionId/finalize-candidate-numbers"])
   @RequirePermission("sessions.update")
+  @Audit("session.finalize_candidate_numbers", {
+    resourceType: "session",
+    resourceId: "params:sessionId",
+    durable: true,
+  })
   @ApiOperation({
     summary: "Finalize candidate registration numbers for session",
     description: "Assigns official permanent exam candidate numbers.",
@@ -282,6 +312,7 @@ export class SessionsController {
 
   @Post(["sessions", "catalog/sessions"])
   @RequirePermission("sessions.update")
+  @Audit("session.create", { resourceType: "session", resourceId: "result:id", details: "body" })
   @ApiOperation({
     summary: "Create a new academic registration session",
     description:
@@ -309,6 +340,11 @@ export class SessionsController {
 
   @Patch(["sessions/:sessionId", "catalog/sessions/:sessionId"])
   @RequirePermission("sessions.update")
+  @Audit("session.update", {
+    resourceType: "session",
+    resourceId: "params:sessionId",
+    details: "body",
+  })
   @ApiOperation({
     summary: "Update academic session details",
     description:

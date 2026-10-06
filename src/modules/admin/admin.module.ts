@@ -22,6 +22,7 @@ import { AdminErrorLogController } from './controllers/admin-error-log.controlle
 import { AdminAuditController } from './controllers/admin-audit.controller';
 import { AdminDbCleanerController } from './controllers/admin-db-cleaner.controller';
 import { SharedModule } from '../../utils';
+import { RegistrationModule } from '../registration';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { SharedModule } from '../../utils';
       RequestLogEntity,
     ]),
     SharedModule,
+    RegistrationModule,
   ],
   controllers: [
     RbacController,

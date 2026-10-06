@@ -5,12 +5,14 @@ import {
 import { UserRepository, UserListOptions } from '../repositories/user.repository';
 import { ProfileRepository } from '../repositories/profile.repository';
 import { UserEntity } from '../entities/user.entity';
+import { InstitutionUserScopeService } from '../../registration/services/institution-user-scope.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly userRepo: UserRepository,
     private readonly profileRepo: ProfileRepository,
+    private readonly scopeService: InstitutionUserScopeService,
   ) {}
 
   private formatUser(row: any) {
@@ -47,7 +49,7 @@ export class UsersService {
     page = 1,
     limit = 10,
     search?: string,
-    _currentUserId?: string,
+    currentUserId?: string,
     options: {
       role?: string;
       include_all?: string | boolean;
@@ -60,9 +62,16 @@ export class UsersService {
     const limitNum = Math.max(1, parseInt(String(limit), 10) || 10);
     const offset = (pageNum - 1) * limitNum;
 
+    // Institution users only see members of their own university; super admins
+    // (and unbound users) keep the global list.
+    const universityId = currentUserId
+      ? await this.scopeService.effectiveUniversityId(currentUserId)
+      : null;
+
     const filterOptions: UserListOptions = {
       q: search?.trim() || undefined,
       role: options.role?.trim() || undefined,
+      universityId: universityId || undefined,
     };
 
     const users = await this.userRepo.findAll(limitNum, offset, filterOptions.q, filterOptions);
@@ -147,23 +156,46 @@ export class UsersService {
     return await this.userRepo.softDelete(userId);
   }
 
-  async getUsersStats() {
-    const rows = await (this.userRepo as any).dataSource.query(`
+  async getUsersStats(userId?: string | null) {
+    const universityId = userId ? await this.scopeService.effectiveUniversityId(userId) : null;
+    const scope = [universityId || null];
+    const inScope = `
+      p.jupeb_university_id = $1
+      OR EXISTS (
+        SELECT 1 FROM user_universities uu
+        WHERE uu.user_id = u.id
+          AND (uu.jupeb_university_id = $1 OR uu.university_id = $1)
+          AND uu.deleted_at IS NULL
+      )`;
+
+    const rows = await (this.userRepo as any).dataSource.query(
+      `
       SELECT
         COUNT(*)::int AS total_users,
-        COUNT(*) FILTER (WHERE status = 'active')::int AS active_users,
-        COUNT(*) FILTER (WHERE status <> 'active')::int AS inactive_users,
-        COUNT(*) FILTER (WHERE email_verified = true)::int AS verified_emails
-      FROM users
-      WHERE deleted_at IS NULL
-    `);
+        COUNT(*) FILTER (WHERE u.status = 'active')::int AS active_users,
+        COUNT(*) FILTER (WHERE u.status <> 'active')::int AS inactive_users,
+        COUNT(*) FILTER (WHERE u.email_verified = true)::int AS verified_emails
+      FROM users u
+      LEFT JOIN profiles p ON p.user_id = u.id
+      WHERE u.deleted_at IS NULL
+        AND ($1::uuid IS NULL OR ${inScope})
+    `,
+      scope,
+    );
 
-    const adminCountRows = await (this.userRepo as any).dataSource.query(`
+    const adminCountRows = await (this.userRepo as any).dataSource.query(
+      `
       SELECT COUNT(DISTINCT ur.user_id)::int AS count
       FROM user_roles ur
       JOIN roles r ON r.id = ur.role_id
+      JOIN users u ON u.id = ur.user_id
+      LEFT JOIN profiles p ON p.user_id = u.id
       WHERE r.name IN ('institution_admin', 'admin', 'super_admin')
-    `);
+        AND u.deleted_at IS NULL
+        AND ($1::uuid IS NULL OR ${inScope})
+    `,
+      scope,
+    );
 
     const roleCountRows = await (this.userRepo as any).dataSource.query(`
       SELECT COUNT(*)::int AS count

@@ -384,23 +384,52 @@ export class AdminRepository {
   // Admin Users Stats
   // ==========================================
 
-  async getUsersStats() {
-    const rows = await this.dataSource.query(`
+  /**
+   * Aggregate user stats. When `universityId` is supplied the user-centric
+   * counts are limited to that institution's members (profile binding or an
+   * active `user_universities` row); `null`/omitted keeps the global counts.
+   * The role catalog counts stay global — they describe the platform's roles,
+   * not institution membership.
+   */
+  async getUsersStats(universityId?: string | null) {
+    const scope = [universityId || null];
+    const inScope = `
+      p.jupeb_university_id = $1
+      OR EXISTS (
+        SELECT 1 FROM user_universities uu
+        WHERE uu.user_id = u.id
+          AND (uu.jupeb_university_id = $1 OR uu.university_id = $1)
+          AND uu.deleted_at IS NULL
+      )`;
+
+    const rows = await this.dataSource.query(
+      `
       SELECT
         COUNT(*)::int AS total_users,
-        COUNT(*) FILTER (WHERE status = 'active')::int AS active_users,
-        COUNT(*) FILTER (WHERE status <> 'active')::int AS inactive_users,
-        COUNT(*) FILTER (WHERE email_verified = true)::int AS verified_emails
-      FROM users
-      WHERE deleted_at IS NULL
-    `);
+        COUNT(*) FILTER (WHERE u.status = 'active')::int AS active_users,
+        COUNT(*) FILTER (WHERE u.status <> 'active')::int AS inactive_users,
+        COUNT(*) FILTER (WHERE u.email_verified = true)::int AS verified_emails
+      FROM users u
+      LEFT JOIN profiles p ON p.user_id = u.id
+      WHERE u.deleted_at IS NULL
+        AND ($1::uuid IS NULL OR ${inScope})
+    `,
+      scope,
+    );
 
-    const adminCountRows = await this.dataSource.query(`
+    const adminCountRows = await this.dataSource.query(
+      `
       SELECT COUNT(DISTINCT ur.user_id)::int AS count
       FROM user_roles ur
       JOIN roles r ON r.id = ur.role_id
+      JOIN users u ON u.id = ur.user_id
+      LEFT JOIN profiles p ON p.user_id = u.id
       WHERE r.name IN ('institution_admin', 'admin', 'super_admin')
-    `);
+        AND u.deleted_at IS NULL
+        AND ($1::uuid IS NULL OR ${inScope})
+    `,
+      scope,
+    );
 
     const roleCountRows = await this.dataSource.query(`
       SELECT COUNT(*)::int AS count
