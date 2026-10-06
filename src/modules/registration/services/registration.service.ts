@@ -536,9 +536,10 @@ export class RegistrationService {
         [registrationId],
       ),
       this.dataSource.query(
-        `SELECT id, registration_id, name, relationship, phone, email, address, source, is_active, created_at, updated_at
+        `SELECT id, registration_id, name, relationship, phone, email, address, source, created_at, updated_at
          FROM jupeb_next_of_kin
          WHERE registration_id = $1
+          AND deleted_at IS NULL
          ORDER BY created_at DESC
          LIMIT 1`,
         [registrationId],
@@ -1836,12 +1837,44 @@ export class RegistrationService {
     return this.buildStudentProfile(userId);
   }
 
+  private async restoreSubjectCombinationFromNinIntake(reg: RegistrationEntity): Promise<void> {
+    if (reg.subjectCombinationId || !reg.ninVerificationId || !reg.universityId) return;
+
+    const intakeRows = await this.dataSource.query(
+      `SELECT COALESCE(
+                intake_payload->>'subject_combination_id',
+                intake_payload->>'subjectCombinationId'
+              ) AS subject_combination_id
+         FROM jupeb_nin_verifications
+        WHERE id = $1`,
+      [reg.ninVerificationId],
+    );
+    const subjectCombinationId = intakeRows[0]?.subject_combination_id;
+    if (!subjectCombinationId || !UUID_REGEX.test(subjectCombinationId)) return;
+
+    const validRows = await this.dataSource.query(
+      `SELECT id
+         FROM jupeb_subject_combinations
+        WHERE id = $1
+          AND status = 'active'
+          AND deleted_at IS NULL
+          AND (is_global = true OR university_id = $2)
+        LIMIT 1`,
+      [subjectCombinationId, reg.universityId],
+    );
+    if (!validRows.length) return;
+
+    await this.regRepo.updateById(reg.id, { subjectCombinationId });
+    reg.subjectCombinationId = subjectCombinationId;
+  }
+
   /**
    * Build complete candidate profile for mobile and web self-service.
    */
   async buildStudentProfile(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found for current user');
+    await this.restoreSubjectCombinationFromNinIntake(reg);
 
     const [userRows, ninRows, nokRows, bioRows, uniRows, sessionRows, scRows] = await Promise.all([
       this.dataSource.query(
@@ -1867,7 +1900,7 @@ export class RegistrationService {
         `SELECT name, relationship, phone, email, address, source
            FROM jupeb_next_of_kin
           WHERE registration_id = $1
-            AND is_active = true
+            AND deleted_at IS NULL
           ORDER BY created_at DESC
           LIMIT 1`,
         [reg.id],
@@ -1885,7 +1918,7 @@ export class RegistrationService {
       ),
       reg.universityId
         ? this.dataSource.query(
-            `SELECT id, name, short_name, jupeb_prefix, institution_type
+            `SELECT id, name, short_name, jupeb_prefix, university_type AS institution_type
                FROM jupeb_universities
               WHERE id = $1`,
             [reg.universityId],
@@ -2053,6 +2086,7 @@ export class RegistrationService {
   async getSubmissionPreview(userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
+    await this.restoreSubjectCombinationFromNinIntake(reg);
 
     const details = await this.getRegistrationById(reg.id, userId);
     const docs = await this.docRepo.findByRegistrationId(reg.id);
@@ -2249,9 +2283,10 @@ export class RegistrationService {
   async updateSubjectCombination(dto: { subject_combination_id?: string }, userId: string) {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
+    if (!dto?.subject_combination_id) return reg;
 
     const updated = await this.regRepo.updateById(reg.id, {
-      subjectCombinationId: dto.subject_combination_id || null,
+      subjectCombinationId: dto.subject_combination_id,
     });
     return updated;
   }

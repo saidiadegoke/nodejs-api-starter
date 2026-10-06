@@ -3,6 +3,49 @@ const { getAppUnderTest } = require('./helpers/app-under-test');
 const pool = require('../database/pool');
 const AuthService = require('../modules/auth/services/auth.service');
 const otpService = require('../modules/auth/services/otp.service');
+const { PasswordResetService } = require('../modules/auth/services/password-reset.service');
+
+describe('Password reset institution eligibility', () => {
+  function createService(institutionState) {
+    const authRepo = {
+      findByIdentifier: jest.fn().mockResolvedValue({ id: 'user-1', email: 'admin@example.com' }),
+    };
+    const dataSource = {
+      query: jest.fn()
+        .mockResolvedValueOnce([institutionState])
+        .mockResolvedValueOnce([{ first_name: 'Admin' }]),
+    };
+    return {
+      authRepo,
+      dataSource,
+      service: new PasswordResetService({}, authRepo, dataSource, {}),
+    };
+  }
+
+  it('does not resolve an institution admin after all of their institutions are deleted', async () => {
+    const { authRepo, dataSource, service } = createService({
+      is_institution_admin: true,
+      has_active_institution: false,
+    });
+
+    await expect(service.loadUserForReset('admin@example.com')).resolves.toBeNull();
+    expect(authRepo.findByIdentifier).toHaveBeenCalledWith('admin@example.com');
+    expect(dataSource.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps password recovery available for an institution admin with an active institution', async () => {
+    const { dataSource, service } = createService({
+      is_institution_admin: true,
+      has_active_institution: true,
+    });
+
+    await expect(service.loadUserForReset('admin@example.com')).resolves.toMatchObject({
+      id: 'user-1',
+      first_name: 'Admin',
+    });
+    expect(dataSource.query).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('OTP — /auth/resend-otp + /auth/verify-phone', () => {
   let app;
