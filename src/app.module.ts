@@ -17,6 +17,7 @@ import {
   SharedModule,
   AllExceptionsFilter,
   ResponseEnvelopeInterceptor,
+  AuditInterceptor,
   RequestIdMiddleware,
   RequestLogMiddleware,
   SearchAliasMiddleware,
@@ -105,6 +106,12 @@ import { SyncModule } from './modules/sync';
     {
       provide: APP_INTERCEPTOR,
       useClass: ResponseEnvelopeInterceptor,
+    },
+    {
+      // Registered after the envelope interceptor so it observes the raw controller
+      // return value. Audits mutating routes; see AuditInterceptor.
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
     },
     {
       provide: APP_PIPE,

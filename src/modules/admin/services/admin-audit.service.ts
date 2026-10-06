@@ -1,53 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
+import {
+  AuditWriterService,
+  writeAuditLog,
+} from '../../../utils/services/audit-writer.service';
+import {
+  AUDIT_ACTION_TITLES,
+  formatAuditActionTitle,
+} from '../../../utils/constants/audit-actions';
 
-// ── Action-display mapping ──────────────────────────────────────────────────
-const ACTION_MAP: Record<string, string> = {
-  'session.create': 'Created new session',
-  'session.update': 'Updated session',
-  'session.open': 'Opened session',
-  'session.close': 'Closed session',
-  'session.reopen': 'Reopened session',
-  'session.lock_registration': 'Locked Registration',
-  'session.unlock_registration': 'Unlocked registration',
-  'session.finalize_candidate_numbers': 'Generated candidate numbers',
-  'catalog.university_create': 'Created new university',
-  'catalog.university_update': 'Updated university',
-  'catalog.university_activate': 'Activated university',
-  'catalog.university_deactivate': 'Deactivated university',
-  'catalog.subject_combination_create': 'Created new subjects combinations',
-  'catalog.subject_combination_update': 'Updated subject combination',
-  'catalog.subject_combination_delete': 'Deleted subject combination',
-  'registration.create': 'Created registration',
-  'registration.update': 'Updated registration',
-  'candidate.update': 'Updated candidate info',
-  'registration.bulk_upload': 'Bulk uploaded registrations',
-  'registration.approve': 'Approved registration',
-  'registration.reject': 'Rejected registration',
-  'registration.withdraw': 'Withdrew registration',
-  'registration.delete': 'Deleted registration',
-  'document.review_accept': 'Accepted document',
-  'document.review_reject': 'Rejected document',
-  'results.release_to_institutions': 'Released results to institutions',
-  'results.release_to_students': 'Released results to students',
-  'results.institution_entry_patch': 'Updated result grade entry',
-  'user.create': 'Created user',
-  'user.create_with_university': 'Created user with university',
-  'user.roles_update': 'Updated user roles',
-  'role.create': 'Created role',
-  'role.update': 'Updated role',
-  'role.delete': 'Deleted role',
-  'platform_setting.upsert': 'Updated platform setting',
-};
-
-function formatActionTitle(action: string | null): string {
-  if (!action) return 'Action';
-  if (ACTION_MAP[action]) return ACTION_MAP[action];
-  return action
-    .replace(/[._]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
+// Action titles live in the shared taxonomy so the write side (AuditInterceptor / @Audit)
+// and this read side cannot drift apart.
 
 function formatDetailsSummary(details: any): string {
   if (!details) return '';
@@ -104,6 +68,21 @@ export interface AuditLogOptions {
   ipAddress?: string | null;
   userAgent?: string | null;
   universityId?: string | null;
+  /**
+   * Legacy shorthand: the old Express call sites passed the raw request and let the
+   * service pull IP/user-agent off it. Accepted here so those call shapes keep working.
+   */
+  req?: any;
+}
+
+/** Fold the legacy `req` shorthand into the explicit ip/user-agent fields. */
+function normalizeAuditLogOptions(opts: AuditLogOptions) {
+  const { req, ...rest } = opts || ({} as AuditLogOptions);
+  return {
+    ...rest,
+    ipAddress: rest.ipAddress ?? req?.ip ?? req?.socket?.remoteAddress ?? null,
+    userAgent: rest.userAgent ?? req?.get?.('user-agent') ?? req?.headers?.['user-agent'] ?? null,
+  };
 }
 
 export interface AuditListFilters {
@@ -130,6 +109,7 @@ export class AdminAuditService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
+    private readonly auditWriter: AuditWriterService,
   ) {
     this.logger = this.loggerFactory.create(AdminAuditService.name);
   }
@@ -164,48 +144,22 @@ export class AdminAuditService {
   }
 
   // ── Log an audit event ───────────────────────────────────────────────────
+  /**
+   * Durable write: resolves once the row is committed. Delegates to the shared
+   * {@link AuditWriterService}, which also owns the batched hot path used by
+   * `AuditInterceptor`.
+   */
   async log(opts: AuditLogOptions): Promise<void> {
-    const {
-      actorUserId,
-      action,
-      resourceType = null,
-      resourceId = null,
-      details = null,
-      ipAddress = null,
-      userAgent = null,
-    } = opts;
-    let { universityId = null } = opts;
+    await this.auditWriter.log(normalizeAuditLogOptions(opts));
+  }
 
-    if (!actorUserId || !action) return;
-
-    try {
-      if (!universityId) {
-        const rows: { jupeb_university_id: string | null }[] = await this.dataSource.query(
-          `SELECT jupeb_university_id FROM profiles WHERE user_id = $1 LIMIT 1`,
-          [actorUserId],
-        );
-        universityId = rows[0]?.jupeb_university_id || null;
-      }
-
-      await this.dataSource.query(
-        `INSERT INTO admin_audit_logs (
-           admin_user_id, action, resource_type, resource_id,
-           details, ip_address, user_agent, jupeb_university_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          actorUserId,
-          action,
-          resourceType,
-          resourceId ? String(resourceId) : null,
-          details ? JSON.stringify(details) : null,
-          ipAddress,
-          userAgent,
-          universityId,
-        ],
-      );
-    } catch (err: any) {
-      this.logger.error(`Failed to write audit log: ${err.message}`);
-    }
+  /**
+   * Static compatibility shim for callers that never went through Nest DI — the legacy
+   * Express call sites and `src/tests/audit-trail.api.test.js`. Forwards to the writer
+   * instance registered when the module boots.
+   */
+  static async log(opts: AuditLogOptions): Promise<void> {
+    await writeAuditLog(normalizeAuditLogOptions(opts));
   }
 
   // ── List audit logs with pagination and RBAC scoping ─────────────────────
@@ -426,8 +380,8 @@ export class AdminAuditService {
         relatedTerms.add(searchLower.slice(0, -1));
       }
 
-      // Find any ACTION_MAP actions whose key or display title matches any related term
-      const matchingActionKeys = Object.entries(ACTION_MAP)
+      // Find any known audit actions whose key or display title matches a related term
+      const matchingActionKeys = Object.entries(AUDIT_ACTION_TITLES)
         .filter(([key, display]) => {
           const keyLower = key.toLowerCase();
           const dispLower = display.toLowerCase();
@@ -615,7 +569,7 @@ export class AdminAuditService {
 
     const logs = dataResult.map((row: any) => ({
       ...row,
-      action_display: formatActionTitle(row.action),
+      action_display: formatAuditActionTitle(row.action),
       details_display: formatDetailsSummary(row.details),
     }));
 

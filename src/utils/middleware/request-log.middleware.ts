@@ -2,6 +2,7 @@ import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { DataSource } from 'typeorm';
 import { CommodLogger } from '../../logger/commod-logger.service';
+import { redactBody } from '../utils/redact';
 
 const SLOW_THRESHOLD_MS = 3000;
 
@@ -57,14 +58,7 @@ export class RequestLogMiddleware implements NestMiddleware {
         if (!isError && !isSlow) return;
 
         // Redact sensitive fields before persisting
-        let sanitizedBody: any = null;
-        if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-          sanitizedBody = { ...req.body };
-          const sensitive = ['password', 'token', 'secret', 'api_key', 'apiKey', 'authorization'];
-          for (const key of sensitive) {
-            if (key in sanitizedBody) sanitizedBody[key] = '[REDACTED]';
-          }
-        }
+        const sanitizedBody = redactBody(req.body);
 
         const entry = {
           method: req.method,
