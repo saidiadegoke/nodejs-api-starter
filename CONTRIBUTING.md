@@ -113,7 +113,7 @@ src/modules/wallet/
 
 #### **1. Models (`models/*.model.js`)**
 
-**Purpose:** Direct database operations, SQL queries, data access
+**Purpose:** Direct database operations, SQL queries, data access.
 
 **Contains:**
 - SQL queries (SELECT, INSERT, UPDATE, DELETE)
