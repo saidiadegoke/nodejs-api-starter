@@ -30,7 +30,7 @@ export class PgBossDashboardMiddleware implements NestMiddleware, OnModuleDestro
 
     this.handlerPromise = (async () => {
       try {
-        const databaseUrl =
+        let databaseUrl =
           process.env.DATABASE_URL ||
           this.configService.get<string>('database.url') ||
           `postgres://${this.configService.get('database.user') || 'postgres'}:${encodeURIComponent(
@@ -38,6 +38,12 @@ export class PgBossDashboardMiddleware implements NestMiddleware, OnModuleDestro
           )}@${this.configService.get('database.host') || 'localhost'}:${
             this.configService.get('database.port') || 5432
           }/${this.configService.get('database.name') || 'reg_portal_db'}`;
+
+        // Match the app's SSL setting (encrypt, skip cert verification) unless the URL already sets sslmode
+        const ssl = this.configService.get<boolean>('database.ssl') ?? process.env.DB_SSL === 'true';
+        if (ssl && !/[?&]sslmode=/.test(databaseUrl)) {
+          databaseUrl += `${databaseUrl.includes('?') ? '&' : '?'}sslmode=no-verify`;
+        }
 
         const schema = process.env.PGBOSS_SCHEMA || 'pgboss';
 
