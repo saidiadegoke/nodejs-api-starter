@@ -22,9 +22,12 @@ import { InstitutionUserScopeService } from './services/institution-user-scope.s
 import { RegistrationFormPdfService } from './services/registration-form-pdf.service';
 import { RegistrationService } from './services/registration.service';
 import { RegistrationController } from './controllers/registration.controller';
+import { PublicRegistrationCleanupController } from './controllers/public-registration-cleanup.controller';
 import { NextOfKinController } from './controllers/next-of-kin.controller';
+import { RegistrationMailListener } from './listeners/registration-mail.listener';
 
 import { SyncModule } from '../sync';
+import { MailModule } from '../mail';
 
 @Module({
   imports: [
@@ -36,8 +39,9 @@ import { SyncModule } from '../sync';
       NinVerificationEntity,
     ]),
     SyncModule,
+    MailModule,
   ],
-  controllers: [RegistrationController, NextOfKinController],
+  controllers: [RegistrationController, PublicRegistrationCleanupController, NextOfKinController],
   providers: [
     RegistrationRepository,
     RegistrationDocumentRepository,
@@ -51,6 +55,7 @@ import { SyncModule } from '../sync';
     InstitutionUserScopeService,
     RegistrationFormPdfService,
     RegistrationService,
+    RegistrationMailListener,
   ],
   exports: [
     RegistrationRepository,

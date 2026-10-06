@@ -94,6 +94,15 @@ export class RegistrationEntity {
   @Column({ name: 'attendance_student_id', type: 'varchar', length: 100, nullable: true })
   attendanceStudentId: string | null;
 
+  @Column({ name: 'institution_code_expires_at', type: 'timestamp without time zone', nullable: true })
+  institutionCodeExpiresAt: Date | null;
+
+  @Column({ name: 'face_skipped_at', type: 'timestamp without time zone', nullable: true })
+  faceSkippedAt: Date | null;
+
+  @Column({ name: 'fingerprint_skipped_at', type: 'timestamp without time zone', nullable: true })
+  fingerprintSkippedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamp without time zone' })
   createdAt: Date;
 

@@ -31,7 +31,7 @@ import {
   SubjectCombinationResponseDto,
   BulkSubjectResultDto,
 } from '../dtos/subject-responses.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission, Audit } from '../../../utils';
 
 @ApiTags('Subject Combinations')
 @Controller()
@@ -99,6 +99,11 @@ export class SubjectCombinationsController {
   @Post(['catalog/subject-combinations', 'subject-combinations'])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission('subject_combinations.create')
+  @Audit('catalog.subject_combination_create', {
+    resourceType: 'subject_combination',
+    resourceId: 'result:id',
+    details: 'body',
+  })
   @ApiBearerAuth('JWT')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -113,6 +118,11 @@ export class SubjectCombinationsController {
   @Patch(['catalog/subject-combinations/:subjectCombinationId', 'subject-combinations/:subjectCombinationId'])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission('subject_combinations.update')
+  @Audit('catalog.subject_combination_update', {
+    resourceType: 'subject_combination',
+    resourceId: 'params:subjectCombinationId',
+    details: 'body',
+  })
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Update subject combination or its subjects membership',
@@ -132,6 +142,10 @@ export class SubjectCombinationsController {
   ])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission('subject_combinations.update')
+  @Audit('catalog.subject_combination_activate', {
+    resourceType: 'subject_combination',
+    resourceId: 'params:subjectCombinationId',
+  })
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Activate subject combination',
@@ -150,6 +164,10 @@ export class SubjectCombinationsController {
   ])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission('subject_combinations.update')
+  @Audit('catalog.subject_combination_deactivate', {
+    resourceType: 'subject_combination',
+    resourceId: 'params:subjectCombinationId',
+  })
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Deactivate subject combination',
@@ -168,6 +186,11 @@ export class SubjectCombinationsController {
   ])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission('subject_combinations.delete')
+  @Audit('catalog.subject_combination_delete', {
+    resourceType: 'subject_combination',
+    resourceId: 'params:subjectCombinationId',
+    durable: true,
+  })
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Soft-delete subject combination',
@@ -183,6 +206,14 @@ export class SubjectCombinationsController {
   @Post(['catalog/subject-combinations/bulk', 'subject-combinations/bulk'])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission('subject_combinations.create')
+  @Audit('catalog.subject_combination_bulk_upload', {
+    resourceType: 'subject_combination',
+    details: ({ result }) => ({
+      total: result?.total ?? 0,
+      succeeded: result?.succeeded ?? 0,
+      failed: result?.failed ?? 0,
+    }),
+  })
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Bulk create subject combinations via CSV',

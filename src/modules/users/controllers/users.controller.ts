@@ -81,11 +81,12 @@ export class UsersController {
   @RequirePermission('users.view')
   @ApiOperation({
     summary: 'User stats summary',
-    description: 'Aggregate counts: total, active, inactive users, verified emails, institution admins.',
+    description:
+      'Aggregate counts: total, active, inactive users, verified emails, institution admins. Scoped to the caller\'s institution; super admins see global counts.',
   })
   @ApiOkResponse({ description: 'User stats retrieved successfully' })
-  async getStats() {
-    return this.usersService.getUsersStats();
+  async getStats(@CurrentUser('user_id') userId: string) {
+    return this.usersService.getUsersStats(userId);
   }
 
   @Get(':userId')
@@ -96,10 +97,13 @@ export class UsersController {
   })
   @ApiParam({ name: 'userId', description: 'Target user UUID' })
   @ApiOkResponse({ description: 'User retrieved successfully' })
-  async getUserById(@Param('userId') userId: string) {
+  async getUserById(
+    @Param('userId') userId: string,
+    @CurrentUser('user_id') currentUserId: string,
+  ) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
       if (userId === 'stats') {
-        return this.getStats();
+        return this.getStats(currentUserId);
       }
       throw new NotFoundException('User not found');
     }

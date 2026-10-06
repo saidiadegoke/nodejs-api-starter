@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../utils/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../utils/decorators/current-user.decorator';
+import { Audit } from '../../../utils/decorators/audit.decorator';
 import { SubmissionService } from '../services/submission.service';
 import {
   AttachDocumentDto,
@@ -156,6 +157,11 @@ export class SubmissionController {
 
   @Post('institution/documents/:documentId/accept')
   @HttpCode(HttpStatus.OK)
+  @Audit('document.review_accept', {
+    resourceType: 'document',
+    resourceId: 'params:documentId',
+    details: ({ req }) => ({ status: 'accepted', review_note: req.body?.review_note }),
+  })
   @ApiOperation({
     summary: 'Institution review: accept document',
     description: 'Marks candidate document as accepted.',
@@ -177,6 +183,11 @@ export class SubmissionController {
 
   @Post('institution/documents/:documentId/reject')
   @HttpCode(HttpStatus.OK)
+  @Audit('document.review_reject', {
+    resourceType: 'document',
+    resourceId: 'params:documentId',
+    details: ({ req }) => ({ status: 'rejected', review_note: req.body?.review_note }),
+  })
   @ApiOperation({
     summary: 'Institution review: reject document',
     description: 'Marks candidate document as rejected with feedback reason.',

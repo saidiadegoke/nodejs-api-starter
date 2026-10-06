@@ -36,6 +36,7 @@ import {
   JwtAuthGuard,
   PermissionsGuard,
   RequirePermission,
+  Audit,
 } from "../../../utils";
 
 @ApiTags("Institutions & Universities")
@@ -85,6 +86,11 @@ export class InstitutionsController {
   @Post(["catalog/universities", "institutions"])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.create")
+  @Audit("catalog.university_create", {
+    resourceType: "university",
+    resourceId: "result:id",
+    details: "body",
+  })
   @ApiBearerAuth("JWT")
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -100,6 +106,11 @@ export class InstitutionsController {
   @Patch(["catalog/universities/:universityId", "institutions/:universityId"])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.update")
+  @Audit("catalog.university_update", {
+    resourceType: "university",
+    resourceId: "params:universityId",
+    details: "body",
+  })
   @ApiBearerAuth("JWT")
   @ApiOperation({
     summary: "Update institution profile",
@@ -119,6 +130,10 @@ export class InstitutionsController {
   ])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.update")
+  @Audit("catalog.university_activate", {
+    resourceType: "university",
+    resourceId: "params:universityId",
+  })
   @ApiBearerAuth("JWT")
   @ApiOperation({
     summary: "Activate an institution",
@@ -135,6 +150,10 @@ export class InstitutionsController {
   ])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.update")
+  @Audit("catalog.university_deactivate", {
+    resourceType: "university",
+    resourceId: "params:universityId",
+  })
   @ApiBearerAuth("JWT")
   @ApiOperation({
     summary: "Deactivate an institution",
@@ -148,6 +167,11 @@ export class InstitutionsController {
   @Delete(["catalog/universities/:universityId", "institutions/:universityId"])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.delete")
+  @Audit("catalog.university_delete", {
+    resourceType: "university",
+    resourceId: "params:universityId",
+    durable: true,
+  })
   @ApiBearerAuth("JWT")
   @ApiOperation({
     summary: "Soft-delete an institution",
@@ -162,6 +186,15 @@ export class InstitutionsController {
   @Post(["catalog/universities/bulk", "institutions/bulk"])
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.create")
+  @Audit("catalog.university_bulk_upload", {
+    resourceType: "university",
+    // The CSV itself is far too large for the audit row — keep the outcome counts.
+    details: ({ result }) => ({
+      total: result?.total ?? 0,
+      succeeded: result?.succeeded ?? 0,
+      failed: result?.failed ?? 0,
+    }),
+  })
   @ApiBearerAuth("JWT")
   @ApiOperation({
     summary: "Bulk upload universities via CSV",
@@ -187,6 +220,10 @@ export class InstitutionsController {
     "catalog/universities/resend-credentials",
     "institutions/resend-credentials",
   ])
+  @Audit("catalog.university_resend_credentials", {
+    resourceType: "university",
+    details: ({ req }) => ({ email: req.body?.email }),
+  })
   @ApiOperation({
     summary: "Resend welcome credentials to institution admin",
     description:
