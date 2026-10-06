@@ -138,6 +138,50 @@ export class PasswordResetService {
 
     if (!user) return null;
 
+    const institutionRows = await this.dataSource.query(
+      `SELECT
+         (
+           EXISTS (
+             SELECT 1
+             FROM user_roles ur
+             JOIN roles r ON r.id = ur.role_id
+             WHERE ur.user_id = $1
+               AND r.name = 'institution_admin'
+               AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM user_universities uu
+             WHERE uu.user_id = $1
+               AND uu.role = 'institution_admin'
+               AND uu.deleted_at IS NULL
+           )
+         ) AS is_institution_admin,
+         (
+           EXISTS (
+             SELECT 1
+             FROM user_universities uu
+             JOIN jupeb_universities ju ON ju.id = uu.university_id
+             WHERE uu.user_id = $1
+               AND uu.role = 'institution_admin'
+               AND uu.deleted_at IS NULL
+               AND ju.deleted_at IS NULL
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM profiles p
+             JOIN jupeb_universities ju ON ju.id = p.jupeb_university_id
+             WHERE p.user_id = $1
+               AND ju.deleted_at IS NULL
+           )
+         ) AS has_active_institution`,
+      [user.id],
+    );
+    const institutionAccess = institutionRows[0];
+    if (institutionAccess?.is_institution_admin && !institutionAccess?.has_active_institution) {
+      return null;
+    }
+
     const r = await this.dataSource.query(
       `SELECT first_name FROM profiles WHERE user_id = $1 LIMIT 1`,
       [user.id]

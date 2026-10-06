@@ -109,6 +109,31 @@ describe('PATCH /registration/me/academic-intake', () => {
     expect(cur.body.data.result_types).toEqual(['waec', 'neco']);
   });
 
+  it('preserves the subject combination when an academic-intake patch omits it', async () => {
+    if (!intakeMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const registrationId = await makeRegistration(token, 'AIP');
+    const before = await pool.query(
+      `SELECT subject_combination_id FROM jupeb_registrations WHERE id = $1`,
+      [registrationId],
+    );
+    const subjectCombinationId = before.rows[0]?.subject_combination_id;
+    expect(subjectCombinationId).toBeTruthy();
+
+    const patch = await request(app)
+      .patch('/registration/me/academic-intake')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ sittings_count: 2, result_types: ['waec', 'neco'] });
+    expect(patch.status).toBe(200);
+
+    const after = await pool.query(
+      `SELECT subject_combination_id FROM jupeb_registrations WHERE id = $1`,
+      [registrationId],
+    );
+    expect(after.rows[0]?.subject_combination_id).toBe(subjectCombinationId);
+  });
+
   it('rejects invalid sittings_count', async () => {
     if (!intakeMigrated) return;
     const token = await getAdminToken();

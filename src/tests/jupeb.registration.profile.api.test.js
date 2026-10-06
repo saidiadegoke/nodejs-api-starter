@@ -245,6 +245,58 @@ describe('GET /registration/me/profile', () => {
     expect(res.body.data.candidate.full_name).not.toMatch(/James Bonds/);
   });
 
+  it('restores a cleared subject combination from NIN intake before submission preview', async () => {
+    if (!registrationMigrated || !ninPendingMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    const { sessionId, universityId, subjectCombinationId } = await makeFixtures(token, 'SCR');
+    const nin = `7${String(Date.now()).slice(-10)}`;
+    const verify = await request(app)
+      .post('/identity/nin/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        nin,
+        provider: 'mock',
+        intake_payload: { subject_combination_id: subjectCombinationId },
+      });
+    expect(verify.status).toBe(200);
+
+    const createReg = await request(app)
+      .post('/registration/institution/registrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        session_id: sessionId,
+        university_id: universityId,
+        subject_combination_id: subjectCombinationId,
+        nin_verification_id: verify.body.data.verification_id,
+      });
+    expect(createReg.status).toBe(201);
+    const completed = await request(app)
+      .post('/auth/complete-registration')
+      .send({
+        code: createReg.body.data.institution_issued_code,
+        password: 'Strong@Password1',
+        email: `scr-${Date.now()}@example.com`,
+      });
+    expect(completed.status).toBe(201);
+
+    await pool.query(
+      `UPDATE jupeb_registrations SET subject_combination_id = NULL WHERE id = $1`,
+      [createReg.body.data.id],
+    );
+    const preview = await request(app)
+      .get('/registration/me/submission-preview')
+      .set('Authorization', `Bearer ${completed.body.data.access_token}`);
+
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.subjects_confirmed).toBe(true);
+    const stored = await pool.query(
+      `SELECT subject_combination_id FROM jupeb_registrations WHERE id = $1`,
+      [createReg.body.data.id],
+    );
+    expect(stored.rows[0].subject_combination_id).toBe(subjectCombinationId);
+  });
+
   // Regression: when a student has registrations across multiple
   // sessions, findLatestForUser must prefer the row in the currently
   // OPEN session — not the most-recently-touched row across all
