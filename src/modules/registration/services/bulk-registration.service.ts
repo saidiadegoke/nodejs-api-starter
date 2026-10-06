@@ -1,12 +1,20 @@
 import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as XLSX from 'xlsx';
 import { normalizeNin, hashNin, ninLast4 } from '../../identity/utils/identity-crypto.util';
 import { RegistrationStatus } from '../../../shared/enums';
 import { RegistrationEntity } from '../entities/registration.entity';
 import { NinVerificationEntity, NinVerificationStatus } from '../../identity/entities/nin-verification.entity';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
+import { SyncEvent } from '../../sync/constants/sync-events.enum';
+import { RegistrationEvent } from '../constants/registration-events.enum';
+import {
+  formatProvisionalCandidateCode,
+  generateUniqueInstitutionCode,
+  institutionCodeExpiresAt,
+} from '../utils/registration-numbering';
 
 export interface BulkRegistrationError {
   row: number;
@@ -209,6 +217,7 @@ export class BulkRegistrationService {
     private readonly ninVerificationRepo: Repository<NinVerificationEntity>,
     private readonly dataSource: DataSource,
     private readonly scopeService: InstitutionUserScopeService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async bulkUpload(
@@ -224,6 +233,13 @@ export class BulkRegistrationService {
     if (!universityId) {
       throw new UnprocessableEntityException('university_id is required');
     }
+
+    const universityRows = await this.dataSource.query(
+      `SELECT jupeb_prefix FROM jupeb_universities WHERE id = $1 LIMIT 1`,
+      [universityId],
+    );
+    const jupebPrefix = universityRows[0]?.jupeb_prefix || '';
+    const codeExpiresAt = institutionCodeExpiresAt();
 
     if (!fileBuffer || !fileBuffer.length) {
       throw new UnprocessableEntityException('No file buffer uploaded');
@@ -615,13 +631,16 @@ export class BulkRegistrationService {
         }
 
         currentSerial += 1;
-        const candidateCode = String(1000000 + currentSerial).slice(-7);
+        const candidateCode = formatProvisionalCandidateCode(jupebPrefix, currentSerial);
+        const institutionIssuedCode = await generateUniqueInstitutionCode(this.dataSource);
 
         const registration = this.registrationRepo.create({
           sessionId,
           universityId,
           ninVerificationId: ninVerification.id,
           subjectCombinationId: matchedCombo?.id || null,
+          institutionIssuedCode,
+          institutionCodeExpiresAt: codeExpiresAt,
           provisionalSerial: currentSerial,
           provisionalCandidateCode: candidateCode,
           status: RegistrationStatus.CODE_ISSUED,
@@ -632,6 +651,17 @@ export class BulkRegistrationService {
 
         registrations.push(savedRegistration);
         successful += 1;
+
+        // Notify the candidate (email) and push an instant CRMS/Attendance sync.
+        this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
+          registrationId: savedRegistration.id,
+          userId,
+        });
+        this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
+          registrationId: savedRegistration.id,
+          userId,
+          data: { status: RegistrationStatus.CODE_ISSUED },
+        });
       } catch (err: any) {
         errors.push({
           row: rowNumber,
@@ -643,7 +673,10 @@ export class BulkRegistrationService {
           nin: normNin,
           nin_last4: ninLast4(normNin),
           combination_code: rawCombo,
-          error: err.message || 'Failed to register candidate',
+          error:
+            (err?.code || err?.driverError?.code) === '23505'
+              ? 'Duplicate NIN registration for this session and university'
+              : err.message || 'Failed to register candidate',
         });
       }
     }

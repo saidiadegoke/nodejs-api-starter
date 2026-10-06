@@ -74,6 +74,24 @@ describe('JUPEB identity API', () => {
     expect(getRes.body.data.status).toBe('verified');
   });
 
+  it('rejects an intake email already used by an active account before NIN lookup', async () => {
+    if (!identityMigrated) return;
+    const token = await getAdminToken();
+    if (!token) return;
+
+    const res = await request(app)
+      .post('/identity/nin/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        nin: `7${String(Date.now()).slice(-10)}`,
+        provider: 'mock',
+        intake_payload: { email: adminCredentials.identifier.toUpperCase() },
+      });
+
+    expect(res.status).toBe(409);
+    expect(JSON.stringify(res.body)).toContain('email_in_use');
+  });
+
   it('persists intake_payload on verify; profile is NIN-only (intake only on data.intake_payload)', async () => {
     if (!identityMigrated) return;
     const token = await getAdminToken();

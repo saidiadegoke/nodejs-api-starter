@@ -1,8 +1,11 @@
 import {
   Injectable,
+  BadRequestException,
   NotFoundException,
   ConflictException,
   UnprocessableEntityException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
@@ -28,6 +31,12 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CandidateSyncQueueService } from '../../sync/services/candidate-sync-queue.service';
 import { SyncEvent } from '../../sync/constants/sync-events.enum';
+import { RegistrationEvent } from '../constants/registration-events.enum';
+import {
+  formatProvisionalCandidateCode,
+  generateUniqueInstitutionCode,
+  institutionCodeExpiresAt,
+} from '../utils/registration-numbering';
 
 
 const UUID_REGEX =
@@ -135,6 +144,313 @@ export class RegistrationService {
     this.logger = this.loggerFactory.create(RegistrationService.name);
   }
 
+  async cleanupStudentByEmail(
+    rawEmail?: string,
+    rawRegistrationId?: string,
+  ): Promise<void> {
+    let email = String(rawEmail || '').trim().toLowerCase();
+    const registrationId = String(rawRegistrationId || '').trim();
+    if (Boolean(email) === Boolean(registrationId)) {
+      throw new BadRequestException('Provide either email or registration_id');
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('A valid email is required');
+    }
+    if (registrationId && !UUID_REGEX.test(registrationId)) {
+      throw new BadRequestException('registration_id must be a valid UUID');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const requestedRegistrations: {
+        id: string;
+        user_id: string | null;
+        nin_verification_id: string | null;
+        email: string | null;
+      }[] = registrationId
+        ? await queryRunner.query(
+            `SELECT r.id, r.user_id, r.nin_verification_id, u.email
+             FROM jupeb_registrations r
+             LEFT JOIN users u ON u.id = r.user_id
+             WHERE r.id = $1`,
+            [registrationId],
+          )
+        : [];
+      if (!email && requestedRegistrations[0]?.email) {
+        email = requestedRegistrations[0].email.trim().toLowerCase();
+      }
+      const requestedRegistrationIds = requestedRegistrations.map((row) => row.id);
+      const requestedUserIds = requestedRegistrations
+        .map((row) => row.user_id)
+        .filter(Boolean);
+      const requestedNinIds = requestedRegistrations
+        .map((row) => row.nin_verification_id)
+        .filter(Boolean);
+
+      const users: { id: string; phone: string | null }[] = await queryRunner.query(
+        `SELECT u.id, u.phone
+         FROM users u
+         WHERE (LOWER(u.email) = NULLIF($1, '') OR u.id = ANY($2::uuid[]))
+           AND EXISTS (
+             SELECT 1
+             FROM jupeb_registrations r
+             WHERE r.user_id = u.id
+             UNION ALL
+             SELECT 1
+             FROM jupeb_nin_verifications nv
+             WHERE nv.requested_by = u.id
+               OR LOWER(nv.intake_payload->>'email') = NULLIF($1, '')
+               OR LOWER(nv.response_payload->>'email') = NULLIF($1, '')
+             UNION ALL
+             SELECT 1
+             FROM user_roles ur_s
+             JOIN roles r_s ON r_s.id = ur_s.role_id
+             WHERE ur_s.user_id = u.id
+               AND r_s.name = 'student'
+               AND (ur_s.expires_at IS NULL OR ur_s.expires_at > NOW())
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM user_roles ur
+             JOIN roles r ON r.id = ur.role_id
+             WHERE ur.user_id = u.id
+               AND r.name IN ('admin', 'super_admin', 'registrar', 'institution_admin', 'financial_admin')
+               AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+           )`,
+          [email, requestedUserIds],
+      );
+      const userIds = users.map((user) => user.id);
+      const phoneNumbers = users.map((user) => user.phone).filter(Boolean);
+
+      const ninRows: { id: string }[] = await queryRunner.query(
+        `SELECT id
+         FROM jupeb_nin_verifications
+         WHERE LOWER(intake_payload->>'email') = NULLIF($1, '')
+            OR LOWER(response_payload->>'email') = NULLIF($1, '')
+            OR requested_by = ANY($2::uuid[])
+            OR id = ANY($3::uuid[])`,
+        [email, userIds, requestedNinIds],
+      );
+      const ninIds = ninRows.map((row) => row.id);
+
+      const registrationRows: { id: string }[] = await queryRunner.query(
+        `SELECT id
+         FROM jupeb_registrations
+         WHERE id = ANY($1::uuid[])
+          OR user_id = ANY($2::uuid[])
+          OR nin_verification_id = ANY($3::uuid[])`,
+        [requestedRegistrationIds, userIds, ninIds],
+      );
+      const registrationIds = registrationRows.map((row) => row.id);
+      const registrationIdStrings = registrationIds.map(String);
+
+      const ticketRows: { id: string }[] = await queryRunner.query(
+        `SELECT id
+         FROM support_tickets
+         WHERE user_id = ANY($1::uuid[])
+            OR registration_id = ANY($2::uuid[])`,
+        [userIds, registrationIds],
+      );
+      const ticketIds = ticketRows.map((row) => row.id);
+
+      await queryRunner.query(
+        `DELETE FROM jupeb_payment_reconciliations
+         WHERE registration_id = ANY($1::uuid[])
+            OR payment_id IN (
+              SELECT id FROM payments
+              WHERE registration_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])
+            )`,
+        [registrationIds, userIds],
+      );
+      await queryRunner.query(
+        `DELETE FROM payments
+         WHERE registration_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])`,
+        [registrationIds, userIds],
+      );
+
+      if (ticketIds.length || userIds.length) {
+        await queryRunner.query(
+          `DELETE FROM support_ticket_messages
+           WHERE ticket_id = ANY($1::uuid[]) OR sender_id = ANY($2::uuid[])`,
+          [ticketIds, userIds],
+        );
+      }
+      if (ticketIds.length) {
+        await queryRunner.query(
+          `DELETE FROM support_tickets WHERE id = ANY($1::uuid[])`,
+          [ticketIds],
+        );
+      }
+
+      if (registrationIds.length) {
+        await queryRunner.query(
+          `DELETE FROM jupeb_biometric_captures WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_registration_documents WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_registration_status_history WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_registration_results WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_registration_scores WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_result_entries WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_next_of_kin WHERE registration_id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM ocr_results
+           WHERE job_id IN (
+             SELECT id FROM ocr_jobs WHERE metadata->>'registration_id' = ANY($1::text[])
+           )`,
+          [registrationIdStrings],
+        );
+        await queryRunner.query(
+          `DELETE FROM ocr_jobs WHERE metadata->>'registration_id' = ANY($1::text[])`,
+          [registrationIdStrings],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_registrations WHERE id = ANY($1::uuid[])`,
+          [registrationIds],
+        );
+      }
+
+      if (userIds.length) {
+        await queryRunner.query(
+          `DELETE FROM jupeb_registration_status_history WHERE changed_by = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_result_entries WHERE entered_by = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM jupeb_nin_verifications WHERE requested_by = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM user_universities WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM user_roles WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM user_permissions WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM user_sessions WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM user_preferences WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM social_accounts WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM password_resets WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM verification_tokens WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM otp_codes WHERE LOWER(email) = $1 OR phone = ANY($2::text[])`,
+          [email, phoneNumbers],
+        );
+        await queryRunner.query(
+          `DELETE FROM notifications WHERE user_id = ANY($1::uuid[]) OR actor_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM api_keys WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM webhooks WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM admin_audit_logs WHERE admin_user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM files WHERE uploaded_by = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM post_comment_likes WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM post_comments WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM post_likes WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM post_media WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM posts WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM profiles WHERE user_id = ANY($1::uuid[])`,
+          [userIds],
+        );
+        await queryRunner.query(
+          `DELETE FROM users WHERE id = ANY($1::uuid[])`,
+          [userIds],
+        );
+      }
+
+      await queryRunner.query(
+        `DELETE FROM jupeb_nin_verifications
+         WHERE ($1 <> '' AND (
+           LOWER(intake_payload->>'email') = $1
+           OR LOWER(response_payload->>'email') = $1
+         ))
+            OR id = ANY($2::uuid[])
+            OR id = ANY($3::uuid[])`,
+        [email, ninIds, requestedNinIds],
+      );
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   private async resolveEffectiveUniversityId(
     userId?: string | null,
     rawUniversityId?: string | null,
@@ -195,18 +511,22 @@ export class RegistrationService {
 
     await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
-    const [detailsRows, nokRows, resultRows, docRows, bioRows, historyRows] = await Promise.all([
+    const [detailsRows, nokRows, resultRows, docRows, bioRows, historyRows, subjectItemRows] = await Promise.all([
       this.dataSource.query(
         `SELECT r.*,
                 u.name AS university_name, u.code AS university_code, u.short_name AS university_short_name,
+                u.jupeb_prefix AS university_jupeb_prefix,
+                s.academic_year AS session_academic_year, s.year_short AS session_year_short,
                 p.first_name, p.last_name, p.display_name, p.gender, p.date_of_birth, p.profile_photo_url,
                 p.residential_address, p.state_of_origin, p.lga, p.place_of_birth,
                 c.name AS country,
-                usr.email, usr.phone,
+                usr.email, usr.phone, usr.email_verified, usr.phone_verified, usr.last_login_at,
+                nv.id AS nin_id,
                 nv.nin_last4, nv.status AS nin_status, nv.response_payload AS nin_payload, nv.intake_payload AS nin_intake,
                 sc.code AS subject_combination_code, sc.title AS subject_combination_title
          FROM jupeb_registrations r
          LEFT JOIN jupeb_universities u ON u.id = r.university_id
+         LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
          LEFT JOIN users usr ON usr.id = r.user_id
          LEFT JOIN profiles p ON p.user_id = r.user_id
          LEFT JOIN countries c ON p.country_id = c.id
@@ -240,15 +560,55 @@ export class RegistrationService {
         [registrationId],
       ).catch(() => []),
       this.historyRepo.findByRegistrationId(registrationId).catch(() => []),
+      this.dataSource
+        .query(
+          `SELECT i.id, i.position, i.subject_id, s.code, s.name
+             FROM jupeb_subject_combination_items i
+             JOIN jupeb_subjects s ON s.id = i.subject_id
+            WHERE i.combination_id = $1
+            ORDER BY i.position ASC`,
+          [reg.subjectCombinationId],
+        )
+        .catch(() => []),
     ]);
 
     const row = detailsRows[0] || {};
     const ninPayload = row.nin_payload || {};
     const ninIntake = row.nin_intake || {};
+    const ninStatus = row.nin_status || null;
 
-    // Demographic resolution with NIN fallback
+    // Resolve signed/public file URLs for submitted documents so reviewers can preview them.
+    const documentFileIds = (docRows as any[]).map((d) => d.fileId || d.file_id).filter(Boolean);
+    const documentUrlMap = new Map<string, string>();
+    if (documentFileIds.length) {
+      const fileRows = await this.dataSource
+        .query(`SELECT id, file_url FROM files WHERE id = ANY($1::uuid[])`, [documentFileIds])
+        .catch(() => []);
+      for (const f of fileRows) documentUrlMap.set(f.id, f.file_url);
+    }
+    const documents = (docRows as any[]).map((d) => ({
+      id: d.id,
+      requirement_id: d.requirementId ?? d.requirement_id ?? null,
+      status: d.status,
+      file_id: d.fileId ?? d.file_id ?? null,
+      source: d.source ?? null,
+      sitting: d.sitting ?? null,
+      download_url: documentUrlMap.get(d.fileId || d.file_id) || null,
+      review_note: d.reviewNote ?? d.review_note ?? null,
+      reviewed_at: d.reviewedAt ?? d.reviewed_at ?? null,
+      reviewed_by: d.reviewedBy ?? d.reviewed_by ?? null,
+      created_at: d.createdAt ?? d.created_at ?? null,
+      updated_at: d.updatedAt ?? d.updated_at ?? null,
+    }));
+
+    // Demographic resolution with NIN fallback. Names honor the verified-vs-pending
+    // precedence used by `resolveCandidateDisplayName`: when NIN is verified the
+    // provider response is authoritative, otherwise fall back to the institution-typed
+    // intake payload (the only place names exist before the candidate claims the code).
     const residentialAddress =
       row.residential_address ||
+      ninIntake.residential_address ||
+      ninIntake.address ||
       ninPayload.residence_address ||
       ninPayload.residential_address ||
       ninPayload.address ||
@@ -258,20 +618,43 @@ export class RegistrationService {
     const lga = row.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || null;
     const placeOfBirth =
       row.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place || null;
-    const firstName = row.first_name || ninPayload.first_name || ninPayload.firstname || null;
-    const lastName = row.last_name || ninPayload.last_name || ninPayload.surname || null;
-    const displayName =
-      row.display_name ||
-      (firstName && lastName ? `${firstName} ${lastName}` : null) ||
-      ninIntake.name ||
-      null;
+    const firstName =
+      ninStatus === 'verified' && ninPayload.first_name
+        ? String(ninPayload.first_name).trim()
+        : row.first_name || ninIntake.first_name || ninPayload.first_name || ninPayload.firstname || null;
+    const lastName =
+      ninStatus === 'verified' && ninPayload.last_name
+        ? String(ninPayload.last_name).trim()
+        : row.last_name || ninIntake.last_name || ninPayload.last_name || ninPayload.surname || null;
+    let displayName: string | null = null;
+    try {
+      const { resolveCandidateDisplayName } = require('../../jupeb/utils/candidate-name');
+      displayName = resolveCandidateDisplayName({
+        ninPayload,
+        intake: ninIntake,
+        profile: {
+          first_name: row.first_name,
+          last_name: row.last_name,
+          display_name: row.display_name,
+        },
+        ninStatus,
+      });
+    } catch {
+      displayName =
+        row.display_name ||
+        (firstName && lastName ? `${firstName} ${lastName}` : null) ||
+        ninIntake.name ||
+        null;
+    }
     const gender = row.gender || ninPayload.gender || null;
     const dateOfBirth = row.date_of_birth || ninPayload.date_of_birth || ninPayload.birthdate || null;
     const email = row.email || ninIntake.email || null;
-    const phone = row.phone || ninPayload.phone || ninIntake.phone || null;
+    const phone = row.phone || ninIntake.phone || ninPayload.phone || null;
+    const faceBio = bioRows.find((b: any) => b.capture_type === 'face');
+    const facePhotoUrl = faceBio?.file_url || null;
     const profilePhotoUrl =
+      facePhotoUrl ||
       row.profile_photo_url ||
-      bioRows.find((b: any) => b.capture_type === 'face')?.file_url ||
       ninPayload.photo_url ||
       null;
 
@@ -330,8 +713,16 @@ export class RegistrationService {
       resultsByExam[key].push(r);
     }
 
+    const candidateId =
+      row.jupeb_candidate_number ||
+      row.provisional_candidate_code ||
+      row.institution_issued_code ||
+      null;
+
     const candidateObj = {
       id: row.user_id || null,
+      name: displayName,
+      candidate_id: candidateId,
       first_name: firstName,
       last_name: lastName,
       display_name: displayName,
@@ -339,7 +730,13 @@ export class RegistrationService {
       date_of_birth: dateOfBirth,
       email,
       phone,
+      email_verified: row.email_verified ?? null,
+      phone_verified: row.phone_verified ?? null,
+      last_login_at: row.last_login_at || null,
       profile_photo_url: profilePhotoUrl,
+      photo_url: profilePhotoUrl,
+      face_photo_url: facePhotoUrl,
+      nin_photo_url: ninPayload.photo_url || null,
       residential_address: residentialAddress,
       state_of_origin: stateOfOrigin,
       lga,
@@ -347,8 +744,31 @@ export class RegistrationService {
       country: row.country || 'Nigeria',
     };
 
+    const hasFace = bioRows.some((b: any) => b.capture_type === 'face') || Boolean(row.face_skipped_at);
+    const hasFingerprint =
+      bioRows.some((b: any) => b.capture_type === 'fingerprint') || Boolean(row.fingerprint_skipped_at);
+    const biometricSkips = {
+      face: Boolean(row.face_skipped_at),
+      fingerprint: Boolean(row.fingerprint_skipped_at),
+    };
+
+    const subjectCombination = row.subject_combination_id
+      ? {
+          id: row.subject_combination_id,
+          code: row.subject_combination_code || '-',
+          title: row.subject_combination_title || row.subject_combination_code || '-',
+          subject_items: subjectItemRows,
+        }
+      : null;
+
+    // Never expose the raw NIN provider/intake payloads (contain the NIN and other
+    // PII) on the detail response — only the resolved fields above.
+    const rawBase: Record<string, any> = { ...(detailsRows[0] || reg) };
+    delete rawBase.nin_payload;
+    delete rawBase.nin_intake;
+
     return {
-      ...(detailsRows[0] || reg),
+      ...rawBase,
       // Flat properties for direct access
       residential_address: residentialAddress,
       state_of_origin: stateOfOrigin,
@@ -362,10 +782,11 @@ export class RegistrationService {
       email,
       phone,
       profile_photo_url: profilePhotoUrl,
-      code:
-        row.institution_issued_code ||
-        row.provisional_candidate_code ||
-        reg.provisionalCandidateCode,
+      // Only the onboarding (institution-issued) code belongs on `code`; the
+      // provisional code is internal and must not masquerade as it.
+      code: row.institution_issued_code || null,
+      institution_issued_code: row.institution_issued_code || null,
+      institution_code_expires_at: row.institution_code_expires_at || null,
       provisional_candidate_code: row.provisional_candidate_code || reg.provisionalCandidateCode,
       provisional_code: row.provisional_candidate_code || reg.provisionalCandidateCode,
       generated_code: row.provisional_candidate_code || reg.provisionalCandidateCode,
@@ -373,25 +794,36 @@ export class RegistrationService {
       candidate: candidateObj,
       basic_information: candidateObj,
       demographics: candidateObj,
-      subject_combination: row.subject_combination_id
+      nin_verification: row.nin_id ? { id: row.nin_id, status: ninStatus } : null,
+      university: row.university_id
         ? {
-            id: row.subject_combination_id,
-            code: row.subject_combination_code || '-',
-            title: row.subject_combination_title || row.subject_combination_code || '-',
+            id: row.university_id,
+            name: row.university_name || null,
+            short_name: row.university_short_name || null,
+            code: row.university_code || null,
+            jupeb_prefix: row.university_jupeb_prefix || null,
           }
         : null,
-      subjectCombination: row.subject_combination_id
+      session: row.session_id
         ? {
-            id: row.subject_combination_id,
-            code: row.subject_combination_code || '-',
-            title: row.subject_combination_title || row.subject_combination_code || '-',
+            id: row.session_id,
+            academic_year: row.session_academic_year || null,
+            year_short: row.session_year_short || null,
           }
         : null,
+      subject_combination: subjectCombination,
+      subjectCombination,
+      subject_combination_id: row.subject_combination_id || null,
+      biometric_status: hasFace || hasFingerprint ? 'yes' : 'no',
+      has_biometrics: hasFace || hasFingerprint,
+      biometric_skips: biometricSkips,
+      bucket: statusBucket(row.status),
+      status_reason: row.status_reason || null,
       next_of_kin: nextOfKin,
       result_entries: resultRows,
       results_by_examination: resultsByExam,
-      documents: docRows,
-      biometrics: bioRows,
+      documents,
+      biometrics: bioRows.map((b: any) => ({ ...b, preview_url: b.file_url || null })),
       status_history: historyRows,
     };
   }
@@ -435,20 +867,43 @@ export class RegistrationService {
       [dto.session_id],
     );
     const nextSerial = serialRows[0].next_serial;
-    const code = String(1000000 + nextSerial).slice(-7);
 
-    const entity = await this.regRepo.create({
-      sessionId: dto.session_id,
-      universityId: dto.university_id,
-      subjectCombinationId: dto.subject_combination_id || null,
-      ninVerificationId: dto.nin_verification_id || null,
-      userId: dto.user_id || null,
-      institutionIssuedCode: dto.institution_issued_code || null,
-      provisionalSerial: nextSerial,
-      provisionalCandidateCode: code,
-      status: RegistrationStatus.CODE_ISSUED,
-      createdBy: userId || null,
-    });
+    const prefixRows = await this.dataSource.query(
+      `SELECT jupeb_prefix FROM jupeb_universities WHERE id = $1 LIMIT 1`,
+      [dto.university_id],
+    );
+    const jupebPrefix = prefixRows[0]?.jupeb_prefix || '';
+
+    // Onboarding code: institution-supplied or auto-allocated (legacy parity).
+    const institutionIssuedCode =
+      dto.institution_issued_code || (await generateUniqueInstitutionCode(this.dataSource));
+    const code = formatProvisionalCandidateCode(jupebPrefix, nextSerial);
+
+    // The unique index `idx_jupeb_reg_session_uni_nin` (session + university + NIN)
+    // is the last line of defence behind the pre-check above — e.g. when the only
+    // existing row is rejected/withdrawn and therefore skipped by the pre-check.
+    // Surface it as a 409 rather than a 500, matching the legacy create path.
+    let entity: RegistrationEntity;
+    try {
+      entity = await this.regRepo.create({
+        sessionId: dto.session_id,
+        universityId: dto.university_id,
+        subjectCombinationId: dto.subject_combination_id || null,
+        ninVerificationId: dto.nin_verification_id || null,
+        userId: dto.user_id || null,
+        institutionIssuedCode,
+        institutionCodeExpiresAt: institutionCodeExpiresAt(),
+        provisionalSerial: nextSerial,
+        provisionalCandidateCode: code,
+        status: RegistrationStatus.CODE_ISSUED,
+        createdBy: userId || null,
+      });
+    } catch (err: any) {
+      if ((err?.code || err?.driverError?.code) === '23505') {
+        throw new ConflictException('Duplicate NIN registration for this session and university');
+      }
+      throw err;
+    }
 
     await this.historyRepo.create({
       registrationId: entity.id,
@@ -456,6 +911,17 @@ export class RegistrationService {
       toStatus: RegistrationStatus.CODE_ISSUED,
       reason: 'Created by institution admin',
       changedBy: userId || entity.id,
+    });
+
+    // Notify the candidate (email) and push an instant CRMS/Attendance sync.
+    this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
+      registrationId: entity.id,
+      userId,
+    });
+    this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
+      registrationId: entity.id,
+      userId,
+      data: { status: RegistrationStatus.CODE_ISSUED },
     });
 
     return {
@@ -472,11 +938,13 @@ export class RegistrationService {
       user_id: entity.userId,
       institutionIssuedCode: entity.institutionIssuedCode,
       institution_issued_code: entity.institutionIssuedCode,
+      institutionCodeExpiresAt: entity.institutionCodeExpiresAt,
+      institution_code_expires_at: entity.institutionCodeExpiresAt,
       provisionalSerial: entity.provisionalSerial,
       provisional_serial: entity.provisionalSerial,
       provisionalCandidateCode: entity.provisionalCandidateCode,
       provisional_candidate_code: entity.provisionalCandidateCode,
-      code: entity.institutionIssuedCode || entity.provisionalCandidateCode,
+      code: entity.institutionIssuedCode,
       generated_code: entity.provisionalCandidateCode,
       provisional_code: entity.provisionalCandidateCode,
       status: entity.status,
@@ -694,7 +1162,7 @@ export class RegistrationService {
   }
 
   /**
-   * Resend the provisional code to the candidate.
+   * Resend the institution-issued onboarding code to the candidate.
    */
   async resendProvisionalCode(registrationId: string, userId?: string | null) {
     const reg = await this.regRepo.findById(registrationId);
@@ -702,10 +1170,37 @@ export class RegistrationService {
 
     await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
 
+    if (reg.status !== RegistrationStatus.CODE_ISSUED) {
+      throw new UnprocessableEntityException(
+        'Registration code can only be resent while the registration is awaiting claim',
+      );
+    }
+    if (reg.userId) {
+      throw new UnprocessableEntityException('Registration code was already claimed');
+    }
+    const expiresAt = reg.institutionCodeExpiresAt;
+    if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+      throw new HttpException(
+        {
+          message: 'This institution code has expired',
+          error_code: 'code_expired',
+          details: { error_code: 'code_expired', expires_at: expiresAt },
+        },
+        HttpStatus.GONE,
+      );
+    }
+
+    // Re-dispatch the code-issued email to the candidate.
+    this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
+      registrationId,
+      userId,
+    });
+
     return {
-      registration_id: registrationId,
-      code: reg.provisionalCandidateCode,
-      message: 'Provisional code dispatched',
+      id: reg.id,
+      institution_issued_code: reg.institutionIssuedCode,
+      institution_code_expires_at: expiresAt || null,
+      resent: true,
     };
   }
 
@@ -1591,6 +2086,18 @@ export class RegistrationService {
     const reg = await this.regRepo.findByUserId(userId);
     if (!reg) throw new NotFoundException('No registration found');
 
+    const supportedSources = new Set(['waec', 'neco', 'nabteb', 'gce']);
+    const source = query?.source ? String(query.source).toLowerCase().trim() : null;
+    if (source && !supportedSources.has(source)) {
+      throw new UnprocessableEntityException('source must be waec|neco|nabteb|gce');
+    }
+    const sitting = query?.sitting !== undefined && query?.sitting !== null
+      ? Number(query.sitting)
+      : null;
+    if (sitting !== null && ![1, 2].includes(sitting)) {
+      throw new UnprocessableEntityException('sitting must be 1 or 2');
+    }
+
     let sql = `
       SELECT e.*, ores.confidence AS ocr_confidence, ores.exam_type_detected AS ocr_exam_type
       FROM jupeb_result_entries e
@@ -1598,30 +2105,88 @@ export class RegistrationService {
       WHERE e.registration_id = $1
     `;
     const params: any[] = [reg.id];
-    if (query?.source) {
-      params.push(query.source.toLowerCase().trim());
+    if (source) {
+      params.push(source);
       sql += ` AND LOWER(e.source) = $${params.length}`;
     }
-    if (query?.sitting) {
-      params.push(Number(query.sitting));
+    if (sitting !== null) {
+      params.push(sitting);
       sql += ` AND e.sitting = $${params.length}`;
     }
     sql += ` ORDER BY e.source ASC, e.sitting ASC, e.serial ASC`;
 
     const rows = await this.dataSource.query(sql, params);
+    const documents = (await this.docRepo.findByRegistrationId(reg.id)).filter(
+      (document) =>
+        ['submitted', 'accepted'].includes(document.status) &&
+        Boolean(document.source) &&
+        Boolean(document.sitting) &&
+        (!source || document.source.toLowerCase() === source) &&
+        (sitting === null || Number(document.sitting) === sitting),
+    );
+    const fileIds = Array.from(new Set(documents.map((document) => document.fileId).filter(Boolean)));
+    const ocrRows = fileIds.length
+      ? await this.dataSource.query(
+          `SELECT DISTINCT ON (oj.file_id)
+                  oj.file_id,
+                  oj.id AS ocr_job_id,
+                  oj.status AS ocr_status,
+                  ores.confidence AS ocr_confidence,
+                  ores.exam_type_detected AS ocr_exam_type
+             FROM ocr_jobs oj
+             LEFT JOIN ocr_results ores ON ores.job_id = oj.id
+            WHERE oj.file_id = ANY($1::uuid[])
+            ORDER BY oj.file_id, oj.created_at DESC`,
+          [fileIds],
+        )
+      : [];
+    const ocrByFile = new Map(ocrRows.map((row: any) => [row.file_id, row]));
 
-    // Group entries by (source, sitting) for frontends/mobile apps
+    // Seed groups from uploaded documents so mobile can render pending/failed OCR.
     const groups: Record<string, any> = {};
+    for (const document of documents) {
+      const key = `${document.source}-${document.sitting}`;
+      const ocr = ocrByFile.get(document.fileId) as any;
+      groups[key] = {
+        source: document.source,
+        sitting: document.sitting,
+        document_id: document.id,
+        document_status: document.status,
+        institution_type: document.institutionType || null,
+        file_id: document.fileId,
+        ocr_job_id: ocr?.ocr_job_id || null,
+        ocr_status: ocr?.ocr_status || null,
+        ocr_confidence:
+          ocr?.ocr_confidence !== null && ocr?.ocr_confidence !== undefined
+            ? Number(ocr.ocr_confidence)
+            : null,
+        ocr_exam_type: ocr?.ocr_exam_type || null,
+        grades: [],
+        subjects: [],
+        origins: new Set<string>(),
+      };
+    }
+
     for (const row of rows) {
       const key = `${row.source}-${row.sitting}`;
       if (!groups[key]) {
         groups[key] = {
           source: row.source,
           sitting: row.sitting,
+          document_id: null,
+          document_status: null,
+          institution_type: null,
+          file_id: null,
+          ocr_job_id: null,
+          ocr_status: null,
+          ocr_confidence: null,
+          ocr_exam_type: null,
           grades: [],
           subjects: [],
+          origins: new Set<string>(),
         };
       }
+      groups[key].origins.add(row.origin);
       const item = {
         id: row.id,
         sn: row.serial !== undefined && row.serial !== null ? row.serial : groups[key].grades.length + 1,
@@ -1640,9 +2205,25 @@ export class RegistrationService {
       groups[key].subjects.push(item);
     }
 
+    const results = Object.values(groups).map((group: any) => {
+      const grades = group.grades.sort((a: any, b: any) => a.sn - b.sn);
+      let parseStatus = grades.length > 0 ? 'complete' : 'empty';
+      if (group.ocr_status === 'queued' || group.ocr_status === 'processing') {
+        parseStatus = 'processing';
+      } else if (group.ocr_status === 'failed') {
+        parseStatus = 'failed';
+      }
+      return { ...group, grades, parse_status: parseStatus, origins: Array.from(group.origins) };
+    });
+    results.sort((a, b) =>
+      a.source === b.source
+        ? a.sitting - b.sitting
+        : String(a.source).localeCompare(String(b.source)),
+    );
+
     return {
       registration_id: reg.id,
-      results: Object.values(groups),
+      results,
       entries: rows,
     };
   }

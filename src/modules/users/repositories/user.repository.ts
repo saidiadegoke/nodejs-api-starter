@@ -86,7 +86,15 @@ export class UserRepository {
     }
 
     if (universityId) {
-      conditions.push(`p.jupeb_university_id = $${idx}`);
+      conditions.push(`(
+        p.jupeb_university_id = $${idx}
+        OR EXISTS (
+          SELECT 1 FROM user_universities uu
+          WHERE uu.user_id = u.id
+            AND (uu.jupeb_university_id = $${idx} OR uu.university_id = $${idx})
+            AND uu.deleted_at IS NULL
+        )
+      )`);
       values.push(universityId);
       idx++;
     }

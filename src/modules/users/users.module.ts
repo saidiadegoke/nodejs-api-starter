@@ -14,6 +14,7 @@ import { UserActivityService } from './services/user-activity.service';
 import { UserProfileController } from './controllers/user-profile.controller';
 import { UserActivityController } from './controllers/user-activity.controller';
 import { UsersController } from './controllers/users.controller';
+import { RegistrationModule } from '../registration';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { UsersController } from './controllers/users.controller';
       UserPreferenceEntity,
       UserActivityEntity,
     ]),
+    RegistrationModule,
   ],
   controllers: [
     UserProfileController,

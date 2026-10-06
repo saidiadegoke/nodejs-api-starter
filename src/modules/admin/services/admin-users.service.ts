@@ -8,6 +8,7 @@ import { DataSource } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
 import { AdminRepository } from '../repositories/admin.repository';
 import { CreateAdminUserDto, AdminUsersStatsResponseDto } from '../dto';
+import { InstitutionUserScopeService } from '../../registration/services/institution-user-scope.service';
 
 @Injectable()
 export class AdminUsersService {
@@ -16,13 +17,20 @@ export class AdminUsersService {
   constructor(
     private readonly adminRepo: AdminRepository,
     private readonly dataSource: DataSource,
+    private readonly scopeService: InstitutionUserScopeService,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(AdminUsersService.name);
   }
 
-  async getStats(): Promise<AdminUsersStatsResponseDto> {
-    return this.adminRepo.getUsersStats();
+  /**
+   * User stats for the caller's institution. Super admins (and any user without
+   * an institution binding) get the global counts; institution users only see
+   * their own members.
+   */
+  async getStats(userId?: string | null): Promise<AdminUsersStatsResponseDto> {
+    const universityId = userId ? await this.scopeService.effectiveUniversityId(userId) : null;
+    return this.adminRepo.getUsersStats(universityId);
   }
 
   async createUserWithUniversity(dto: CreateAdminUserDto, actorUserId?: string | null) {
@@ -72,9 +80,9 @@ export class AdminUsersService {
 
       if (dto.university_id) {
         await manager.query(
-          `INSERT INTO user_universities (user_id, jupeb_university_id, is_primary, created_at, updated_at)
+          `INSERT INTO user_universities (user_id, university_id, is_primary, created_at, updated_at)
            VALUES ($1, $2, true, NOW(), NOW())
-           ON CONFLICT (user_id, jupeb_university_id) DO NOTHING`,
+           ON CONFLICT (user_id, university_id) DO NOTHING`,
           [newUser.id, dto.university_id],
         );
       }

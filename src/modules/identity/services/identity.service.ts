@@ -6,13 +6,17 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LoggerFactory } from '../../../logger';
 import { NinVerificationRepository } from '../repositories/nin-verification.repository';
 import { BiometricCaptureRepository } from '../repositories/biometric-capture.repository';
 import { NinAdapterService } from './nin-adapter.service';
 import { NinEventsService } from './nin-events.service';
+import { NinWriteThroughService } from './nin-write-through.service';
 import { NinVerificationStatus } from '../entities/nin-verification.entity';
 import { BiometricCaptureEntity, BiometricCaptureType } from '../entities/biometric-capture.entity';
+import { RegistrationEvent } from '../../registration/constants/registration-events.enum';
+import { SyncEvent } from '../../sync/constants/sync-events.enum';
 import {
   VerifyNinDto,
   PatchNinIntakeDto,
@@ -56,6 +60,8 @@ export class IdentityService {
     private readonly biometricRepo: BiometricCaptureRepository,
     private readonly ninAdapter: NinAdapterService,
     private readonly ninEvents: NinEventsService,
+    private readonly ninWriteThrough: NinWriteThroughService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
@@ -177,7 +183,7 @@ export class IdentityService {
 
     try {
       const rows = await this.dataSource.query(
-        `SELECT sc.id, sc.code, sc.title, sc.status, sc.is_active, sc.university_id, sc.created_at, sc.updated_at,
+        `SELECT sc.id, sc.code, sc.title, sc.status, sc.university_id, sc.created_at, sc.updated_at,
                 COALESCE(
                   json_agg(
                     json_build_object(
@@ -274,6 +280,26 @@ export class IdentityService {
     const hashed = hashNin(normalized);
     const last4 = ninLast4(normalized);
     const intakePayload = dto.intake_payload || {};
+    const intakeEmail = typeof intakePayload.email === 'string'
+      ? intakePayload.email.trim().toLowerCase()
+      : '';
+
+    if (intakeEmail) {
+      const existingUsers = await this.dataSource.query(
+        `SELECT id
+         FROM users
+         WHERE LOWER(email) = $1
+           AND deleted_at IS NULL
+         LIMIT 1`,
+        [intakeEmail],
+      );
+      if (existingUsers.length) {
+        throw new ConflictException({
+          message: 'Email already in use',
+          error_code: 'email_in_use',
+        });
+      }
+    }
 
     const targetSessionId = dto.session_id || (intakePayload as any)?.session_id || null;
     if (targetSessionId) {
@@ -383,7 +409,15 @@ export class IdentityService {
   async retryVerification(verificationId: string, userId?: string | null): Promise<any> {
     const row = await this.ninRepo.findById(verificationId);
     if (!row) throw new NotFoundException('Verification not found');
+
     if (row.status === NinVerificationStatus.VERIFIED) {
+      // Idempotent: the record is already resolved, but the institution pressed
+      // retry to repair a candidate — re-apply the payload and re-issue the code.
+      await this.applyVerificationSideEffects(
+        verificationId,
+        (row.responsePayload as Record<string, any>) || {},
+        userId,
+      );
       return this.sanitizeVerification(row, userId);
     }
 
@@ -395,11 +429,13 @@ export class IdentityService {
     });
 
     if (result.outcome === 'verified') {
+      const payload = (result.profile as Record<string, any>) || {};
       const updated = await this.ninRepo.markVerified(verificationId, {
-        response_payload: result.profile || {},
+        response_payload: payload,
         provider_reference: result.provider_reference,
       });
       await this.ninEvents.emitNinResolved(verificationId, 'verified');
+      await this.applyVerificationSideEffects(verificationId, payload, userId);
       return this.sanitizeVerification(updated, userId);
     }
 
@@ -418,6 +454,75 @@ export class IdentityService {
     });
     await this.ninEvents.emitNinResolved(verificationId, 'failed');
     return this.sanitizeVerification(updated || row, userId);
+  }
+
+  /**
+   * Post-verification side effects for every registration linked to a resolved
+   * NIN verification (legacy M.12 write-through + onboarding code re-issue):
+   *
+   *  - push the NIM-issued demographics into `profiles` / `jupeb_next_of_kin`
+   *    (non-destructive: existing values win), and
+   *  - re-send the institution-issued onboarding code to candidates who have
+   *    not claimed it yet.
+   *
+   * Best-effort: a failure here must never fail the verification response.
+   */
+  private async applyVerificationSideEffects(
+    verificationId: string,
+    ninPayload: Record<string, any>,
+    userId?: string | null,
+  ): Promise<void> {
+    let linked: Array<{ id: string }> = [];
+    try {
+      linked = await this.dataSource.query(
+        `SELECT id FROM jupeb_registrations WHERE nin_verification_id = $1`,
+        [verificationId],
+      );
+    } catch (err: any) {
+      this.logger.warn(`[retry] linked-registration lookup failed: ${err?.message}`);
+      return;
+    }
+    if (!linked.length) return;
+
+    for (const reg of linked) {
+      try {
+        await this.ninWriteThrough.applyNinPayloadToRegistration({
+          registrationId: reg.id,
+          ninPayload,
+          userId: userId || null,
+        });
+      } catch (err: any) {
+        this.logger.warn(`[retry] NIN write-through failed for ${reg.id}: ${err?.message}`);
+      }
+
+      // Instant CRMS/Attendance sync for the repaired candidate.
+      this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
+        registrationId: reg.id,
+        userId,
+        data: { reason: 'nin_verification_retry' },
+      });
+    }
+
+    // Re-issue the onboarding code only for registrations still awaiting claim —
+    // once claimed the code is spent and the email is meaningless.
+    try {
+      const awaitingClaim = await this.dataSource.query(
+        `SELECT id FROM jupeb_registrations
+          WHERE nin_verification_id = $1
+            AND user_id IS NULL
+            AND status = 'code_issued'
+            AND institution_issued_code IS NOT NULL`,
+        [verificationId],
+      );
+      for (const reg of awaitingClaim) {
+        this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
+          registrationId: reg.id,
+          userId,
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[retry] code re-issue lookup failed: ${err?.message}`);
+    }
   }
 
   async getVerification(verificationId: string, userId?: string | null): Promise<any> {

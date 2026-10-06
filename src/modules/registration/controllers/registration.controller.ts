@@ -40,7 +40,7 @@ import {
   CodeStatusResponseDto,
   SubmissionPreviewResponseDto,
 } from '../dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission, Audit } from '../../../utils';
 
 @ApiTags('Registrations & Candidates')
 @ApiBearerAuth('JWT')
@@ -64,6 +64,18 @@ export class RegistrationController {
 
   @Post('institution/registrations/bulk-upload')
   @RequirePermission('candidate.create', 'jupeb.registration.manage')
+  @Audit('registration.bulk_upload', {
+    resourceType: 'registration',
+    universityId: 'body:university_id',
+    // No single resourceId — the legacy row carried the per-run counts instead.
+    details: ({ req, result }) => ({
+      session_id: req.body?.session_id,
+      university_id: req.body?.university_id,
+      succeeded_count: result?.succeeded_count ?? result?.successful ?? 0,
+      failed_count: result?.failed_count ?? result?.failed ?? 0,
+      skipped_count: result?.skipped_count ?? 0,
+    }),
+  })
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
@@ -92,6 +104,15 @@ export class RegistrationController {
 
   @Post('institution/registrations')
   @RequirePermission('candidate.create', 'jupeb.registration.manage')
+  @Audit('registration.create', {
+    resourceType: 'registration',
+    resourceId: 'result:id',
+    universityId: 'result:university_id',
+    details: ({ result }) => ({
+      session_id: result?.session_id,
+      institution_issued_code: result?.institution_issued_code,
+    }),
+  })
   @ApiOperation({
     summary: 'Create individual candidate registration',
     description: 'Registers a candidate, assigns next provisional serial and 7-digit candidate code.',
@@ -109,6 +130,11 @@ export class RegistrationController {
 
   @Patch('institution/registrations/:registrationId')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.update', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    details: 'body',
+  })
   @ApiOperation({
     summary: 'Update candidate registration record',
     description: 'Updates assigned subject combination, institution issued code, or status remarks.',
@@ -131,6 +157,11 @@ export class RegistrationController {
 
   @Patch('institution/registrations/:registrationId/candidate')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('candidate.update', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    details: 'body',
+  })
   @ApiOperation({
     summary: 'Update candidate profile information',
     description: 'Updates student demographic and profile data.',
@@ -153,6 +184,10 @@ export class RegistrationController {
 
   @Post('institution/registrations/:registrationId/resend-code')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.resend_code', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+  })
   @ApiOperation({
     summary: 'Resend registration provisional code to candidate',
     description: 'Dispatches provisional access code via SMS/Email to the student.',
@@ -167,6 +202,12 @@ export class RegistrationController {
 
   @Delete('institution/registrations/:registrationId')
   @RequirePermission('candidate.delete', 'jupeb.registration.manage')
+  @Audit('registration.delete', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    // Destructive — the row must not sit in the write buffer.
+    durable: true,
+  })
   @ApiOperation({
     summary: 'Withdraw / delete candidate registration',
     description: 'Transitions registration status to withdrawn.',
@@ -291,6 +332,16 @@ export class RegistrationController {
 
   @Post('institution/registrations/batch')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit(({ req }) => `registration.batch_${req.body?.action || 'action'}`, {
+    resourceType: 'registration',
+    details: ({ req, result }) => ({
+      action: req.body?.action,
+      total: result?.total,
+      accepted_count: result?.accepted_count,
+      rejected_count: result?.rejected_count,
+      ids: req.body?.ids,
+    }),
+  })
   @ApiOperation({
     summary: 'Execute batch status action on multiple registrations',
   })
@@ -310,6 +361,10 @@ export class RegistrationController {
 
   @Post('institution/registrations/:registrationId/approve')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.approve', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+  })
   @ApiOperation({
     summary: 'Approve candidate registration',
     description: 'Clears candidate for final matric number generation.',
@@ -325,6 +380,11 @@ export class RegistrationController {
 
   @Post('institution/registrations/:registrationId/reject')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.reject', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    details: ({ req }) => ({ reason: req.body?.reason }),
+  })
   @ApiOperation({
     summary: 'Reject candidate registration',
   })
@@ -339,6 +399,11 @@ export class RegistrationController {
 
   @Post('institution/registrations/:registrationId/withdraw')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.withdraw', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    details: ({ req }) => ({ reason: req.body?.reason }),
+  })
   @ApiOperation({
     summary: 'Withdraw candidate registration',
   })
