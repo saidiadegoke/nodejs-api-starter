@@ -245,7 +245,7 @@ export class AdminDbCleanerService {
         );
         await this.safeQuery(
           queryRunner,
-          `DELETE FROM jupeb_result_entries WHERE entered_by = ANY($1::uuid[])`,
+          `DELETE FROM jupeb_result_entries WHERE created_by = ANY($1::uuid[])`,
           [candidateUserIds],
         );
 
@@ -274,11 +274,25 @@ export class AdminDbCleanerService {
             [tbl],
           );
           if (!check.rows.length) continue;
-          const res = await this.safeQuery(
-            queryRunner,
-            `DELETE FROM "${tbl}" WHERE user_id = ANY($1::uuid[])`,
-            [candidateUserIds],
-          );
+
+          let res;
+          if (tbl === 'post_media') {
+            res = await this.safeQuery(
+              queryRunner,
+              `DELETE FROM post_media
+               WHERE post_id IN (
+                 SELECT id FROM posts WHERE user_id = ANY($1::uuid[])
+               )`,
+              [candidateUserIds],
+            );
+          } else {
+            res = await this.safeQuery(
+              queryRunner,
+              `DELETE FROM "${tbl}" WHERE user_id = ANY($1::uuid[])`,
+              [candidateUserIds],
+            );
+          }
+
           stats[tbl] = res.rowCount;
         }
 

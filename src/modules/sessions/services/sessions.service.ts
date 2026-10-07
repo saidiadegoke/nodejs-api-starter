@@ -356,14 +356,29 @@ export class SessionsService {
       // Continue each university's sequence after numbers it already has,
       // so re-running finalization will not produce duplicates.
       const counters = new Map(alreadyNumbered);
-      const updates = pending.map((reg) => {
-        const next = (counters.get(reg.universityId) ?? 0) + 1;
+      const updates: Array<{ id: string; jupebCandidateNumber: string }> = [];
+
+      for (const reg of pending) {
+        let next = (counters.get(reg.universityId) ?? 0) + 1;
+        let candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
+
+        while (true) {
+          const existing = await manager.query(
+            `SELECT id
+             FROM jupeb_registrations
+             WHERE jupeb_candidate_number = $1 AND id <> $2
+             LIMIT 1`,
+            [candidateNumber, reg.id],
+          );
+
+          if (!existing.length) break;
+          next += 1;
+          candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
+        }
+
         counters.set(reg.universityId, next);
-        return {
-          id: reg.id,
-          jupebCandidateNumber: `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`,
-        };
-      });
+        updates.push({ id: reg.id, jupebCandidateNumber: candidateNumber });
+      }
 
       await this.registrationRepo.assignCandidateNumbers(updates, manager);
       return updates.length;
