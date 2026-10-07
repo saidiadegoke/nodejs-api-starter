@@ -337,7 +337,7 @@ export class RegistrationService {
           [userIds],
         );
         await queryRunner.query(
-          `DELETE FROM jupeb_result_entries WHERE entered_by = ANY($1::uuid[])`,
+          `DELETE FROM jupeb_result_entries WHERE created_by = ANY($1::uuid[])`,
           [userIds],
         );
         await queryRunner.query(
@@ -413,7 +413,10 @@ export class RegistrationService {
           [userIds],
         );
         await queryRunner.query(
-          `DELETE FROM post_media WHERE user_id = ANY($1::uuid[])`,
+          `DELETE FROM post_media
+           WHERE post_id IN (
+             SELECT id FROM posts WHERE user_id = ANY($1::uuid[])
+           )`,
           [userIds],
         );
         await queryRunner.query(
@@ -1731,8 +1734,23 @@ export class RegistrationService {
     );
 
     for (const u of unfinalized) {
-      const serial = String(u.seq).padStart(4, '0');
-      const candidateNumber = `${u.year_short}${u.jupeb_prefix}${serial}`;
+      let serial = Number(u.seq) || 1;
+      let candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
+
+      while (true) {
+        const existing = await this.dataSource.query(
+          `SELECT id
+           FROM jupeb_registrations
+           WHERE jupeb_candidate_number = $1 AND id <> $2
+           LIMIT 1`,
+          [candidateNumber, u.id],
+        );
+
+        if (!existing.length) break;
+        serial += 1;
+        candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
+      }
+
       await this.regRepo.updateById(u.id, {
         jupebCandidateNumber: candidateNumber,
         updatedBy: userId || null,
