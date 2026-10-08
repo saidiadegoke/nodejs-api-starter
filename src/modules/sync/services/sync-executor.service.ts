@@ -83,18 +83,38 @@ export class SyncExecutorService {
         // 1. Sync to Attendance
         try {
           const attendancePayloads = await this.getStudentSyncPayloads(chunk);
-          if (attendancePayloads.length > 0) {
+          const validAttendancePayloads = attendancePayloads.filter((p: any) => {
+            if (!Array.isArray(p.subjects) || p.subjects.length !== 3) {
+              const reason = !Array.isArray(p.subjects)
+                ? 'subjects is missing or not an array'
+                : `expected exactly 3 subjects, got ${p.subjects.length}`;
+              this.logger.warn(
+                `[AttendanceSync] Skipping candidate ${p.jupebNumber || p.registration_id} from Attendance sync: ${reason}`,
+              );
+              return false;
+            }
+            return true;
+          });
+
+          const skippedCount = attendancePayloads.length - validAttendancePayloads.length;
+          if (skippedCount > 0) {
+            errors.push(
+              `[AttendanceSync] ${skippedCount} candidate(s) skipped due to missing or invalid subject combinations (Attendance requires exactly 3 subjects)`,
+            );
+          }
+
+          if (validAttendancePayloads.length > 0) {
             const provider = attendanceProvider.get();
             if (typeof provider.syncStudents === 'function') {
-              const response = await provider.syncStudents({ students: attendancePayloads });
+              const response = await provider.syncStudents({ students: validAttendancePayloads });
               this.logger.log(
-                `[AttendanceSync] ${attendancePayloads.length} candidate(s) synced successfully`,
+                `[AttendanceSync] ${validAttendancePayloads.length} candidate(s) synced successfully`,
               );
 
               if (response && response.results && Array.isArray(response.results)) {
                 for (const res of response.results) {
                   if (res.registrationCode && res.student_id) {
-                    const payloadItem = attendancePayloads.find(
+                    const payloadItem = validAttendancePayloads.find(
                       (p: any) => p.jupebNumber === res.jupebNumber,
                     );
                     if (payloadItem && payloadItem.registration_id) {
@@ -108,7 +128,7 @@ export class SyncExecutorService {
                   }
                 }
               }
-              attendanceSuccess += attendancePayloads.length;
+              attendanceSuccess += validAttendancePayloads.length;
             }
           }
         } catch (attErr: any) {
@@ -480,7 +500,7 @@ export class SyncExecutorService {
         r.institution_issued_code AS "stdInstNumber",
         p.first_name AS "firstName",
         p.last_name AS "lastName",
-        p.middle_name AS "middleName",
+        COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName') AS "middleName",
         COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
         s.academic_year AS "sessionAcademicYear",
         s.year_short AS "sessionYearShort",
@@ -495,6 +515,7 @@ export class SyncExecutorService {
       LEFT JOIN profiles p ON p.user_id = u.id
       LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
       LEFT JOIN jupeb_registration_sessions s ON s.id = r.session_id
+      LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
       WHERE r.id = ANY($1::uuid[])
     `;
     const rows = await this.dataSource.query(query, [registrationIds]);
