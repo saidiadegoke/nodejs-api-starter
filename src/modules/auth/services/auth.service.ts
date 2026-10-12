@@ -590,7 +590,7 @@ export class AuthService {
         let docsStats: any = null;
         let bioStats: any = null;
         if (r.status === RegistrationStatus.PENDING_DOCUMENTS) {
-          const [docsRes, bioRes, reqRes] = await Promise.all([
+          const [docsRes, bioRes, reqRes, entriesRes] = await Promise.all([
             this.dataSource.query(
               `SELECT COUNT(*)::int AS uploaded
                  FROM jupeb_registration_documents
@@ -611,10 +611,18 @@ export class AuthService {
                   AND is_active = true`,
               [r.university_id]
             ),
+            this.dataSource.query(
+              `SELECT COUNT(*)::int AS entries
+                 FROM jupeb_result_entries
+                WHERE registration_id = $1`,
+              [r.id]
+            ),
           ]);
+          const hasManualResults = (entriesRes[0]?.entries ?? 0) > 0;
           docsStats = {
             uploaded: docsRes[0]?.uploaded ?? 0,
             required: reqRes[0]?.required ?? 0,
+            has_manual_results: hasManualResults,
           };
           bioStats = { captured: bioRes[0]?.captured ?? 0 };
         }
@@ -683,7 +691,8 @@ export class AuthService {
         return RegistrationNextStep.CONFIRM_SUBJECTS;
       case RegistrationStatus.PENDING_DOCUMENTS: {
         if (docs !== null && bio !== null) {
-          const docsComplete = docs.required === 0 || docs.uploaded >= docs.required;
+          const docsComplete =
+            docs.required === 0 || docs.uploaded >= docs.required || Boolean(docs.has_manual_results);
           const bioComplete = bio.captured > 0;
           if (docsComplete && bioComplete) return RegistrationNextStep.SUBMIT_FOR_REVIEW;
           if (docsComplete) return RegistrationNextStep.UPLOAD_BIOMETRICS;

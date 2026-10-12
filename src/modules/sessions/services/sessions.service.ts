@@ -5,11 +5,13 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { isUUID } from 'class-validator';
 import { DataSource, In, Repository } from 'typeorm';
 import { LoggerFactory } from '../../../logger';
 import { CandidateSyncQueueService } from '../../sync/services/candidate-sync-queue.service';
 import { RegistrationStatus } from '../../registration/entities/registration.entity';
+import { RegistrationEvent } from '../../registration/constants/registration-events.enum';
 import { UniversityEntity } from '../../institutions/entities/university.entity';
 import {
   CreateSessionDto,
@@ -84,6 +86,7 @@ export class SessionsService {
     private readonly universityRepo: Repository<UniversityEntity>,
     private readonly sessionContextService: SessionContextService,
     private readonly candidateSyncQueueService: CandidateSyncQueueService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
@@ -341,7 +344,7 @@ export class SessionsService {
     const session = await this.getById(id);
     await this.eventRepo.insertEvent(id, SessionEventType.FinalizationTriggered, {}, userId);
 
-    const assignedCount = await this.dataSource.transaction(async (manager) => {
+    const { assignedCount, updates } = await this.dataSource.transaction(async (manager) => {
       // Serialise concurrent finalizations of the same session
       await manager.findOne(AcademicSessionEntity, {
         where: { id },
@@ -381,7 +384,7 @@ export class SessionsService {
       }
 
       await this.registrationRepo.assignCandidateNumbers(updates, manager);
-      return updates.length;
+      return { assignedCount: updates.length, updates };
     });
 
     await this.sessionRepo.setFinalNumbersGeneratedAt(id, userId);
@@ -394,6 +397,19 @@ export class SessionsService {
     });
 
     this.logger.log(`Finalized ${assignedCount} candidate numbers for session ${id}`);
+
+    // Dispatch candidate number email notifications
+    for (const u of updates) {
+      try {
+        this.eventEmitter.emit(RegistrationEvent.MATRIC_ASSIGNED, {
+          registrationId: u.id,
+          candidateNumber: u.jupebCandidateNumber,
+          userId,
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed to emit matric assigned event for ${u.id}: ${err?.message}`);
+      }
+    }
 
 
     return {

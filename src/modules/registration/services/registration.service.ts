@@ -1230,6 +1230,16 @@ export class RegistrationService {
       changedBy: userId || registrationId,
     });
 
+    try {
+      this.eventEmitter.emit(RegistrationEvent.WITHDRAWN, {
+        registrationId,
+        userId,
+        reason: 'Deleted by institution admin',
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit WITHDRAWN event for ${registrationId}: ${e?.message}`);
+    }
+
     const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
 
     return {
@@ -1369,7 +1379,29 @@ export class RegistrationService {
             });
             continue;
           }
+          const delRecipientRows = await this.dataSource.query(
+            `SELECT u.email, p.first_name, uni.name AS university_name
+               FROM jupeb_registrations r
+               LEFT JOIN users u ON u.id = r.user_id
+               LEFT JOIN profiles p ON p.user_id = r.user_id
+               LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
+              WHERE r.id = $1`,
+            [id],
+          );
+          const delRecipient = delRecipientRows[0];
           await this.dataSource.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [id]);
+          try {
+            this.eventEmitter.emit(RegistrationEvent.DELETED, {
+              registrationId: id,
+              userId,
+              email: delRecipient?.email,
+              firstName: delRecipient?.first_name,
+              universityName: delRecipient?.university_name,
+              reason,
+            });
+          } catch (e: any) {
+            this.logger.warn(`Failed to emit DELETED event for ${id}: ${e?.message}`);
+          }
           accepted.push({ id, status: 'deleted' });
           continue;
         }
@@ -1379,6 +1411,32 @@ export class RegistrationService {
             `UPDATE jupeb_registrations SET dashboard_unlocked_at = NOW(), updated_at = NOW() WHERE id = $1`,
             [id],
           );
+          try {
+            this.eventEmitter.emit(RegistrationEvent.UNLOCKED, {
+              registrationId: id,
+              userId,
+            });
+          } catch (e: any) {
+            this.logger.warn(`Failed to emit UNLOCKED event for ${id}: ${e?.message}`);
+          }
+          accepted.push({ id, status: reg.status });
+          continue;
+        }
+
+        if (rawAction === 'lock') {
+          await this.dataSource.query(
+            `UPDATE jupeb_registrations SET dashboard_unlocked_at = NULL, updated_at = NOW() WHERE id = $1`,
+            [id],
+          );
+          try {
+            this.eventEmitter.emit(RegistrationEvent.LOCKED, {
+              registrationId: id,
+              userId,
+              reason,
+            });
+          } catch (e: any) {
+            this.logger.warn(`Failed to emit LOCKED event for ${id}: ${e?.message}`);
+          }
           accepted.push({ id, status: reg.status });
           continue;
         }
@@ -1432,6 +1490,16 @@ export class RegistrationService {
           if (fresh) {
             await this.eventsService.emitRegistrationApproved(fresh, userId);
           }
+          try {
+            this.eventEmitter.emit(RegistrationEvent.APPROVED, {
+              registrationId: id,
+              userId,
+              candidateNumber: fresh?.jupebCandidateNumber,
+              reason,
+            });
+          } catch (e: any) {
+            this.logger.warn(`Failed to emit APPROVED event for ${id}: ${e?.message}`);
+          }
           accepted.push({ id, status: RegistrationStatus.APPROVED });
         } else if (rawAction === 'reject') {
           if (!this.stateService.canTransition(reg.status, RegistrationStatus.REJECTED)) {
@@ -1451,6 +1519,15 @@ export class RegistrationService {
             reason: reason || 'Batch rejected by institution admin',
             changedBy: userId || id,
           });
+          try {
+            this.eventEmitter.emit(RegistrationEvent.REJECTED, {
+              registrationId: id,
+              userId,
+              reason,
+            });
+          } catch (e: any) {
+            this.logger.warn(`Failed to emit REJECTED event for ${id}: ${e?.message}`);
+          }
           accepted.push({ id, status: RegistrationStatus.REJECTED });
         } else if (rawAction === 'withdraw') {
           if (!this.stateService.canTransition(reg.status, RegistrationStatus.WITHDRAWN)) {
@@ -1470,6 +1547,15 @@ export class RegistrationService {
             reason: reason || 'Batch withdrawn by institution admin',
             changedBy: userId || id,
           });
+          try {
+            this.eventEmitter.emit(RegistrationEvent.WITHDRAWN, {
+              registrationId: id,
+              userId,
+              reason,
+            });
+          } catch (e: any) {
+            this.logger.warn(`Failed to emit WITHDRAWN event for ${id}: ${e?.message}`);
+          }
           accepted.push({ id, status: RegistrationStatus.WITHDRAWN });
         }
       } catch (err: any) {
@@ -1553,6 +1639,17 @@ export class RegistrationService {
       await this.eventsService.emitRegistrationApproved(updated, userId);
     }
 
+    try {
+      this.eventEmitter.emit(RegistrationEvent.APPROVED, {
+        registrationId,
+        userId,
+        candidateNumber: updated?.jupebCandidateNumber,
+        reason: body?.reason,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit APPROVED event for ${registrationId}: ${e?.message}`);
+    }
+
     const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
 
     return {
@@ -1601,6 +1698,16 @@ export class RegistrationService {
       changedBy: userId || registrationId,
     });
 
+    try {
+      this.eventEmitter.emit(RegistrationEvent.REJECTED, {
+        registrationId,
+        userId,
+        reason,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit REJECTED event for ${registrationId}: ${e?.message}`);
+    }
+
     const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
 
     return {
@@ -1631,6 +1738,16 @@ export class RegistrationService {
       changedBy: userId || registrationId,
     });
 
+    try {
+      this.eventEmitter.emit(RegistrationEvent.WITHDRAWN, {
+        registrationId,
+        userId,
+        reason,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit WITHDRAWN event for ${registrationId}: ${e?.message}`);
+    }
+
     const enriched = await this.getRegistrationById(registrationId, userId).catch(() => updated || reg);
 
     return {
@@ -1641,6 +1758,122 @@ export class RegistrationService {
       status: RegistrationStatus.WITHDRAWN,
       id: registrationId,
       ...enriched,
+    };
+  }
+
+  /**
+   * Unlock candidate dashboard features for editing.
+   */
+  async unlockRegistration(registrationId: string, userId?: string | null) {
+    const reg = await this.regRepo.findById(registrationId);
+    if (!reg) throw new NotFoundException('Registration not found');
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+
+    await this.dataSource.query(
+      `UPDATE jupeb_registrations SET dashboard_unlocked_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [registrationId],
+    );
+
+    try {
+      this.eventEmitter.emit(RegistrationEvent.UNLOCKED, {
+        registrationId,
+        userId,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit UNLOCKED event for ${registrationId}: ${e?.message}`);
+    }
+
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => reg);
+    return {
+      success: true,
+      message: 'Candidate dashboard unlocked',
+      data: enriched,
+      registration: enriched,
+      id: registrationId,
+      ...enriched,
+    };
+  }
+
+  /**
+   * Lock candidate dashboard features against further editing.
+   */
+  async lockRegistration(registrationId: string, body?: { reason?: string }, userId?: string | null) {
+    const reg = await this.regRepo.findById(registrationId);
+    if (!reg) throw new NotFoundException('Registration not found');
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+
+    await this.dataSource.query(
+      `UPDATE jupeb_registrations SET dashboard_unlocked_at = NULL, updated_at = NOW() WHERE id = $1`,
+      [registrationId],
+    );
+
+    try {
+      this.eventEmitter.emit(RegistrationEvent.LOCKED, {
+        registrationId,
+        userId,
+        reason: body?.reason,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit LOCKED event for ${registrationId}: ${e?.message}`);
+    }
+
+    const enriched = await this.getRegistrationById(registrationId, userId).catch(() => reg);
+    return {
+      success: true,
+      message: 'Candidate dashboard locked',
+      data: enriched,
+      registration: enriched,
+      id: registrationId,
+      ...enriched,
+    };
+  }
+
+  /**
+   * Hard-delete a candidate registration.
+   */
+  async deleteRegistration(registrationId: string, body?: { reason?: string }, userId?: string | null) {
+    const reg = await this.regRepo.findById(registrationId);
+    if (!reg) throw new NotFoundException('Registration not found');
+    await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+
+    const deletable =
+      reg.status === RegistrationStatus.REJECTED ||
+      reg.status === RegistrationStatus.WITHDRAWN ||
+      (reg.status === RegistrationStatus.CODE_ISSUED && !reg.userId);
+    if (!deletable) {
+      throw new UnprocessableEntityException(`Cannot delete registration in status ${reg.status}`);
+    }
+
+    const recipientRows = await this.dataSource.query(
+      `SELECT u.email, p.first_name, uni.name AS university_name
+         FROM jupeb_registrations r
+         LEFT JOIN users u ON u.id = r.user_id
+         LEFT JOIN profiles p ON p.user_id = r.user_id
+         LEFT JOIN jupeb_universities uni ON uni.id = r.university_id
+        WHERE r.id = $1`,
+      [registrationId],
+    );
+    const delRecipient = recipientRows[0];
+
+    await this.dataSource.query(`DELETE FROM jupeb_registrations WHERE id = $1`, [registrationId]);
+
+    try {
+      this.eventEmitter.emit(RegistrationEvent.DELETED, {
+        registrationId,
+        userId,
+        email: delRecipient?.email,
+        firstName: delRecipient?.first_name,
+        universityName: delRecipient?.university_name,
+        reason: body?.reason,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed to emit DELETED event for ${registrationId}: ${e?.message}`);
+    }
+
+    return {
+      success: true,
+      message: 'Registration deleted successfully',
+      id: registrationId,
     };
   }
 
@@ -1755,6 +1988,16 @@ export class RegistrationService {
         jupebCandidateNumber: candidateNumber,
         updatedBy: userId || null,
       } as any);
+
+      try {
+        this.eventEmitter.emit(RegistrationEvent.MATRIC_ASSIGNED, {
+          registrationId: u.id,
+          candidateNumber,
+          userId,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Failed to emit MATRIC_ASSIGNED event for ${u.id}: ${e?.message}`);
+      }
     }
 
     return {
@@ -2106,13 +2349,48 @@ export class RegistrationService {
     if (!reg) throw new NotFoundException('No registration found');
     await this.restoreSubjectCombinationFromNinIntake(reg);
 
-    const details = await this.getRegistrationById(reg.id, userId);
+    const details: any = await this.getRegistrationById(reg.id, userId);
     const docs = await this.docRepo.findByRegistrationId(reg.id);
 
-    const profileCompleted = Boolean(details.first_name && details.last_name && details.email);
-    const documentsCompleted = docs.length > 0;
-    const biometricsCompleted = Boolean(details.has_biometrics);
-    const subjectsConfirmed = Boolean(details.subject_combination_id);
+    const fullName =
+      details.display_name ||
+      details.candidate?.display_name ||
+      details.candidate?.name ||
+      [details.first_name, details.last_name].filter(Boolean).join(' ') ||
+      null;
+    const email = details.email || details.candidate?.email || details.contact_information?.email || null;
+    const profileCompleted = Boolean(fullName && email);
+
+    // Candidates can satisfy documentation either by uploading files or by manual entry of examination results
+    const resultEntriesRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM jupeb_result_entries WHERE registration_id = $1`,
+      [reg.id],
+    );
+    const hasResultEntries = (Number(resultEntriesRows[0]?.count) || 0) > 0;
+    const documentsCompleted = docs.length > 0 || hasResultEntries;
+
+    const bioRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM jupeb_biometric_captures WHERE registration_id = $1 AND replaced_at IS NULL`,
+      [reg.id],
+    );
+    const bioCount = Number(bioRows[0]?.count) || 0;
+    const biometricsSkipped = Boolean(
+      (reg as any).face_skipped_at ||
+      (reg as any).fingerprint_skipped_at ||
+      (reg as any).faceSkippedAt ||
+      (reg as any).fingerprintSkippedAt,
+    );
+    const biometricsCompleted =
+      Boolean((details as any).has_biometrics) ||
+      Boolean(details.candidate?.photo_url) ||
+      bioCount > 0 ||
+      biometricsSkipped;
+
+    const subjectsConfirmed = Boolean(
+      details.subject_combination?.id ||
+      (details as any).subject_combination_id ||
+      reg.subjectCombinationId,
+    );
 
     const missing: string[] = [];
     if (!profileCompleted) missing.push('Profile details');
