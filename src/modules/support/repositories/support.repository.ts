@@ -39,6 +39,8 @@ export class SupportRepository {
         't.status AS status',
         't.assigned_to AS assigned_to',
         't.resolved_at AS resolved_at',
+        't.resolved_by AS resolved_by',
+        't.resolution_notes AS resolution_notes',
         't.created_at AS created_at',
         't.updated_at AS updated_at',
         'u.email AS user_email',
@@ -51,6 +53,7 @@ export class SupportRepository {
         'uni.code AS university_code',
         'r.provisional_candidate_code AS provisional_candidate_code',
         'r.jupeb_candidate_number AS jupeb_candidate_number',
+        'r.institution_issued_code AS institution_issued_code',
       ])
       .where('t.id = :id', { id });
 
@@ -71,6 +74,7 @@ export class SupportRepository {
       .leftJoin('users', 'u', 'u.id = t.user_id')
       .leftJoin('profiles', 'p', 'p.user_id = t.user_id')
       .leftJoin('jupeb_universities', 'uni', 'uni.id = t.university_id')
+      .leftJoin('jupeb_registrations', 'r', 'r.id = t.registration_id')
       .select([
         't.id AS id',
         't.ticket_number AS ticket_number',
@@ -82,13 +86,21 @@ export class SupportRepository {
         't.message AS message',
         't.priority AS priority',
         't.status AS status',
+        't.assigned_to AS assigned_to',
+        't.resolved_at AS resolved_at',
+        't.resolved_by AS resolved_by',
+        't.resolution_notes AS resolution_notes',
         't.created_at AS created_at',
         't.updated_at AS updated_at',
         'u.email AS user_email',
+        'u.phone AS user_phone',
         'p.first_name AS first_name',
         'p.last_name AS last_name',
         'p.display_name AS display_name',
         'uni.name AS university_name',
+        'r.jupeb_candidate_number AS jupeb_candidate_number',
+        'r.provisional_candidate_code AS provisional_candidate_code',
+        'r.institution_issued_code AS institution_issued_code',
       ]);
 
     if (userId) {
@@ -101,47 +113,132 @@ export class SupportRepository {
       qb.andWhere('t.university_id = :universityId', { universityId: query.university_id });
     }
 
-    if (query.status) {
-      qb.andWhere('t.status = :status', { status: query.status });
+    // Status filter (single or multiple comma-separated / array, e.g. open,closed)
+    const rawStatus = (query as any).status ?? (query as any).statuses;
+    if (rawStatus !== undefined && rawStatus !== null && rawStatus !== '') {
+      const statusList = (Array.isArray(rawStatus) ? rawStatus : String(rawStatus).split(','))
+        .map((s: any) => String(s).trim())
+        .filter((s: string) => Boolean(s) && s.toLowerCase() !== 'all');
+
+      if (statusList.length === 1) {
+        qb.andWhere('t.status = :status', { status: statusList[0] });
+      } else if (statusList.length > 1) {
+        qb.andWhere('t.status IN (:...statuses)', { statuses: statusList });
+      }
     }
 
-    if (query.priority) {
-      qb.andWhere('t.priority = :priority', { priority: query.priority });
+    // Priority filter (single or multiple comma-separated / array, e.g. high,urgent)
+    const rawPriority = (query as any).priority ?? (query as any).priorities;
+    if (rawPriority !== undefined && rawPriority !== null && rawPriority !== '') {
+      const priorityList = (Array.isArray(rawPriority) ? rawPriority : String(rawPriority).split(','))
+        .map((p: any) => String(p).trim())
+        .filter(Boolean);
+
+      if (priorityList.length === 1) {
+        qb.andWhere('t.priority = :priority', { priority: priorityList[0] });
+      } else if (priorityList.length > 1) {
+        qb.andWhere('t.priority IN (:...priorities)', { priorities: priorityList });
+      }
     }
 
-    if (query.category) {
-      qb.andWhere('t.category = :category', { category: query.category });
+    // Category filter (single or multiple comma-separated / array)
+    const rawCategory = (query as any).category ?? (query as any).categories;
+    if (rawCategory !== undefined && rawCategory !== null && rawCategory !== '') {
+      const categoryList = (Array.isArray(rawCategory) ? rawCategory : String(rawCategory).split(','))
+        .map((c: any) => String(c).trim())
+        .filter(Boolean);
+
+      if (categoryList.length === 1) {
+        qb.andWhere('t.category = :category', { category: categoryList[0] });
+      } else if (categoryList.length > 1) {
+        qb.andWhere('t.category IN (:...categories)', { categories: categoryList });
+      }
     }
 
-    if (query.q) {
+    // 1. Date range filters (start_date / end_date + aliases)
+    const startDateRaw = (
+      query.start_date ||
+      query.startDate ||
+      query.from ||
+      query.from_date ||
+      ''
+    ).toString().trim();
+
+    if (startDateRaw) {
+      const parsedStart = /^\d{4}-\d{2}-\d{2}$/.test(startDateRaw)
+        ? new Date(`${startDateRaw}T00:00:00.000Z`)
+        : new Date(startDateRaw);
+      if (!isNaN(parsedStart.getTime())) {
+        qb.andWhere('t.created_at >= :startDate', { startDate: parsedStart });
+      }
+    }
+
+    const endDateRaw = (
+      query.end_date ||
+      query.endDate ||
+      query.to ||
+      query.to_date ||
+      ''
+    ).toString().trim();
+
+    if (endDateRaw) {
+      const parsedEnd = /^\d{4}-\d{2}-\d{2}$/.test(endDateRaw)
+        ? new Date(`${endDateRaw}T23:59:59.999Z`)
+        : new Date(endDateRaw);
+      if (!isNaN(parsedEnd.getTime())) {
+        qb.andWhere('t.created_at <= :endDate', { endDate: parsedEnd });
+      }
+    }
+
+    // 2. Search query filter (q, search, query, keyword)
+    const searchTerm = (
+      query.q ||
+      query.search ||
+      query.query ||
+      query.keyword ||
+      ''
+    ).toString().trim();
+
+    if (searchTerm) {
+      const term = `%${searchTerm}%`;
       qb.andWhere(
-        '(t.ticket_number ILIKE :q OR t.subject ILIKE :q OR t.message ILIKE :q OR u.email ILIKE :q)',
-        { q: `%${query.q}%` },
+        `(
+          t.ticket_number ILIKE :term OR
+          t.subject ILIKE :term OR
+          t.message ILIKE :term OR
+          t.category ILIKE :term OR
+          u.email ILIKE :term OR
+          u.phone ILIKE :term OR
+          p.first_name ILIKE :term OR
+          p.last_name ILIKE :term OR
+          p.display_name ILIKE :term OR
+          CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, '')) ILIKE :term OR
+          CONCAT(COALESCE(p.last_name, ''), ' ', COALESCE(p.first_name, '')) ILIKE :term OR
+          r.provisional_candidate_code ILIKE :term OR
+          r.jupeb_candidate_number ILIKE :term OR
+          r.institution_issued_code ILIKE :term OR
+          EXISTS (
+            SELECT 1 FROM jupeb_registrations cr
+            WHERE cr.user_id = t.user_id
+              AND (
+                cr.provisional_candidate_code ILIKE :term OR
+                cr.jupeb_candidate_number ILIKE :term OR
+                cr.institution_issued_code ILIKE :term
+              )
+          )
+        )`,
+        { term },
       );
     }
 
-    qb.orderBy('t.created_at', 'DESC')
+    const total = await qb.clone().getCount();
+    const rows = await qb
+      .orderBy('t.created_at', 'DESC')
       .limit(limit)
-      .offset(offset);
+      .offset(offset)
+      .getRawMany();
 
-    const rows = await qb.getRawMany();
-    const countQb = this.ticketRepo.createQueryBuilder('t');
-
-    if (userId) countQb.andWhere('t.user_id = :userId', { userId });
-    if (scopedUniversityId) countQb.andWhere('t.university_id = :scopedUniversityId', { scopedUniversityId });
-    else if (query.university_id) countQb.andWhere('t.university_id = :universityId', { universityId: query.university_id });
-    if (query.status) countQb.andWhere('t.status = :status', { status: query.status });
-    if (query.priority) countQb.andWhere('t.priority = :priority', { priority: query.priority });
-    if (query.category) countQb.andWhere('t.category = :category', { category: query.category });
-    if (query.q) {
-      countQb.andWhere(
-        '(t.ticket_number ILIKE :q OR t.subject ILIKE :q OR t.message ILIKE :q)',
-        { q: `%${query.q}%` },
-      );
-    }
-
-    const total = await countQb.getCount();
-    return { rows, total, page, limit };
+    return { rows, total: Number(total) || 0, page, limit };
   }
 
   async getStats(universityId?: string | null) {
@@ -159,12 +256,37 @@ export class SupportRepository {
     ]);
 
     const res = await qb.getRawOne();
+
+    let by_university: any[] = [];
+    let by_category: any[] = [];
+
+    if (!universityId) {
+      by_university = await this.ticketRepo
+        .createQueryBuilder('t')
+        .leftJoin('jupeb_universities', 'uni', 'uni.id = t.university_id')
+        .select([
+          't.university_id AS university_id',
+          'uni.name AS university_name',
+          'COUNT(*)::int AS count',
+        ])
+        .groupBy('t.university_id, uni.name')
+        .getRawMany();
+
+      by_category = await this.ticketRepo
+        .createQueryBuilder('t')
+        .select(['t.category AS category', 'COUNT(*)::int AS count'])
+        .groupBy('t.category')
+        .getRawMany();
+    }
+
     return {
       total: Number(res?.total) || 0,
       open: Number(res?.open) || 0,
       in_progress: Number(res?.in_progress) || 0,
       resolved: Number(res?.resolved) || 0,
       closed: Number(res?.closed) || 0,
+      by_university,
+      by_category,
     };
   }
 

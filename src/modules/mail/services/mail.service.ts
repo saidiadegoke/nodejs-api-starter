@@ -363,6 +363,57 @@ export class MailService {
   }
 
   /**
+   * Send Registration Locked Email
+   */
+  async sendRegistrationLockedEmail(to: string, placeholders: Record<string, any>): Promise<string | null> {
+    const appName = this.configService.get('APP_NAME', 'Registration Portal');
+    return this.sendMail({
+      to,
+      subject: `${appName} — your registration dashboard has been locked`,
+      templateFile: 'jupeb-registration-locked.html',
+      placeholders: {
+        ...placeholders,
+        appName,
+        year: placeholders.year || new Date().getUTCFullYear(),
+      },
+    });
+  }
+
+  /**
+   * Send Registration Unlocked Email
+   */
+  async sendRegistrationUnlockedEmail(to: string, placeholders: Record<string, any>): Promise<string | null> {
+    const appName = this.configService.get('APP_NAME', 'Registration Portal');
+    return this.sendMail({
+      to,
+      subject: `${appName} — your registration dashboard has been unlocked`,
+      templateFile: 'jupeb-registration-unlocked.html',
+      placeholders: {
+        ...placeholders,
+        appName,
+        year: placeholders.year || new Date().getUTCFullYear(),
+      },
+    });
+  }
+
+  /**
+   * Send Registration Deleted Email
+   */
+  async sendRegistrationDeletedEmail(to: string, placeholders: Record<string, any>): Promise<string | null> {
+    const appName = this.configService.get('APP_NAME', 'Registration Portal');
+    return this.sendMail({
+      to,
+      subject: `${appName} — candidate registration record deleted`,
+      templateFile: 'jupeb-registration-deleted.html',
+      placeholders: {
+        ...placeholders,
+        appName,
+        year: placeholders.year || new Date().getUTCFullYear(),
+      },
+    });
+  }
+
+  /**
    * Send Registration Code Issued Email
    */
   async sendCodeIssuedEmail(to: string, placeholders: Record<string, any>): Promise<string | null> {

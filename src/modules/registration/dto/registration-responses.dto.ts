@@ -92,8 +92,14 @@ export class CodeStatusResponseDto {
   @ApiPropertyOptional({ example: 'Adewale' })
   first_name?: string;
 
+  @ApiPropertyOptional({ example: 'Oluwaseun' })
+  middle_name?: string;
+
   @ApiPropertyOptional({ example: 'Adeyemi' })
   last_name?: string;
+
+  @ApiPropertyOptional({ example: 'Adewale Oluwaseun Adeyemi' })
+  display_name?: string;
 
   @ApiPropertyOptional({ example: 'University of Lagos' })
   university_name?: string;

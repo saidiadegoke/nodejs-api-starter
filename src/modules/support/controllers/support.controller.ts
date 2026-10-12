@@ -31,6 +31,10 @@ import {
 } from '../dto';
 import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 
+function getUserId(req: any): string {
+  return req?.user?.id || req?.user?.user_id || req?.user?.userId || '';
+}
+
 @ApiTags('Support & Help Desk')
 @Controller('support')
 export class SupportController {
@@ -59,7 +63,7 @@ export class SupportController {
   })
   @ApiCreatedResponse({ type: SupportTicketResponseDto })
   async createStudentTicket(@Body() dto: CreateSupportTicketDto, @Req() req: any) {
-    return this.supportService.createStudentTicket(req.user?.user_id, dto);
+    return this.supportService.createStudentTicket(getUserId(req), dto);
   }
 
   @Get('my-tickets')
@@ -71,7 +75,7 @@ export class SupportController {
   })
   @ApiOkResponse({ type: SupportTicketListResponseDto })
   async getMyTickets(@Query() query: ListTicketsQueryDto, @Req() req: any) {
-    return this.supportService.getMyTickets(req.user?.user_id, query);
+    return this.supportService.getMyTickets(getUserId(req), query);
   }
 
   @Get('tickets/:ticketId')
@@ -83,7 +87,7 @@ export class SupportController {
   })
   @ApiOkResponse({ type: SupportTicketResponseDto })
   async getMyTicketDetail(@Param('ticketId') ticketId: string, @Req() req: any) {
-    return this.supportService.getMyTicketDetail(req.user?.user_id, ticketId);
+    return this.supportService.getMyTicketDetail(getUserId(req), ticketId);
   }
 
   @Post('tickets/:ticketId/messages')
@@ -99,7 +103,7 @@ export class SupportController {
     @Body() dto: AddTicketMessageDto,
     @Req() req: any,
   ) {
-    return this.supportService.addStudentReply(req.user?.user_id, ticketId, dto);
+    return this.supportService.addStudentReply(getUserId(req), ticketId, dto);
   }
 
   // ==========================================
@@ -116,7 +120,7 @@ export class SupportController {
   })
   @ApiOkResponse({ type: SupportTicketListResponseDto })
   async institutionListTickets(@Query() query: ListTicketsQueryDto, @Req() req: any) {
-    return this.supportService.institutionListTickets(req.user?.user_id, query);
+    return this.supportService.institutionListTickets(getUserId(req), query);
   }
 
   @Get('institution/stats')
@@ -129,7 +133,7 @@ export class SupportController {
   })
   @ApiOkResponse({ type: SupportStatsResponseDto })
   async institutionStats(@Req() req: any) {
-    return this.supportService.institutionStats(req.user?.user_id);
+    return this.supportService.institutionStats(getUserId(req));
   }
 
   @Get('institution/tickets/:ticketId')
@@ -142,7 +146,7 @@ export class SupportController {
   })
   @ApiOkResponse({ type: SupportTicketResponseDto })
   async institutionGetTicket(@Param('ticketId') ticketId: string, @Req() req: any) {
-    return this.supportService.institutionGetTicket(req.user?.user_id, ticketId);
+    return this.supportService.institutionGetTicket(getUserId(req), ticketId);
   }
 
   @Post('institution/tickets/:ticketId/reply')
@@ -159,7 +163,7 @@ export class SupportController {
     @Body() dto: AddTicketMessageDto,
     @Req() req: any,
   ) {
-    return this.supportService.institutionReply(req.user?.user_id, ticketId, dto);
+    return this.supportService.institutionReply(getUserId(req), ticketId, dto);
   }
 
   @Patch('institution/tickets/:ticketId/status')
@@ -176,7 +180,7 @@ export class SupportController {
     @Body() dto: UpdateTicketStatusDto,
     @Req() req: any,
   ) {
-    return this.supportService.institutionUpdateStatus(req.user?.user_id, ticketId, dto);
+    return this.supportService.institutionUpdateStatus(getUserId(req), ticketId, dto);
   }
 
   // ==========================================
@@ -236,7 +240,7 @@ export class SupportController {
     @Body() dto: AddTicketMessageDto,
     @Req() req: any,
   ) {
-    return this.supportService.adminReply(req.user?.user_id, ticketId, dto);
+    return this.supportService.adminReply(getUserId(req), ticketId, dto);
   }
 
   @Patch('admin/tickets/:ticketId')

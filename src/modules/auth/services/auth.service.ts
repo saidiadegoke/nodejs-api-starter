@@ -228,6 +228,11 @@ export class AuthService {
       candidate: {
         registration_id: reg.id,
         full_name: fullName,
+        name: fullName,
+        display_name: fullName,
+        first_name: ninPayload.first_name || intake.first_name || null,
+        middle_name: ninPayload.middle_name || ninPayload.middlename || intake.middle_name || null,
+        last_name: ninPayload.last_name || ninPayload.surname || intake.last_name || null,
         provisional_candidate_code: reg.provisional_candidate_code,
         photo_url: facePhotoUrl || ninPayload.photo_url || null,
         face_photo_url: facePhotoUrl,
@@ -357,10 +362,30 @@ export class AuthService {
         intake: intakePayload,
         ninStatus,
       });
-      const [first_name, ...rest] = (body.first_name
-        ? [String(body.first_name).trim(), String(body.last_name || '').trim()]
-        : (fullName ? fullName.split(/\s+/) : ['Candidate', '']));
-      const last_name = body.last_name ? String(body.last_name).trim() : rest.join(' ').trim() || '';
+      const middle_name = ninResponse.middle_name || ninResponse.middlename || intakePayload.middle_name || intakePayload.middlename || null;
+      let first_name = body.first_name ? String(body.first_name).trim() : '';
+      let last_name = body.last_name ? String(body.last_name).trim() : '';
+      if (!first_name) {
+        if (ninResponse.first_name) {
+          first_name = String(ninResponse.first_name).trim();
+        } else if (intakePayload.first_name) {
+          first_name = String(intakePayload.first_name).trim();
+        } else if (fullName) {
+          first_name = fullName.split(/\s+/)[0] || 'Candidate';
+        } else {
+          first_name = 'Candidate';
+        }
+      }
+      if (!last_name) {
+        if (ninResponse.last_name || ninResponse.surname) {
+          last_name = String(ninResponse.last_name || ninResponse.surname).trim();
+        } else if (intakePayload.last_name || intakePayload.surname) {
+          last_name = String(intakePayload.last_name || intakePayload.surname).trim();
+        } else if (fullName) {
+          const parts = fullName.split(/\s+/);
+          last_name = parts.slice(1).join(' ').trim() || '';
+        }
+      }
 
       if (email) {
         const dup = await queryRunner.query(
@@ -394,7 +419,7 @@ export class AuthService {
       );
       const user = userInsert[0];
 
-      const displayName = [first_name, last_name].filter(Boolean).join(' ').trim() || null;
+      const displayName = fullName || [first_name, middle_name, last_name].filter(Boolean).join(' ').trim() || null;
       const residentialAddress = (body.residential_address && String(body.residential_address).trim())
         || (intakePayload.residential_address && String(intakePayload.residential_address).trim())
         || (intakePayload.address && String(intakePayload.address).trim())
@@ -590,7 +615,7 @@ export class AuthService {
         let docsStats: any = null;
         let bioStats: any = null;
         if (r.status === RegistrationStatus.PENDING_DOCUMENTS) {
-          const [docsRes, bioRes, reqRes] = await Promise.all([
+          const [docsRes, bioRes, reqRes, entriesRes] = await Promise.all([
             this.dataSource.query(
               `SELECT COUNT(*)::int AS uploaded
                  FROM jupeb_registration_documents
@@ -611,10 +636,18 @@ export class AuthService {
                   AND is_active = true`,
               [r.university_id]
             ),
+            this.dataSource.query(
+              `SELECT COUNT(*)::int AS entries
+                 FROM jupeb_result_entries
+                WHERE registration_id = $1`,
+              [r.id]
+            ),
           ]);
+          const hasManualResults = (entriesRes[0]?.entries ?? 0) > 0;
           docsStats = {
             uploaded: docsRes[0]?.uploaded ?? 0,
             required: reqRes[0]?.required ?? 0,
+            has_manual_results: hasManualResults,
           };
           bioStats = { captured: bioRes[0]?.captured ?? 0 };
         }
@@ -683,7 +716,8 @@ export class AuthService {
         return RegistrationNextStep.CONFIRM_SUBJECTS;
       case RegistrationStatus.PENDING_DOCUMENTS: {
         if (docs !== null && bio !== null) {
-          const docsComplete = docs.required === 0 || docs.uploaded >= docs.required;
+          const docsComplete =
+            docs.required === 0 || docs.uploaded >= docs.required || Boolean(docs.has_manual_results);
           const bioComplete = bio.captured > 0;
           if (docsComplete && bioComplete) return RegistrationNextStep.SUBMIT_FOR_REVIEW;
           if (docsComplete) return RegistrationNextStep.UPLOAD_BIOMETRICS;

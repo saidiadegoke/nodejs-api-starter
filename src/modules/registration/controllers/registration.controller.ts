@@ -416,6 +416,62 @@ export class RegistrationController {
     return this.registrationService.withdrawRegistrationDirect(registrationId, body, userId);
   }
 
+  @Post('institution/registrations/:registrationId/unlock')
+  @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.unlock', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+  })
+  @ApiOperation({
+    summary: 'Unlock candidate dashboard features',
+  })
+  async unlockRegistration(
+    @Param('registrationId') registrationId: string,
+    @Req() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.userId || req.user?.user_id;
+    return this.registrationService.unlockRegistration(registrationId, userId);
+  }
+
+  @Post('institution/registrations/:registrationId/lock')
+  @RequirePermission('candidate.update', 'jupeb.registration.manage')
+  @Audit('registration.lock', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    details: ({ req }) => ({ reason: req.body?.reason }),
+  })
+  @ApiOperation({
+    summary: 'Lock candidate registration / dashboard features',
+  })
+  async lockRegistration(
+    @Param('registrationId') registrationId: string,
+    @Body() body: any,
+    @Req() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.userId || req.user?.user_id;
+    return this.registrationService.lockRegistration(registrationId, body, userId);
+  }
+
+  @Post('institution/registrations/:registrationId/delete')
+  @RequirePermission('candidate.delete', 'jupeb.registration.manage')
+  @Audit('registration.delete', {
+    resourceType: 'registration',
+    resourceId: 'params:registrationId',
+    durable: true,
+    details: ({ req }) => ({ reason: req.body?.reason }),
+  })
+  @ApiOperation({
+    summary: 'Delete candidate registration record',
+  })
+  async deleteRegistration(
+    @Param('registrationId') registrationId: string,
+    @Body() body: any,
+    @Req() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.userId || req.user?.user_id;
+    return this.registrationService.deleteRegistration(registrationId, body, userId);
+  }
+
   // ─────────────────────────────── Student Self-Service Routes (/me/*) ───────────────────────────────
 
   @Get('me/code-status')

@@ -64,4 +64,34 @@ describe('resolveCandidateDisplayName', () => {
       ninStatus: 'verified',
     })).toBe('jamie Croix');
   });
+
+  it('includes middle_name from ninPayload when verified', () => {
+    expect(resolveCandidateDisplayName({
+      ninPayload: { first_name: 'QUADRI', middle_name: 'ADEYEMI', last_name: 'SIKIRU' },
+      intake: {},
+      profile: { display_name: 'QUADRI SIKIRU', first_name: 'QUADRI', last_name: 'SIKIRU' },
+      ninStatus: 'verified',
+    })).toBe('QUADRI ADEYEMI SIKIRU');
+  });
+
+  it('supports middlename and middleName property aliases in ninPayload', () => {
+    expect(resolveCandidateDisplayName({
+      ninPayload: { first_name: 'QUADRI', middlename: 'ADEYEMI', last_name: 'SIKIRU' },
+      ninStatus: 'verified',
+    })).toBe('QUADRI ADEYEMI SIKIRU');
+
+    expect(resolveCandidateDisplayName({
+      ninPayload: { first_name: 'QUADRI', middleName: 'ADEYEMI', last_name: 'SIKIRU' },
+      ninStatus: 'verified',
+    })).toBe('QUADRI ADEYEMI SIKIRU');
+  });
+
+  it('includes middle_name from intake when pending and parts are provided', () => {
+    expect(resolveCandidateDisplayName({
+      ninPayload: {},
+      intake: { first_name: 'QUADRI', middle_name: 'ADEYEMI', last_name: 'SIKIRU' },
+      ninStatus: 'pending',
+    })).toBe('QUADRI ADEYEMI SIKIRU');
+  });
 });
+

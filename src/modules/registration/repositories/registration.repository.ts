@@ -195,12 +195,21 @@ export class RegistrationRepository {
         'u.name AS university_name',
         'u.short_name AS university_short_name',
         'u.code AS university_code',
-        'p.first_name AS first_name',
-        'p.last_name AS last_name',
-        'p.display_name AS display_name',
-        'p.profile_photo_url AS profile_photo_url',
-        'usr.email AS email',
-        'usr.phone AS phone',
+        'COALESCE(p.first_name, nv.response_payload->>\'first_name\', nv.response_payload->>\'firstname\', nv.intake_payload->>\'first_name\') AS first_name',
+        'COALESCE(nv.response_payload->>\'middle_name\', nv.response_payload->>\'middlename\', nv.response_payload->>\'middleName\', nv.intake_payload->>\'middle_name\', nv.intake_payload->>\'middlename\') AS middle_name',
+        'COALESCE(p.last_name, nv.response_payload->>\'last_name\', nv.response_payload->>\'lastname\', nv.response_payload->>\'surname\', nv.intake_payload->>\'last_name\') AS last_name',
+        `COALESCE(
+          p.display_name,
+          NULLIF(TRIM(CONCAT(
+            COALESCE(nv.response_payload->>'first_name', nv.response_payload->>'firstname', nv.intake_payload->>'first_name', ''), ' ',
+            COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName', nv.intake_payload->>'middle_name', ''), ' ',
+            COALESCE(nv.response_payload->>'last_name', nv.response_payload->>'lastname', nv.response_payload->>'surname', nv.intake_payload->>'last_name', '')
+          )), ''),
+          nv.intake_payload->>'name'
+        ) AS display_name`,
+        'COALESCE(p.profile_photo_url, nv.response_payload->>\'photo_url\', nv.response_payload->>\'photo\') AS profile_photo_url',
+        'COALESCE(usr.email, nv.intake_payload->>\'email\') AS email',
+        'COALESCE(usr.phone, nv.response_payload->>\'phone\', nv.response_payload->>\'phone_number\', nv.response_payload->>\'telephoneno\', nv.intake_payload->>\'phone\') AS phone',
         'nv.nin_last4 AS nin_last4',
         'sc.id AS subject_combination_id',
         'sc.code AS subject_combination_code',
@@ -272,6 +281,12 @@ export class RegistrationRepository {
           p.display_name ILIKE :term OR
           CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, '')) ILIKE :term OR
           CONCAT(COALESCE(p.last_name, ''), ' ', COALESCE(p.first_name, '')) ILIKE :term OR
+          COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.intake_payload->>'middle_name') ILIKE :term OR
+          TRIM(CONCAT(
+            COALESCE(nv.response_payload->>'first_name', ''), ' ',
+            COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', ''), ' ',
+            COALESCE(nv.response_payload->>'last_name', '')
+          )) ILIKE :term OR
           usr.email ILIKE :term OR
           usr.phone ILIKE :term OR
           r.provisional_candidate_code ILIKE :term OR

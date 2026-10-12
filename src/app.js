@@ -9,9 +9,13 @@ let appPromise = null;
 async function getApp() {
   if (!appPromise) {
     appPromise = (async () => {
-      server.use(express.json({ limit: '10mb' }));
-      server.use(express.urlencoded({ extended: true, limit: '10mb' }));
-      server.use((req, res, next) => {
+      const app = await NestFactory.create(AppModule, new ExpressAdapter(), {
+        logger: false,
+      });
+
+      app.use(express.json({ limit: '10mb' }));
+      app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+      app.use((req, res, next) => {
         if (req.url.startsWith('/api/v1/')) {
           req.url = req.url.slice('/api/v1'.length);
         } else if (req.url === '/api/v1') {
@@ -24,15 +28,23 @@ async function getApp() {
         next();
       });
 
-      const app = await NestFactory.create(AppModule, new ExpressAdapter(server), {
-        logger: false,
-      });
       await app.init();
+      const nestExpress = app.getHttpAdapter().getInstance();
+      server.use(nestExpress);
       return app;
     })();
   }
   return appPromise;
 }
+
+server.use(async (req, res, next) => {
+  try {
+    await getApp();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 if (require.main === module) {
   const port = process.env.PORT || 3000;
