@@ -52,9 +52,21 @@ function statusBucket(status: string | null | undefined): string {
 function enrichRegistrationRow(row: any) {
   if (!row) return row;
   const firstName = row.first_name ? String(row.first_name).trim() : '';
+  const middleName = row.middle_name ? String(row.middle_name).trim() : '';
   const lastName = row.last_name ? String(row.last_name).trim() : '';
-  const displayName = row.display_name ? String(row.display_name).trim() : '';
-  const fullName = displayName || `${firstName} ${lastName}`.trim() || row.email || 'N/A';
+  let displayName = row.display_name ? String(row.display_name).trim() : '';
+
+  if (middleName && firstName && lastName) {
+    if (!displayName || displayName.toLowerCase() === `${firstName} ${lastName}`.toLowerCase()) {
+      displayName = `${firstName} ${middleName} ${lastName}`;
+    } else if (!displayName.toLowerCase().includes(middleName.toLowerCase())) {
+      displayName = [firstName, middleName, lastName].filter(Boolean).join(' ');
+    }
+  } else if (!displayName) {
+    displayName = [firstName, middleName, lastName].filter(Boolean).join(' ');
+  }
+
+  const fullName = displayName || [firstName, middleName, lastName].filter(Boolean).join(' ') || row.email || 'N/A';
 
   const hasBiometrics = Boolean(row.has_biometrics);
   const biometricStatus = hasBiometrics ? 'captured' : 'pending';
@@ -71,6 +83,7 @@ function enrichRegistrationRow(row: any) {
     name: fullName,
     full_name: fullName,
     first_name: firstName || null,
+    middle_name: middleName || null,
     last_name: lastName || null,
     display_name: displayName || null,
     email: row.email || null,
@@ -99,6 +112,10 @@ function enrichRegistrationRow(row: any) {
 
   return {
     ...row,
+    first_name: firstName || null,
+    middle_name: middleName || null,
+    last_name: lastName || null,
+    display_name: displayName || null,
     full_name: fullName,
     name: fullName,
     candidate_id: candidateId,
@@ -622,6 +639,11 @@ export class RegistrationService {
     const lga = row.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || null;
     const placeOfBirth =
       row.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place || null;
+    const middleName =
+      ninStatus === 'verified' && (ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName)
+        ? String(ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName).trim()
+        : ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName || ninIntake.middle_name || ninIntake.middlename || null;
+
     const firstName =
       ninStatus === 'verified' && ninPayload.first_name
         ? String(ninPayload.first_name).trim()
@@ -638,6 +660,7 @@ export class RegistrationService {
         intake: ninIntake,
         profile: {
           first_name: row.first_name,
+          middle_name: middleName,
           last_name: row.last_name,
           display_name: row.display_name,
         },
@@ -646,7 +669,7 @@ export class RegistrationService {
     } catch {
       displayName =
         row.display_name ||
-        (firstName && lastName ? `${firstName} ${lastName}` : null) ||
+        [firstName, middleName, lastName].filter(Boolean).join(' ') ||
         ninIntake.name ||
         null;
     }
@@ -728,8 +751,10 @@ export class RegistrationService {
       name: displayName,
       candidate_id: candidateId,
       first_name: firstName,
+      middle_name: middleName,
       last_name: lastName,
       display_name: displayName,
+      full_name: displayName,
       gender,
       date_of_birth: dateOfBirth,
       email,
@@ -779,8 +804,11 @@ export class RegistrationService {
       lga,
       place_of_birth: placeOfBirth,
       first_name: firstName,
+      middle_name: middleName,
       last_name: lastName,
       display_name: displayName,
+      full_name: displayName,
+      name: displayName,
       gender,
       date_of_birth: dateOfBirth,
       email,
@@ -1072,7 +1100,14 @@ export class RegistrationService {
       const profileFields: Record<string, any> = {};
       if (firstName) profileFields.first_name = String(firstName).trim();
       if (lastName) profileFields.last_name = String(lastName).trim();
-      if (middleName) profileFields.middle_name = String(middleName).trim();
+      if (firstName || lastName || middleName) {
+        const curProfile = (await this.dataSource.query('SELECT first_name, last_name, display_name FROM profiles WHERE user_id = $1', [reg.userId]))[0] || {};
+        const effFirst = firstName ? String(firstName).trim() : (curProfile.first_name || '');
+        const effLast = lastName ? String(lastName).trim() : (curProfile.last_name || '');
+        const effMiddle = middleName ? String(middleName).trim() : '';
+        const constructed = [effFirst, effMiddle, effLast].filter(Boolean).join(' ').trim();
+        if (constructed) profileFields.display_name = constructed;
+      }
       if (title) profileFields.title = String(title).trim();
       if (gender) profileFields.gender = String(gender).trim();
       if (dateOfBirth) profileFields.date_of_birth = dateOfBirth;
@@ -1087,6 +1122,16 @@ export class RegistrationService {
           `UPDATE profiles SET ${sets}, updated_at = NOW() WHERE user_id = $1`,
           [reg.userId, ...Object.values(profileFields)],
         );
+      }
+
+      if (reg.ninVerificationId && middleName) {
+        await this.dataSource.query(
+          `UPDATE jupeb_nin_verifications
+           SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || jsonb_build_object('middle_name', $2::text),
+               updated_at = NOW()
+           WHERE id = $1`,
+          [reg.ninVerificationId, String(middleName).trim()],
+        ).catch(() => {});
       }
 
       if (email || phone) {
@@ -2269,6 +2314,11 @@ export class RegistrationService {
       candidate: {
         id: reg.id,
         full_name: fullName,
+        name: fullName,
+        display_name: fullName,
+        first_name: u.first_name || ninPayload.first_name || intake.first_name || null,
+        middle_name: ninPayload.middle_name || ninPayload.middlename || intake.middle_name || null,
+        last_name: u.last_name || ninPayload.last_name || intake.last_name || null,
         provisional_candidate_code: reg.provisionalCandidateCode || null,
         jupeb_candidate_number: reg.jupebCandidateNumber || null,
         photo_url: resolvedPhoto,

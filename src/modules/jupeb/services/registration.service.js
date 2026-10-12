@@ -444,6 +444,11 @@ function enrichListRow(row) {
   const candidate = {
     id: row.user_id || null,
     name: fullName,
+    full_name: fullName,
+    first_name: row.first_name || null,
+    middle_name: row.middle_name || null,
+    last_name: row.last_name || null,
+    display_name: fullName,
     email: (row.user_email && String(row.user_email).trim()) || (ninEmail || null) || null,
     candidate_id:
       row.jupeb_candidate_number ||
@@ -466,6 +471,12 @@ function enrichListRow(row) {
     institution_issued_code: row.institution_issued_code,
     provisional_candidate_code: row.provisional_candidate_code,
     jupeb_candidate_number: row.jupeb_candidate_number,
+    first_name: row.first_name || null,
+    middle_name: row.middle_name || null,
+    last_name: row.last_name || null,
+    display_name: fullName,
+    full_name: fullName,
+    name: fullName,
     status: row.status,
     bucket: statusBucket(row.status),
     sittings_count: row.sittings_count,

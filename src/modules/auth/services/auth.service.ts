@@ -228,6 +228,11 @@ export class AuthService {
       candidate: {
         registration_id: reg.id,
         full_name: fullName,
+        name: fullName,
+        display_name: fullName,
+        first_name: ninPayload.first_name || intake.first_name || null,
+        middle_name: ninPayload.middle_name || ninPayload.middlename || intake.middle_name || null,
+        last_name: ninPayload.last_name || ninPayload.surname || intake.last_name || null,
         provisional_candidate_code: reg.provisional_candidate_code,
         photo_url: facePhotoUrl || ninPayload.photo_url || null,
         face_photo_url: facePhotoUrl,
@@ -357,10 +362,30 @@ export class AuthService {
         intake: intakePayload,
         ninStatus,
       });
-      const [first_name, ...rest] = (body.first_name
-        ? [String(body.first_name).trim(), String(body.last_name || '').trim()]
-        : (fullName ? fullName.split(/\s+/) : ['Candidate', '']));
-      const last_name = body.last_name ? String(body.last_name).trim() : rest.join(' ').trim() || '';
+      const middle_name = ninResponse.middle_name || ninResponse.middlename || intakePayload.middle_name || intakePayload.middlename || null;
+      let first_name = body.first_name ? String(body.first_name).trim() : '';
+      let last_name = body.last_name ? String(body.last_name).trim() : '';
+      if (!first_name) {
+        if (ninResponse.first_name) {
+          first_name = String(ninResponse.first_name).trim();
+        } else if (intakePayload.first_name) {
+          first_name = String(intakePayload.first_name).trim();
+        } else if (fullName) {
+          first_name = fullName.split(/\s+/)[0] || 'Candidate';
+        } else {
+          first_name = 'Candidate';
+        }
+      }
+      if (!last_name) {
+        if (ninResponse.last_name || ninResponse.surname) {
+          last_name = String(ninResponse.last_name || ninResponse.surname).trim();
+        } else if (intakePayload.last_name || intakePayload.surname) {
+          last_name = String(intakePayload.last_name || intakePayload.surname).trim();
+        } else if (fullName) {
+          const parts = fullName.split(/\s+/);
+          last_name = parts.slice(1).join(' ').trim() || '';
+        }
+      }
 
       if (email) {
         const dup = await queryRunner.query(
@@ -394,7 +419,7 @@ export class AuthService {
       );
       const user = userInsert[0];
 
-      const displayName = [first_name, last_name].filter(Boolean).join(' ').trim() || null;
+      const displayName = fullName || [first_name, middle_name, last_name].filter(Boolean).join(' ').trim() || null;
       const residentialAddress = (body.residential_address && String(body.residential_address).trim())
         || (intakePayload.residential_address && String(intakePayload.residential_address).trim())
         || (intakePayload.address && String(intakePayload.address).trim())

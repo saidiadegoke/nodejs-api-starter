@@ -305,6 +305,7 @@ class RegistrationModel {
           COALESCE(p.display_name, '') ILIKE $${idx} OR
           COALESCE(p.first_name, '')   ILIKE $${idx} OR
           COALESCE(p.last_name, '')    ILIKE $${idx} OR
+          COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.intake_payload->>'middle_name') ILIKE $${idx} OR
           CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, '')) ILIKE $${idx} OR
           CONCAT(COALESCE(p.last_name, ''), ' ', COALESCE(p.first_name, '')) ILIKE $${idx} OR
           COALESCE(u.email, '')        ILIKE $${idx} OR
@@ -315,7 +316,11 @@ class RegistrationModel {
           COALESCE(nv.nin_last4, '')                  ILIKE $${idx} OR
           COALESCE(nv.intake_payload->>'name', '')    ILIKE $${idx} OR
           COALESCE(nv.intake_payload->>'email', '')   ILIKE $${idx} OR
-          COALESCE(TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))), '') ILIKE $${idx}
+          COALESCE(TRIM(CONCAT(
+            COALESCE(nv.response_payload->>'first_name', ''), ' ',
+            COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', ''), ' ',
+            COALESCE(nv.response_payload->>'last_name', '')
+          )), '') ILIKE $${idx}
         )`
       );
       values.push(term);
@@ -332,8 +337,9 @@ class RegistrationModel {
       SELECT
         r.*,
         u.email AS user_email,
-        p.first_name,
-        p.last_name,
+        COALESCE(p.first_name, nv.response_payload->>'first_name', nv.response_payload->>'firstname', nv.intake_payload->>'first_name') AS first_name,
+        COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName', nv.intake_payload->>'middle_name', nv.intake_payload->>'middlename') AS middle_name,
+        COALESCE(p.last_name, nv.response_payload->>'last_name', nv.response_payload->>'lastname', nv.response_payload->>'surname', nv.intake_payload->>'last_name') AS last_name,
         p.display_name,
         uni.id   AS uni_id,
         uni.name AS uni_name,
@@ -343,7 +349,11 @@ class RegistrationModel {
         (nv.intake_payload->>'name') AS nin_intake_name,
         (nv.intake_payload->>'email') AS nin_intake_email,
         nv.status AS nin_verification_status,
-        NULLIF(TRIM(CONCAT(COALESCE(nv.response_payload->>'first_name', ''), ' ', COALESCE(nv.response_payload->>'last_name', ''))), '') AS nin_display_name
+        NULLIF(TRIM(CONCAT(
+          COALESCE(nv.response_payload->>'first_name', ''), ' ',
+          COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName', ''), ' ',
+          COALESCE(nv.response_payload->>'last_name', nv.response_payload->>'surname', '')
+        )), '') AS nin_display_name
       FROM jupeb_registrations r
       LEFT JOIN users u ON u.id = r.user_id
       LEFT JOIN profiles p ON p.user_id = u.id
