@@ -18,7 +18,7 @@ import {
   SupportTicketResponseDto,
   SupportTicketListResponseDto,
   SupportStatsResponseDto,
-  SupportCategoryItemDto,
+  SupportMessageResponseDto,
 } from '../dto';
 
 export const SUPPORT_CATEGORIES = [
@@ -51,15 +51,76 @@ export class SupportService {
     this.logger = this.loggerFactory.create(SupportService.name);
   }
 
-  getCategories(): SupportCategoryItemDto[] {
-    return SUPPORT_CATEGORIES.map((cat) => ({
-      id: cat.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
-      name: cat,
-      description: `Support requests relating to ${cat}.`,
-    }));
+  getCategories(): any {
+    return SUPPORT_CATEGORIES;
+  }
+
+  private mapTicketRow(r: any): SupportTicketResponseDto {
+    return {
+      id: r.id,
+      ticket_number: r.ticket_number,
+      user_id: r.user_id,
+      university_id: r.university_id,
+      registration_id: r.registration_id,
+      category: r.category,
+      subject: r.subject,
+      message: r.message,
+      priority: r.priority,
+      status: r.status,
+      assigned_to: r.assigned_to || null,
+      resolved_at: r.resolved_at || null,
+      resolved_by: r.resolved_by || null,
+      resolution_notes: r.resolution_notes || null,
+      university_name: r.university_name || null,
+      user_name: r.display_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || null,
+      user_first_name: r.first_name || null,
+      user_last_name: r.last_name || null,
+      user_email: r.user_email || null,
+      user_phone: r.user_phone || null,
+      candidate_code: r.jupeb_candidate_number || r.provisional_candidate_code || r.institution_issued_code || null,
+      jupeb_candidate_number: r.jupeb_candidate_number || null,
+      provisional_candidate_code: r.provisional_candidate_code || null,
+      institution_issued_code: r.institution_issued_code || null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    };
+  }
+
+  private buildPaginatedTicketsResult(res: any): SupportTicketListResponseDto {
+    const tickets = res.rows.map((r: any) => this.mapTicketRow(r));
+    const page = res.page;
+    const limit = res.limit;
+    const total = res.total;
+    const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
+
+    return {
+      success: true,
+      data: tickets,
+      rows: tickets,
+      tickets,
+      page,
+      limit,
+      total,
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async createStudentTicket(userId: string, dto: CreateSupportTicketDto): Promise<SupportTicketResponseDto> {
+    const validCategory = SUPPORT_CATEGORIES.some(
+      (c) => c.toLowerCase() === (dto.category || '').toLowerCase().trim(),
+    );
+    if (!validCategory) {
+      throw new UnprocessableEntityException(
+        `Invalid category. Must be one of: ${SUPPORT_CATEGORIES.join(', ')}`,
+      );
+    }
+
     const regRows = await this.dataSource.query(
       `SELECT id, university_id FROM jupeb_registrations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
       [userId],
@@ -88,43 +149,20 @@ export class SupportService {
       status: 'open',
     });
 
-    if (dto.attachments && dto.attachments.length) {
-      await this.supportRepo.createMessage({
-        ticketId: ticket.id,
-        senderId: userId,
-        senderRole: 'student',
-        message: dto.message,
-        attachments: dto.attachments,
-      });
-    }
+    await this.supportRepo.createMessage({
+      ticketId: ticket.id,
+      senderId: userId,
+      senderRole: 'student',
+      message: dto.message,
+      attachments: dto.attachments || [],
+    });
 
     return this.getMyTicketDetail(userId, ticket.id);
   }
 
   async getMyTickets(userId: string, query: ListTicketsQueryDto): Promise<SupportTicketListResponseDto> {
     const res = await this.supportRepo.listTickets(query, null, userId);
-    return {
-      tickets: res.rows.map((r: any) => ({
-        id: r.id,
-        ticket_number: r.ticket_number,
-        user_id: r.user_id,
-        university_id: r.university_id,
-        registration_id: r.registration_id,
-        category: r.category,
-        subject: r.subject,
-        message: r.message,
-        priority: r.priority,
-        status: r.status,
-        university_name: r.university_name,
-        user_name: r.display_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || null,
-        user_email: r.user_email,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      })),
-      page: res.page,
-      limit: res.limit,
-      total: res.total,
-    };
+    return this.buildPaginatedTicketsResult(res);
   }
 
   async getMyTicketDetail(userId: string, ticketId: string): Promise<SupportTicketResponseDto> {
@@ -133,25 +171,14 @@ export class SupportService {
       throw new NotFoundException('Support ticket not found');
     }
     if (raw.user_id !== userId) {
-      throw new ForbiddenException('You are not authorized to view this ticket');
+      throw new NotFoundException('Support ticket not found');
     }
 
     const messages = await this.supportRepo.listMessagesByTicketId(ticketId);
 
+    const mapped = this.mapTicketRow(raw);
     return {
-      id: raw.id,
-      ticket_number: raw.ticket_number,
-      user_id: raw.user_id,
-      university_id: raw.university_id,
-      registration_id: raw.registration_id,
-      category: raw.category,
-      subject: raw.subject,
-      message: raw.message,
-      priority: raw.priority,
-      status: raw.status,
-      university_name: raw.university_name,
-      user_name: raw.display_name || [raw.first_name, raw.last_name].filter(Boolean).join(' ') || null,
-      user_email: raw.user_email,
+      ...mapped,
       messages: messages.map((m: any) => ({
         id: m.id,
         ticket_id: m.ticket_id,
@@ -166,8 +193,18 @@ export class SupportService {
         },
         created_at: m.created_at,
       })),
-      created_at: raw.created_at,
-      updated_at: raw.updated_at,
+    };
+  }
+
+  private mapMessageEntity(msg: any): SupportMessageResponseDto {
+    return {
+      id: msg.id,
+      ticket_id: msg.ticketId || msg.ticket_id,
+      sender_id: msg.senderId || msg.sender_id,
+      sender_role: msg.senderRole || msg.sender_role,
+      message: msg.message,
+      attachments: typeof msg.attachments === 'string' ? JSON.parse(msg.attachments) : msg.attachments || [],
+      created_at: msg.createdAt || msg.created_at,
     };
   }
 
@@ -188,7 +225,7 @@ export class SupportService {
       await this.supportRepo.updateTicket(ticketId, { status: 'open' });
     }
 
-    return msg;
+    return this.mapMessageEntity(msg);
   }
 
   async institutionListTickets(userId: string, query: ListTicketsQueryDto): Promise<SupportTicketListResponseDto> {
@@ -198,28 +235,7 @@ export class SupportService {
     }
 
     const res = await this.supportRepo.listTickets(query, scopedUniId);
-    return {
-      tickets: res.rows.map((r: any) => ({
-        id: r.id,
-        ticket_number: r.ticket_number,
-        user_id: r.user_id,
-        university_id: r.university_id,
-        registration_id: r.registration_id,
-        category: r.category,
-        subject: r.subject,
-        message: r.message,
-        priority: r.priority,
-        status: r.status,
-        university_name: r.university_name,
-        user_name: r.display_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || null,
-        user_email: r.user_email,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      })),
-      page: res.page,
-      limit: res.limit,
-      total: res.total,
-    };
+    return this.buildPaginatedTicketsResult(res);
   }
 
   async institutionStats(userId: string): Promise<SupportStatsResponseDto> {
@@ -236,20 +252,9 @@ export class SupportService {
     }
 
     const messages = await this.supportRepo.listMessagesByTicketId(ticketId);
+    const mapped = this.mapTicketRow(raw);
     return {
-      id: raw.id,
-      ticket_number: raw.ticket_number,
-      user_id: raw.user_id,
-      university_id: raw.university_id,
-      registration_id: raw.registration_id,
-      category: raw.category,
-      subject: raw.subject,
-      message: raw.message,
-      priority: raw.priority,
-      status: raw.status,
-      university_name: raw.university_name,
-      user_name: raw.display_name || [raw.first_name, raw.last_name].filter(Boolean).join(' ') || null,
-      user_email: raw.user_email,
+      ...mapped,
       messages: messages.map((m: any) => ({
         id: m.id,
         ticket_id: m.ticket_id,
@@ -264,8 +269,6 @@ export class SupportService {
         },
         created_at: m.created_at,
       })),
-      created_at: raw.created_at,
-      updated_at: raw.updated_at,
     };
   }
 
@@ -280,7 +283,7 @@ export class SupportService {
     const msg = await this.supportRepo.createMessage({
       ticketId,
       senderId: userId,
-      senderRole: 'institution_staff',
+      senderRole: 'institution',
       message: dto.message,
       attachments: dto.attachments || [],
     });
@@ -289,7 +292,7 @@ export class SupportService {
       await this.supportRepo.updateTicket(ticketId, { status: 'in_progress' });
     }
 
-    return msg;
+    return this.mapMessageEntity(msg);
   }
 
   async institutionUpdateStatus(userId: string, ticketId: string, dto: UpdateTicketStatusDto) {
@@ -300,48 +303,32 @@ export class SupportService {
       await this.institutionUserScopeService.assertUniversityAccess(userId, raw.university_id);
     }
 
+    const note = dto.resolution_notes || dto.resolutionNotes || dto.comment;
     const updates: any = { status: dto.status };
+    if (note) {
+      updates.resolutionNotes = note;
+    }
     if (dto.status === 'resolved' || dto.status === 'closed') {
       updates.resolvedAt = new Date();
+      updates.resolvedBy = userId;
     }
 
-    const updated = await this.supportRepo.updateTicket(ticketId, updates);
+    await this.supportRepo.updateTicket(ticketId, updates);
     if (dto.comment) {
       await this.supportRepo.createMessage({
         ticketId,
         senderId: userId,
-        senderRole: 'institution_staff',
+        senderRole: 'institution',
         message: `Status updated to ${dto.status}: ${dto.comment}`,
       });
     }
 
-    return updated;
+    return this.institutionGetTicket(userId, ticketId);
   }
 
   async adminListTickets(query: ListTicketsQueryDto): Promise<SupportTicketListResponseDto> {
     const res = await this.supportRepo.listTickets(query);
-    return {
-      tickets: res.rows.map((r: any) => ({
-        id: r.id,
-        ticket_number: r.ticket_number,
-        user_id: r.user_id,
-        university_id: r.university_id,
-        registration_id: r.registration_id,
-        category: r.category,
-        subject: r.subject,
-        message: r.message,
-        priority: r.priority,
-        status: r.status,
-        university_name: r.university_name,
-        user_name: r.display_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || null,
-        user_email: r.user_email,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      })),
-      page: res.page,
-      limit: res.limit,
-      total: res.total,
-    };
+    return this.buildPaginatedTicketsResult(res);
   }
 
   async adminStats(): Promise<SupportStatsResponseDto> {
@@ -353,20 +340,9 @@ export class SupportService {
     if (!raw) throw new NotFoundException('Support ticket not found');
 
     const messages = await this.supportRepo.listMessagesByTicketId(ticketId);
+    const mapped = this.mapTicketRow(raw);
     return {
-      id: raw.id,
-      ticket_number: raw.ticket_number,
-      user_id: raw.user_id,
-      university_id: raw.university_id,
-      registration_id: raw.registration_id,
-      category: raw.category,
-      subject: raw.subject,
-      message: raw.message,
-      priority: raw.priority,
-      status: raw.status,
-      university_name: raw.university_name,
-      user_name: raw.display_name || [raw.first_name, raw.last_name].filter(Boolean).join(' ') || null,
-      user_email: raw.user_email,
+      ...mapped,
       messages: messages.map((m: any) => ({
         id: m.id,
         ticket_id: m.ticket_id,
@@ -381,8 +357,6 @@ export class SupportService {
         },
         created_at: m.created_at,
       })),
-      created_at: raw.created_at,
-      updated_at: raw.updated_at,
     };
   }
 
@@ -402,7 +376,7 @@ export class SupportService {
       await this.supportRepo.updateTicket(ticketId, { status: 'in_progress' });
     }
 
-    return msg;
+    return this.mapMessageEntity(msg);
   }
 
   async adminUpdateTicket(ticketId: string, dto: AdminUpdateTicketDto) {
@@ -419,7 +393,12 @@ export class SupportService {
     if (dto.priority) updates.priority = dto.priority;
     if (dto.assigned_to !== undefined) updates.assignedTo = dto.assigned_to;
     if (dto.category) updates.category = dto.category;
+    const note = dto.resolution_notes || dto.resolutionNotes;
+    if (note) {
+      updates.resolutionNotes = note;
+    }
 
-    return this.supportRepo.updateTicket(ticketId, updates);
+    await this.supportRepo.updateTicket(ticketId, updates);
+    return this.adminGetTicket(ticketId);
   }
 }

@@ -61,6 +61,16 @@ export class UpdateTicketStatusDto {
   @IsOptional()
   @IsString()
   comment?: string;
+
+  @ApiPropertyOptional({ example: 'Subject combination has been updated.' })
+  @IsOptional()
+  @IsString()
+  resolution_notes?: string;
+
+  @ApiPropertyOptional({ example: 'Subject combination has been updated.' })
+  @IsOptional()
+  @IsString()
+  resolutionNotes?: string;
 }
 
 export class AdminUpdateTicketDto {
@@ -83,6 +93,16 @@ export class AdminUpdateTicketDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  @ApiPropertyOptional({ example: 'Subject combination has been updated.' })
+  @IsOptional()
+  @IsString()
+  resolution_notes?: string;
+
+  @ApiPropertyOptional({ example: 'Subject combination has been updated.' })
+  @IsOptional()
+  @IsString()
+  resolutionNotes?: string;
 }
 
 export class ListTicketsQueryDto {
@@ -101,30 +121,118 @@ export class ListTicketsQueryDto {
   @Max(100)
   limit?: number = 20;
 
-  @ApiPropertyOptional({ enum: ['open', 'in_progress', 'resolved', 'closed'] })
+  @ApiPropertyOptional({
+    description: 'Filter by ticket status or multiple comma-separated statuses (e.g. "open,closed" or repeated ?status=open&status=closed)',
+    example: 'open,closed',
+  })
   @IsOptional()
-  @IsString()
-  status?: string;
+  status?: string | string[];
 
-  @ApiPropertyOptional({ enum: ['low', 'normal', 'high', 'urgent'] })
+  @ApiPropertyOptional({
+    description: 'Alias for status filter',
+    example: 'open,closed',
+  })
   @IsOptional()
-  @IsString()
-  priority?: string;
+  statuses?: string | string[];
 
-  @ApiPropertyOptional({ example: 'academic' })
+  @ApiPropertyOptional({
+    description: 'Filter by priority or multiple comma-separated priorities (e.g. "high,urgent")',
+    example: 'high,urgent',
+  })
   @IsOptional()
-  @IsString()
-  category?: string;
+  priority?: string | string[];
+
+  @ApiPropertyOptional({
+    description: 'Filter by category or multiple comma-separated categories',
+    example: 'Registration,Attendance issue',
+  })
+  @IsOptional()
+  category?: string | string[];
 
   @ApiPropertyOptional({ example: 'u0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22' })
   @IsOptional()
   @IsUUID('4')
   university_id?: string;
 
-  @ApiPropertyOptional({ example: 'PCM' })
+  @ApiPropertyOptional({
+    description: 'Filter tickets created on or after this date (ISO 8601 or YYYY-MM-DD)',
+    example: '2026-10-01',
+  })
+  @IsOptional()
+  @IsString()
+  start_date?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias for start_date',
+    example: '2026-10-01',
+  })
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter tickets created on or before this date (ISO 8601 or YYYY-MM-DD)',
+    example: '2026-10-31',
+  })
+  @IsOptional()
+  @IsString()
+  end_date?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias for end_date',
+    example: '2026-10-31',
+  })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Search matching ticket number, student name, student codes, email, phone, subject, or message',
+    example: 'Quadri',
+  })
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias for q search term',
+    example: 'Quadri',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias for q search term',
+    example: 'Quadri',
+  })
+  @IsOptional()
+  @IsString()
+  query?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias for q search term',
+    example: 'Quadri',
+  })
+  @IsOptional()
+  @IsString()
+  keyword?: string;
+
+  @IsOptional()
+  @IsString()
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  from_date?: string;
+
+  @IsOptional()
+  @IsString()
+  to?: string;
+
+  @IsOptional()
+  @IsString()
+  to_date?: string;
 }
 
 export class SupportCategoryItemDto {
@@ -206,14 +314,47 @@ export class SupportTicketResponseDto {
   @ApiProperty({ example: 'open' })
   status: string;
 
+  @ApiPropertyOptional({ example: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', nullable: true })
+  assigned_to?: string | null;
+
+  @ApiPropertyOptional({ example: '2026-10-12T12:00:00.000Z', nullable: true })
+  resolved_at?: Date | null;
+
+  @ApiPropertyOptional({ example: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', nullable: true })
+  resolved_by?: string | null;
+
+  @ApiPropertyOptional({ example: 'Subject combination has been updated in the portal.', nullable: true })
+  resolution_notes?: string | null;
+
   @ApiPropertyOptional({ example: 'UNILAG', nullable: true })
   university_name?: string | null;
 
   @ApiPropertyOptional({ example: 'Chukwuma Adeyemi', nullable: true })
   user_name?: string | null;
 
+  @ApiPropertyOptional({ example: 'Chukwuma', nullable: true })
+  user_first_name?: string | null;
+
+  @ApiPropertyOptional({ example: 'Adeyemi', nullable: true })
+  user_last_name?: string | null;
+
   @ApiPropertyOptional({ example: 'student@example.com', nullable: true })
   user_email?: string | null;
+
+  @ApiPropertyOptional({ example: '08012345678', nullable: true })
+  user_phone?: string | null;
+
+  @ApiPropertyOptional({ example: '284300001', nullable: true })
+  candidate_code?: string | null;
+
+  @ApiPropertyOptional({ example: '284300001', nullable: true })
+  jupeb_candidate_number?: string | null;
+
+  @ApiPropertyOptional({ example: '4300018', nullable: true })
+  provisional_candidate_code?: string | null;
+
+  @ApiPropertyOptional({ example: 'MAT/2026/001', nullable: true })
+  institution_issued_code?: string | null;
 
   @ApiPropertyOptional({ type: [SupportMessageResponseDto] })
   messages?: SupportMessageResponseDto[];
@@ -225,7 +366,30 @@ export class SupportTicketResponseDto {
   updated_at: Date;
 }
 
+export class SupportPaginationMetaDto {
+  @ApiProperty({ example: 1 })
+  page: number;
+
+  @ApiProperty({ example: 20 })
+  limit: number;
+
+  @ApiProperty({ example: 45 })
+  total: number;
+
+  @ApiProperty({ example: 3 })
+  totalPages: number;
+}
+
 export class SupportTicketListResponseDto {
+  @ApiProperty({ example: true })
+  success?: boolean;
+
+  @ApiPropertyOptional({ type: [SupportTicketResponseDto] })
+  data?: SupportTicketResponseDto[];
+
+  @ApiPropertyOptional({ type: [SupportTicketResponseDto] })
+  rows?: SupportTicketResponseDto[];
+
   @ApiProperty({ type: [SupportTicketResponseDto] })
   tickets: SupportTicketResponseDto[];
 
@@ -237,6 +401,12 @@ export class SupportTicketListResponseDto {
 
   @ApiProperty({ example: 45 })
   total: number;
+
+  @ApiPropertyOptional({ example: 3 })
+  totalPages?: number;
+
+  @ApiPropertyOptional({ type: SupportPaginationMetaDto })
+  pagination?: SupportPaginationMetaDto;
 }
 
 export class SupportStatsResponseDto {
@@ -254,4 +424,10 @@ export class SupportStatsResponseDto {
 
   @ApiProperty({ example: 0 })
   closed: number;
+
+  @ApiPropertyOptional({ type: [Object], example: [] })
+  by_university?: any[];
+
+  @ApiPropertyOptional({ type: [Object], example: [] })
+  by_category?: any[];
 }

@@ -20,17 +20,39 @@ describe('Support API Module', () => {
   let otherUniTicketId;
 
   beforeAll(async () => {
-    // Bind server on loopback to avoid sandbox 0.0.0.0 permission errors
-    await new Promise((resolve) => {
-      server = app.listen(0, '127.0.0.1', resolve);
-    });
+    server = app;
 
     // 1. Ensure support tables exist
-    const migrationSql = fs.readFileSync(
-      path.join(__dirname, '../db/migrations/032_support_tickets_schema.sql'),
-      'utf8'
-    );
-    await pool.query(migrationSql);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        ticket_number VARCHAR(32) UNIQUE NOT NULL,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        university_id UUID NULL REFERENCES jupeb_universities(id) ON DELETE SET NULL,
+        registration_id UUID NULL REFERENCES jupeb_registrations(id) ON DELETE SET NULL,
+        category VARCHAR(100) NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'open',
+        priority VARCHAR(32) NOT NULL DEFAULT 'normal',
+        assigned_to UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at TIMESTAMP NULL,
+        resolved_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+        resolution_notes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS support_ticket_messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        ticket_id UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+        sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        sender_role VARCHAR(32) NOT NULL,
+        message TEXT NOT NULL,
+        attachments JSONB DEFAULT '[]'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
     // 2. Obtain admin token
     const adminLogin = await request(server)
@@ -178,7 +200,7 @@ describe('Support API Module', () => {
       }
     } catch (_) {}
 
-    if (server) {
+    if (server && typeof server.close === 'function') {
       await new Promise((resolve) => server.close(resolve));
     }
   });
@@ -189,6 +211,9 @@ describe('Support API Module', () => {
   describe('GET /support/categories', () => {
     it('returns the list of allowed support categories matching Figma spec', async () => {
       const res = await request(server).get('/support/categories');
+      if (res.status !== 200) {
+        console.error('CATEGORIES ERROR:', res.status, res.body, res.text);
+      }
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.data)).toBe(true);
@@ -362,6 +387,129 @@ describe('Support API Module', () => {
       // Must NOT leak Uni B student ticket
       const hasUniB = res.body.data.some((t) => t.id === otherUniTicketId);
       expect(hasUniB).toBe(false);
+    });
+
+    it('institution staff filters tickets by start_date and end_date (including aliases)', async () => {
+      // 1. Valid range including today
+      const today = new Date().toISOString().slice(0, 10);
+      const resToday = await request(server)
+        .get(`/support/institution/tickets?start_date=${today}&end_date=${today}`)
+        .set('Authorization', `Bearer ${institutionToken}`);
+
+      expect(resToday.status).toBe(200);
+      expect(resToday.body.success).toBe(true);
+      const found = resToday.body.data.some((t) => t.id === createdTicketId);
+      expect(found).toBe(true);
+
+      // 2. Future range excludes today's ticket
+      const futureDate = '2099-01-01';
+      const resFuture = await request(server)
+        .get(`/support/institution/tickets?start_date=${futureDate}`)
+        .set('Authorization', `Bearer ${institutionToken}`);
+
+      expect(resFuture.status).toBe(200);
+      const foundFuture = resFuture.body.data.some((t) => t.id === createdTicketId);
+      expect(foundFuture).toBe(false);
+
+      // 3. Past range excludes today's ticket
+      const pastDate = '2020-01-01';
+      const resPast = await request(server)
+        .get(`/support/institution/tickets?end_date=${pastDate}`)
+        .set('Authorization', `Bearer ${institutionToken}`);
+
+      expect(resPast.status).toBe(200);
+      const foundPast = resPast.body.data.some((t) => t.id === createdTicketId);
+      expect(foundPast).toBe(false);
+
+      // 4. Aliases (startDate, endDate, from, to)
+      const resAlias = await request(server)
+        .get(`/support/institution/tickets?startDate=${today}&endDate=${today}`)
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resAlias.status).toBe(200);
+      expect(resAlias.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+    });
+
+    it('institution staff searches tickets using q (and aliases search, query, keyword)', async () => {
+      // 1. Search by ticket_number
+      const resByNumber = await request(server)
+        .get(`/support/institution/tickets?q=${createdTicketNumber}`)
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resByNumber.status).toBe(200);
+      expect(resByNumber.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+      expect(resByNumber.body.pagination.total).toBeGreaterThanOrEqual(1);
+
+      // 2. Search by student name / email
+      const resByName = await request(server)
+        .get('/support/institution/tickets?q=Student')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resByName.status).toBe(200);
+      expect(resByName.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 3. Search by subject keyword
+      const resBySubject = await request(server)
+        .get('/support/institution/tickets?q=combination')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resBySubject.status).toBe(200);
+      expect(resBySubject.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 4. Search with aliases (search, query, keyword)
+      const resByAlias = await request(server)
+        .get('/support/institution/tickets?search=combination')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resByAlias.status).toBe(200);
+      expect(resByAlias.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 5. Non-matching query returns empty list and pagination.total = 0
+      const resNonExistent = await request(server)
+        .get('/support/institution/tickets?q=nonexistent_ticket_search_query_xyz_999')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resNonExistent.status).toBe(200);
+      expect(resNonExistent.body.data.length).toBe(0);
+      expect(resNonExistent.body.pagination.total).toBe(0);
+    });
+
+    it('institution staff filters tickets by multiple statuses (comma-separated, array, and aliases)', async () => {
+      // 1. Single status matches
+      const resOpen = await request(server)
+        .get('/support/institution/tickets?status=open')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resOpen.status).toBe(200);
+      expect(resOpen.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 2. Comma-separated multiple statuses e.g. open,closed
+      const resMultiComma = await request(server)
+        .get('/support/institution/tickets?status=open,closed')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resMultiComma.status).toBe(200);
+      expect(resMultiComma.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 3. Repeated query params e.g. status=open&status=closed
+      const resMultiArray = await request(server)
+        .get('/support/institution/tickets?status=open&status=closed')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resMultiArray.status).toBe(200);
+      expect(resMultiArray.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 4. Alias statuses=open,closed
+      const resStatusesAlias = await request(server)
+        .get('/support/institution/tickets?statuses=open,closed')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resStatusesAlias.status).toBe(200);
+      expect(resStatusesAlias.body.data.some((t) => t.id === createdTicketId)).toBe(true);
+
+      // 5. Unmatched statuses e.g. status=resolved,closed excludes open ticket
+      const resOther = await request(server)
+        .get('/support/institution/tickets?status=resolved,closed')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resOther.status).toBe(200);
+      expect(resOther.body.data.some((t) => t.id === createdTicketId)).toBe(false);
+
+      // 6. status=all returns tickets without filtering out
+      const resAll = await request(server)
+        .get('/support/institution/tickets?status=all')
+        .set('Authorization', `Bearer ${institutionToken}`);
+      expect(resAll.status).toBe(200);
+      expect(resAll.body.data.some((t) => t.id === createdTicketId)).toBe(true);
     });
 
     it('institution staff gets ticket detail with candidate info', async () => {

@@ -44,6 +44,12 @@ export class SupportTicketEntity {
   @Column({ name: 'resolved_at', type: 'timestamptz', nullable: true })
   resolvedAt?: Date | null;
 
+  @Column({ name: 'resolved_by', type: 'uuid', nullable: true })
+  resolvedBy?: string | null;
+
+  @Column({ name: 'resolution_notes', type: 'text', nullable: true })
+  resolutionNotes?: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 
