@@ -107,7 +107,7 @@ export class UsersController {
       }
       throw new NotFoundException('User not found');
     }
-    const user = await this.usersService.getUserById(userId);
+    const user = await this.usersService.getUserById(userId, currentUserId);
     return {
       success: true,
       message: 'User retrieved successfully',

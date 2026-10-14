@@ -211,7 +211,11 @@ async function setupCommon() {
 
     const adminPermissions = [
       'system.admin', 'system.config', 'system.logs',
-      'users.view', 'users.create', 'users.update', 'users.delete'
+      'users.view', 'users.create', 'users.update', 'users.delete',
+      'support.view', 'support.manage',
+      'audit.view',
+      'reports.view', 'reports.generate', 'generate.report',
+      'results.send', 'send.result', 'results.view'
     ];
 
     for (const permission of adminPermissions) {
@@ -219,7 +223,7 @@ async function setupCommon() {
       await runScript('add-permission-to-role.js', ['admin', permission]);
     }
 
-    const agentPermissions = ['users.view', 'users.update'];
+    const agentPermissions = ['users.view', 'users.update', 'support.view', 'support.manage'];
     for (const permission of agentPermissions) {
       await runScript('add-permission-to-role.js', ['agent', permission]);
     }

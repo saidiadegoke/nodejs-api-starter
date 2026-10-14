@@ -56,6 +56,16 @@ export class SupportService {
   }
 
   private mapTicketRow(r: any): SupportTicketResponseDto {
+    const subjectCombination = (r.subject_combination_id || r.subject_combination_code || r.subject_combination_title)
+      ? {
+          id: r.subject_combination_id || null,
+          code: r.subject_combination_code || '-',
+          title: r.subject_combination_title || r.subject_combination_code || '-',
+          subject_items: r.subject_items || [],
+          items: r.subject_items || [],
+        }
+      : null;
+
     return {
       id: r.id,
       ticket_number: r.ticket_number,
@@ -81,12 +91,58 @@ export class SupportService {
       jupeb_candidate_number: r.jupeb_candidate_number || null,
       provisional_candidate_code: r.provisional_candidate_code || null,
       institution_issued_code: r.institution_issued_code || null,
+      subject_combination: subjectCombination,
+      subjectCombination,
+      subject_combination_id: r.subject_combination_id || null,
+      subject_combination_code: r.subject_combination_code || null,
+      subject_combination_title: r.subject_combination_title || null,
       created_at: r.created_at,
       updated_at: r.updated_at,
     };
   }
 
-  private buildPaginatedTicketsResult(res: any): SupportTicketListResponseDto {
+  private async enrichRowsWithSubjectItems(rows: any[]): Promise<void> {
+    if (!rows || rows.length === 0) return;
+    const comboIds = Array.from(
+      new Set(rows.map((r: any) => r.subject_combination_id).filter(Boolean)),
+    );
+    if (comboIds.length === 0) return;
+
+    try {
+      const items = await this.dataSource.query(
+        `SELECT i.id, i.position, i.combination_id, i.subject_id, s.code, s.name
+           FROM jupeb_subject_combination_items i
+           JOIN jupeb_subjects s ON s.id = i.subject_id
+          WHERE i.combination_id = ANY($1)
+          ORDER BY i.position ASC`,
+        [comboIds],
+      );
+
+      const itemsByCombo = new Map<string, any[]>();
+      for (const item of items) {
+        const list = itemsByCombo.get(item.combination_id) || [];
+        list.push({
+          id: item.id,
+          position: item.position,
+          subject_id: item.subject_id,
+          code: item.code,
+          name: item.name,
+        });
+        itemsByCombo.set(item.combination_id, list);
+      }
+
+      for (const r of rows) {
+        if (r.subject_combination_id) {
+          r.subject_items = itemsByCombo.get(r.subject_combination_id) || [];
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to enrich subject items: ${err?.message || err}`);
+    }
+  }
+
+  private async buildPaginatedTicketsResult(res: any): Promise<SupportTicketListResponseDto> {
+    await this.enrichRowsWithSubjectItems(res.rows);
     const tickets = res.rows.map((r: any) => this.mapTicketRow(r));
     const page = res.page;
     const limit = res.limit;
@@ -175,6 +231,7 @@ export class SupportService {
     }
 
     const messages = await this.supportRepo.listMessagesByTicketId(ticketId);
+    await this.enrichRowsWithSubjectItems([raw]);
 
     const mapped = this.mapTicketRow(raw);
     return {
@@ -252,6 +309,7 @@ export class SupportService {
     }
 
     const messages = await this.supportRepo.listMessagesByTicketId(ticketId);
+    await this.enrichRowsWithSubjectItems([raw]);
     const mapped = this.mapTicketRow(raw);
     return {
       ...mapped,
@@ -340,6 +398,7 @@ export class SupportService {
     if (!raw) throw new NotFoundException('Support ticket not found');
 
     const messages = await this.supportRepo.listMessagesByTicketId(ticketId);
+    await this.enrichRowsWithSubjectItems([raw]);
     const mapped = this.mapTicketRow(raw);
     return {
       ...mapped,

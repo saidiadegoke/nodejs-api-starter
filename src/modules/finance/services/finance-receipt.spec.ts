@@ -175,5 +175,65 @@ describe('FinanceService - Receipt Upload and Confirmation', () => {
         );
       });
     });
+
+    it('should treat confirmed status as successful when saving payment and reconciliation', async () => {
+      mockPaymentRepo.findById.mockResolvedValue({
+        id: 'pay-uuid-2',
+        paymentId: 'PAY-5678',
+        amount: 250000,
+        currency: Currency.NGN,
+        status: PaymentStatus.PENDING_VERIFICATION,
+        jupebUniversityId: 'uni-1',
+        metadata: {},
+      });
+
+      const dto: ConfirmPaymentDto = {
+        status: PaymentStatus.CONFIRMED,
+        notes: 'Confirmed by bank statement audit',
+      };
+
+      const res = await service.confirmPayment('pay-uuid-2', dto, 'admin-user-1');
+      expect(res.success).toBe(true);
+      expect(mockPaymentRepo.updateById).toHaveBeenCalledWith(
+        'pay-uuid-2',
+        expect.objectContaining({
+          status: PaymentStatus.SUCCESSFUL,
+          amount: 250000,
+        }),
+      );
+      expect(mockReconRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentId: 'pay-uuid-2',
+          statusSnapshot: PaymentStatus.SUCCESSFUL,
+          capturedAmount: 250000,
+        }),
+      );
+    });
+
+    it('should default omitted status to successful', async () => {
+      mockPaymentRepo.findById.mockResolvedValue({
+        id: 'pay-uuid-3',
+        paymentId: 'PAY-9012',
+        amount: 150000,
+        currency: Currency.NGN,
+        status: PaymentStatus.PENDING_VERIFICATION,
+        jupebUniversityId: 'uni-1',
+        metadata: {},
+      });
+
+      const dto: ConfirmPaymentDto = {
+        notes: 'Approved without explicit status',
+      };
+
+      const res = await service.confirmPayment('pay-uuid-3', dto, 'admin-user-1');
+      expect(res.success).toBe(true);
+      expect(mockPaymentRepo.updateById).toHaveBeenCalledWith(
+        'pay-uuid-3',
+        expect.objectContaining({
+          status: PaymentStatus.SUCCESSFUL,
+          amount: 150000,
+        }),
+      );
+    });
   });
 });

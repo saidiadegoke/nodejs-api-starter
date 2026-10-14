@@ -304,20 +304,25 @@ paths:
 
   /admin/permissions:
     get:
-      summary: List permissions
+      summary: List permissions (grouped by module, role, or flat)
       description: |
-        Default mode is paginated. With `?group_by=role` the response is an array of
-        `{ role_id, role_name, display_name, permissions[] }` groups instead of a flat
-        list.
+        Returns permissions filtered and tailored to the caller's role and institution scope.
+        - **Institution users** (`institution_admin`, `program_director`, or institution-scoped users): only receive permissions relevant to institutions (excludes `ocr.*`, `institutions.*`, `system.*`, `posts.*`, etc.).
+        - **Default / `group_by=module`**: Returns an array of module groups `{ module, module_name, description, order, total_permissions, permissions[] }` in `data`. For backward compatibility, the flat list is also present under `permissions`.
+        - **`group_by=flat`**: Returns a flat array of permissions in `data`.
+        - **`group_by=role`**: Returns an array of `{ role_id, role_name, display_name, permissions[] }` groups in `data`.
+        - **`?role=institution_admin`**: Allows global admins to simulate/filter permissions specifically for the specified role.
       tags: [RBAC]
       parameters:
         - { in: query, name: page, schema: { type: integer, default: 1 } }
         - { in: query, name: limit, schema: { type: integer, default: 100 } }
         - { in: query, name: resource, schema: { type: string }, description: 'Filter by resource (flat mode only)' }
-        - { in: query, name: group_by, schema: { type: string, enum: [role] } }
+        - { in: query, name: module, schema: { type: string }, description: 'Filter by module key' }
+        - { in: query, name: role, schema: { type: string }, description: 'Filter permissions allowed for a specific role (e.g. institution_admin)' }
+        - { in: query, name: group_by, schema: { type: string, enum: [module, role, flat], default: module } }
       responses:
         '200':
-          description: Paginated list, or grouped array when `group_by=role`.
+          description: Grouped permissions by module (default), by role (`group_by=role`), or flat list (`group_by=flat`).
 
     post:
       summary: Create a permission

@@ -25,7 +25,12 @@ export class SupportRepository {
       .leftJoin('users', 'u', 'u.id = t.user_id')
       .leftJoin('profiles', 'p', 'p.user_id = t.user_id')
       .leftJoin('jupeb_universities', 'uni', 'uni.id = t.university_id')
-      .leftJoin('jupeb_registrations', 'r', 'r.id = t.registration_id')
+      .leftJoin(
+        'jupeb_registrations',
+        'r',
+        'r.id = COALESCE(t.registration_id, (SELECT r2.id FROM jupeb_registrations r2 WHERE r2.user_id = t.user_id ORDER BY r2.created_at DESC LIMIT 1))',
+      )
+      .leftJoin('jupeb_subject_combinations', 'sc', 'sc.id = r.subject_combination_id')
       .select([
         't.id AS id',
         't.ticket_number AS ticket_number',
@@ -54,6 +59,9 @@ export class SupportRepository {
         'r.provisional_candidate_code AS provisional_candidate_code',
         'r.jupeb_candidate_number AS jupeb_candidate_number',
         'r.institution_issued_code AS institution_issued_code',
+        'sc.id AS subject_combination_id',
+        'sc.code AS subject_combination_code',
+        'sc.title AS subject_combination_title',
       ])
       .where('t.id = :id', { id });
 
@@ -74,7 +82,12 @@ export class SupportRepository {
       .leftJoin('users', 'u', 'u.id = t.user_id')
       .leftJoin('profiles', 'p', 'p.user_id = t.user_id')
       .leftJoin('jupeb_universities', 'uni', 'uni.id = t.university_id')
-      .leftJoin('jupeb_registrations', 'r', 'r.id = t.registration_id')
+      .leftJoin(
+        'jupeb_registrations',
+        'r',
+        'r.id = COALESCE(t.registration_id, (SELECT r2.id FROM jupeb_registrations r2 WHERE r2.user_id = t.user_id ORDER BY r2.created_at DESC LIMIT 1))',
+      )
+      .leftJoin('jupeb_subject_combinations', 'sc', 'sc.id = r.subject_combination_id')
       .select([
         't.id AS id',
         't.ticket_number AS ticket_number',
@@ -101,6 +114,9 @@ export class SupportRepository {
         'r.jupeb_candidate_number AS jupeb_candidate_number',
         'r.provisional_candidate_code AS provisional_candidate_code',
         'r.institution_issued_code AS institution_issued_code',
+        'sc.id AS subject_combination_id',
+        'sc.code AS subject_combination_code',
+        'sc.title AS subject_combination_title',
       ]);
 
     if (userId) {
@@ -217,6 +233,8 @@ export class SupportRepository {
           r.provisional_candidate_code ILIKE :term OR
           r.jupeb_candidate_number ILIKE :term OR
           r.institution_issued_code ILIKE :term OR
+          sc.code ILIKE :term OR
+          sc.title ILIKE :term OR
           EXISTS (
             SELECT 1 FROM jupeb_registrations cr
             WHERE cr.user_id = t.user_id

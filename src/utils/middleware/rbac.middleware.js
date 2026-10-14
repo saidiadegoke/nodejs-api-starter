@@ -256,6 +256,48 @@ const requireOwnerOrAdmin = (paramName = 'user_id') => {
   };
 };
 
+/**
+ * Middleware: Require user to have ANY of the specified roles OR ANY of the specified permissions
+ * @param {string[]} roles - Allowed role names
+ * @param {string[]} permissions - Allowed permission names
+ * @returns {Function} Express middleware
+ */
+const requireRoleOrPermission = (roles = [], permissions = []) => {
+  return async (req, res, next) => {
+    if (!req.user || !req.user.user_id) {
+      return sendError(res, 'Authentication required', UNAUTHORIZED);
+    }
+
+    try {
+      const userRoles = await getUserRoles(req.user.user_id);
+      const hasAnyRole = roles.some((role) => userRoles.includes(role));
+      if (hasAnyRole) {
+        req.user.roles = userRoles;
+        return next();
+      }
+
+      if (permissions.length > 0) {
+        const checks = await Promise.all(
+          permissions.map((perm) => hasPermission(req.user.user_id, perm))
+        );
+        if (checks.some(Boolean)) {
+          req.user.roles = userRoles;
+          return next();
+        }
+      }
+
+      return sendError(
+        res,
+        `Access denied. Required role(s): ${roles.join(', ')} or permission(s): ${permissions.join(', ')}`,
+        FORBIDDEN,
+        { required_roles: roles, required_permissions: permissions, user_roles: userRoles }
+      );
+    } catch (error) {
+      return sendError(res, 'Error checking access permissions', 500);
+    }
+  };
+};
+
 module.exports = {
   hasRole,
   hasPermission,
@@ -265,6 +307,7 @@ module.exports = {
   requireRole,
   requirePermission,
   requireAllPermissions,
-  requireOwnerOrAdmin
+  requireOwnerOrAdmin,
+  requireRoleOrPermission,
 };
 

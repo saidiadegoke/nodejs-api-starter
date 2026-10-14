@@ -9,6 +9,7 @@ import {
   Body,
   UseGuards,
   Req,
+  HttpCode,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -41,8 +42,8 @@ export class RbacController {
 
   @Get('roles')
   @ApiOperation({ summary: 'List roles', description: 'Paginated list of roles with optional search and status filter.' })
-  async listRoles(@Query() query: ListRbacQueryDto) {
-    return this.rbacService.listRoles(query);
+  async listRoles(@Query() query: ListRbacQueryDto, @Req() req: any) {
+    return this.rbacService.listRoles(query, req?.user);
   }
 
   @Post('roles')
@@ -50,7 +51,7 @@ export class RbacController {
   @ApiOperation({ summary: 'Create a role', description: 'Creates a new custom role and optionally attaches permissions.' })
   @ApiCreatedResponse({ type: RoleResponseDto })
   async createRole(@Body() dto: CreateRoleDto, @Req() req: any) {
-    const role = await this.rbacService.createRole(dto, req.user?.user_id);
+    const role = await this.rbacService.createRole(dto, req?.user);
     return {
       success: true,
       message: 'Role created successfully',
@@ -62,8 +63,8 @@ export class RbacController {
   @Get('roles/:roleId')
   @ApiOperation({ summary: 'Get role by ID', description: 'Returns a single role with its attached permission names.' })
   @ApiOkResponse({ type: RoleResponseDto })
-  async getRole(@Param('roleId') roleId: string) {
-    const role = await this.rbacService.getRole(roleId);
+  async getRole(@Param('roleId') roleId: string, @Req() req: any) {
+    const role = await this.rbacService.getRole(roleId, req?.user);
     return {
       success: true,
       message: 'Role retrieved successfully',
@@ -80,8 +81,12 @@ export class RbacController {
   })
   @ApiOperation({ summary: 'Patch role', description: 'Updates display_name, description, status, or replaces permission set.' })
   @ApiOkResponse({ type: RoleResponseDto })
-  async patchRole(@Param('roleId') roleId: string, @Body() dto: PatchRoleDto) {
-    const role = await this.rbacService.patchRole(roleId, dto);
+  async patchRole(
+    @Param('roleId') roleId: string,
+    @Body() dto: PatchRoleDto,
+    @Req() req: any,
+  ) {
+    const role = await this.rbacService.patchRole(roleId, dto, req?.user);
     return {
       success: true,
       message: 'Role updated successfully',
@@ -97,8 +102,8 @@ export class RbacController {
     durable: true,
   })
   @ApiOperation({ summary: 'Delete role', description: 'Deletes a non-system role permanently.' })
-  async deleteRole(@Param('roleId') roleId: string) {
-    return this.rbacService.deleteRole(roleId);
+  async deleteRole(@Param('roleId') roleId: string, @Req() req: any) {
+    return this.rbacService.deleteRole(roleId, req?.user);
   }
 
   // ── Role Permissions ───────────────────────────────────────────────────
@@ -110,6 +115,7 @@ export class RbacController {
   }
 
   @Post('roles/:roleId/permissions/:permissionId')
+  @HttpCode(200)
   @Audit('role.permission_attach', {
     resourceType: 'role',
     resourceId: 'params:roleId',
@@ -120,7 +126,14 @@ export class RbacController {
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,
   ) {
-    return this.rbacService.attachPermission(roleId, permissionId);
+    const res = await this.rbacService.attachPermission(roleId, permissionId);
+    return {
+      success: true,
+      message: res.message || 'Permission attached to role',
+      data: { attached: true, ...res },
+      attached: true,
+      ...res,
+    };
   }
 
   @Delete('roles/:roleId/permissions/:permissionId')
@@ -134,15 +147,22 @@ export class RbacController {
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,
   ) {
-    return this.rbacService.detachPermission(roleId, permissionId);
+    const res = await this.rbacService.detachPermission(roleId, permissionId);
+    return {
+      success: true,
+      message: res.message || 'Permission detached from role',
+      data: { detached: true, ...res },
+      detached: true,
+      ...res,
+    };
   }
 
   // ── Permissions ────────────────────────────────────────────────────────
 
   @Get('permissions')
   @ApiOperation({ summary: 'List permissions', description: 'Paginated list of permissions with search and module filter.' })
-  async listPermissions(@Query() query: ListRbacQueryDto) {
-    return this.rbacService.listPermissions(query);
+  async listPermissions(@Query() query: ListRbacQueryDto, @Req() req: any) {
+    return this.rbacService.listPermissions(query, req?.user);
   }
 
   @Post('permissions')

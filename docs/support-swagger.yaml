@@ -147,12 +147,62 @@ components:
           format: email
         user_phone:
           type: string
+        subject_combination_id:
+          type: string
+          format: uuid
+          nullable: true
+        subject_combination_code:
+          type: string
+          example: JUPEB SC-038
+          nullable: true
+        subject_combination_title:
+          type: string
+          example: Chemistry, Physics, Mathematics
+          nullable: true
+        subject_combination:
+          $ref: '#/components/schemas/SupportSubjectCombination'
+          nullable: true
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+
+    SupportSubjectCombination:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+        code:
+          type: string
+          example: JUPEB SC-038
+          nullable: true
+        title:
+          type: string
+          example: Chemistry, Physics, Mathematics
+          nullable: true
+        subject_items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              position:
+                type: integer
+              subject_id:
+                type: string
+                format: uuid
+              code:
+                type: string
+                example: CHM
+              name:
+                type: string
+                example: Chemistry
 
     SupportTicketDetail:
       allOf:

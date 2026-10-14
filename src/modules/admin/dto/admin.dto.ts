@@ -40,6 +40,11 @@ export class CreateRoleDto {
 }
 
 export class PatchRoleDto {
+  @ApiPropertyOptional({ example: 'custom_role' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
   @ApiPropertyOptional({ example: 'Examination Officer' })
   @IsOptional()
   @IsString()
@@ -62,10 +67,20 @@ export class PatchRoleDto {
 }
 
 export class CreatePermissionDto {
-  @ApiProperty({ example: 'exams.manage' })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ example: 'exams.manage' })
+  @IsOptional()
   @IsString()
-  name: string;
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'exams' })
+  @IsOptional()
+  @IsString()
+  resource?: string;
+
+  @ApiPropertyOptional({ example: 'manage' })
+  @IsOptional()
+  @IsString()
+  action?: string;
 
   @ApiPropertyOptional({ example: 'academic', default: 'general' })
   @IsOptional()
@@ -173,10 +188,20 @@ export class ListRbacQueryDto {
   @IsString()
   resource?: string;
 
-  @ApiPropertyOptional({ example: 'role', enum: ['role'] })
+  @ApiPropertyOptional({ example: 'module', enum: ['module', 'role', 'flat'] })
   @IsOptional()
   @IsString()
   group_by?: string;
+
+  @ApiPropertyOptional({ example: 'institution_admin' })
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @ApiPropertyOptional({ example: 'institution_admin' })
+  @IsOptional()
+  @IsString()
+  role_name?: string;
 
   @ApiPropertyOptional({ example: false })
   @IsOptional()
@@ -249,6 +274,9 @@ export class RoleResponseDto {
   @ApiPropertyOptional({ example: ['p0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'], type: [String] })
   permission_ids?: string[];
 
+  @ApiPropertyOptional({ example: 'u0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', nullable: true })
+  owner_jupeb_university_id?: string | null;
+
   @ApiProperty({ example: '2026-09-29T12:00:00.000Z' })
   created_at: Date;
 
@@ -262,6 +290,12 @@ export class PermissionResponseDto {
 
   @ApiProperty({ example: 'reports.view' })
   name: string;
+
+  @ApiPropertyOptional({ example: 'reports' })
+  resource?: string | null;
+
+  @ApiPropertyOptional({ example: 'view' })
+  action?: string | null;
 
   @ApiProperty({ example: 'reports' })
   module: string;

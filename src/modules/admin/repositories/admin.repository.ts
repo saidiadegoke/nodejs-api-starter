@@ -36,12 +36,30 @@ export class AdminRepository {
   // Roles
   // ==========================================
 
-  async listRoles(query: ListRbacQueryDto) {
+  async listRoles(
+    query: ListRbacQueryDto,
+    universityId?: string | null,
+    isInstitutionUser?: boolean,
+  ) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(10000, Math.max(1, Number(query.limit) || 20));
     const offset = (page - 1) * limit;
 
     const qb = this.roleRepo.createQueryBuilder('r');
+
+    if (isInstitutionUser) {
+      if (universityId) {
+        qb.andWhere(
+          '(r.ownerJupebUniversityId = :universityId OR (r.isSystem = true AND r.name = :instAdminRole))',
+          { universityId, instAdminRole: 'institution_admin' },
+        );
+      } else {
+        qb.andWhere('(r.isSystem = true AND r.name = :instAdminRole)', {
+          instAdminRole: 'institution_admin',
+        });
+      }
+    }
+
     if (query.q) {
       qb.andWhere('(r.name ILIKE :q OR r.displayName ILIKE :q OR r.description ILIKE :q)', {
         q: `%${query.q}%`,
@@ -74,6 +92,20 @@ export class AdminRepository {
     return this.roleRepo.findOne({
       where: { name: name.trim() },
     });
+  }
+
+  async findRoleByNameAndUniversity(
+    name: string,
+    universityId?: string | null,
+  ): Promise<RoleEntity | null> {
+    const qb = this.roleRepo.createQueryBuilder('r');
+    qb.where('LOWER(r.name) = LOWER(:name)', { name: name.trim() });
+    if (universityId) {
+      qb.andWhere('r.ownerJupebUniversityId = :universityId', { universityId });
+    } else {
+      qb.andWhere('r.ownerJupebUniversityId IS NULL');
+    }
+    return qb.getOne();
   }
 
   async createRole(data: Partial<RoleEntity>): Promise<RoleEntity> {
@@ -120,14 +152,22 @@ export class AdminRepository {
     return { permissions, total, page, limit };
   }
 
-  async listPermissionsGroupedByRole(query: ListRbacQueryDto) {
-    const rolesResult = await this.listRoles({
-      page: query.page,
-      limit: query.limit || 200,
-      q: query.q,
-      status: query.status,
-      is_system: query.is_system,
-    });
+  async listPermissionsGroupedByRole(
+    query: ListRbacQueryDto,
+    universityId?: string | null,
+    isInstitutionUser?: boolean,
+  ) {
+    const rolesResult = await this.listRoles(
+      {
+        page: query.page,
+        limit: query.limit || 200,
+        q: query.q,
+        status: query.status,
+        is_system: query.is_system,
+      },
+      universityId,
+      isInstitutionUser,
+    );
 
     const groups = [];
     for (const role of rolesResult.roles) {
