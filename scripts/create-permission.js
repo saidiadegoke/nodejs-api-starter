@@ -113,6 +113,21 @@ async function createCommonPermissions() {
     { resource: 'system', action: 'admin', description: 'Full system administration access' },
     { resource: 'system', action: 'config', description: 'Manage system configuration' },
     { resource: 'system', action: 'logs', description: 'View system logs' },
+
+    // Support
+    { resource: 'support', action: 'view', description: 'View support tickets and inquiries' },
+    { resource: 'support', action: 'manage', description: 'Manage support tickets, assignments, replies, and status' },
+
+    // Audit trail
+    { resource: 'audit', action: 'view', description: 'View and export system audit trail logs' },
+
+    // Reports & Results
+    { resource: 'reports', action: 'view', description: 'View reports and analytics' },
+    { resource: 'reports', action: 'generate', description: 'Generate session and analytical reports' },
+    { resource: 'generate', action: 'report', description: 'Generate reports (alias)' },
+    { resource: 'results', action: 'send', description: 'Release and send examination results to institutions and students' },
+    { resource: 'send', action: 'result', description: 'Send examination results (alias)' },
+    { resource: 'results', action: 'view', description: 'View released examination results' },
   ];
   
   console.log('🔧 Creating common permissions...\n');

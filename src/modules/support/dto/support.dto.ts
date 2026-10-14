@@ -283,6 +283,40 @@ export class SupportMessageResponseDto {
   created_at: Date;
 }
 
+export class SubjectCombinationItemSummaryDto {
+  @ApiPropertyOptional({ example: 'c5051a6a-7c5e-41e4-a988-b0ee35fe7a13' })
+  id?: string;
+
+  @ApiPropertyOptional({ example: 0 })
+  position?: number;
+
+  @ApiPropertyOptional({ example: '61a5871e-b21e-4423-9e66-707ec91eb4fb' })
+  subject_id?: string;
+
+  @ApiPropertyOptional({ example: 'CHM' })
+  code?: string;
+
+  @ApiPropertyOptional({ example: 'Chemistry' })
+  name?: string;
+}
+
+export class SupportSubjectCombinationDto {
+  @ApiPropertyOptional({ example: '142d7595-7590-46f3-9458-a403d9c2bb06', nullable: true })
+  id?: string | null;
+
+  @ApiPropertyOptional({ example: 'JUPEB SC-038', nullable: true })
+  code?: string | null;
+
+  @ApiPropertyOptional({ example: 'Chemistry, Physics, Mathematics', nullable: true })
+  title?: string | null;
+
+  @ApiPropertyOptional({ type: [SubjectCombinationItemSummaryDto] })
+  subject_items?: SubjectCombinationItemSummaryDto[];
+
+  @ApiPropertyOptional({ type: [SubjectCombinationItemSummaryDto] })
+  items?: SubjectCombinationItemSummaryDto[];
+}
+
 export class SupportTicketResponseDto {
   @ApiProperty({ example: 't0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44' })
   id: string;
@@ -355,6 +389,21 @@ export class SupportTicketResponseDto {
 
   @ApiPropertyOptional({ example: 'MAT/2026/001', nullable: true })
   institution_issued_code?: string | null;
+
+  @ApiPropertyOptional({ type: () => SupportSubjectCombinationDto, nullable: true })
+  subject_combination?: SupportSubjectCombinationDto | null;
+
+  @ApiPropertyOptional({ type: () => SupportSubjectCombinationDto, nullable: true })
+  subjectCombination?: SupportSubjectCombinationDto | null;
+
+  @ApiPropertyOptional({ example: '142d7595-7590-46f3-9458-a403d9c2bb06', nullable: true })
+  subject_combination_id?: string | null;
+
+  @ApiPropertyOptional({ example: 'JUPEB SC-038', nullable: true })
+  subject_combination_code?: string | null;
+
+  @ApiPropertyOptional({ example: 'Chemistry, Physics, Mathematics', nullable: true })
+  subject_combination_title?: string | null;
 
   @ApiPropertyOptional({ type: [SupportMessageResponseDto] })
   messages?: SupportMessageResponseDto[];

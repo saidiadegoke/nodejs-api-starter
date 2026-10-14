@@ -98,7 +98,7 @@ export class InstitutionUserScopeService {
   async assertUniversityAccess(userId: string, universityId: string): Promise<void> {
     if (!userId) return;
     const roles = await this.getUserRoles(userId);
-    if (roles.includes('admin') || roles.includes('super_admin')) return;
+    if (roles.includes('admin') || roles.includes('super_admin') || roles.includes('registrar')) return;
     const scoped = await this.getProfileJupebUniversityId(userId);
     if (scoped) {
       if (String(scoped) !== String(universityId)) {
@@ -119,7 +119,7 @@ export class InstitutionUserScopeService {
   ): Promise<string | null> {
     if (!userId) return queryUniversityId || null;
     const roles = await this.getUserRoles(userId);
-    if (roles.includes('admin') || roles.includes('super_admin')) {
+    if (roles.includes('admin') || roles.includes('super_admin') || roles.includes('registrar')) {
       return queryUniversityId || null;
     }
     const scoped = await this.getProfileJupebUniversityId(userId);

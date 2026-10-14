@@ -112,7 +112,7 @@ export class SupportController {
 
   @Get('institution/tickets')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('candidate.view')
+  @RequirePermission('support.view', 'support.manage', 'candidate.view')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'List support tickets for institution candidates',
@@ -125,7 +125,7 @@ export class SupportController {
 
   @Get('institution/stats')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('candidate.view')
+  @RequirePermission('support.view', 'support.manage', 'candidate.view')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Support ticket counts for institution dashboard',
@@ -138,7 +138,7 @@ export class SupportController {
 
   @Get('institution/tickets/:ticketId')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('candidate.view')
+  @RequirePermission('support.view', 'support.manage', 'candidate.view')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Get ticket details and thread for institution staff',
@@ -151,7 +151,7 @@ export class SupportController {
 
   @Post('institution/tickets/:ticketId/reply')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('candidate.view')
+  @RequirePermission('support.manage', 'candidate.view')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Institution staff reply to student support ticket',
@@ -168,7 +168,7 @@ export class SupportController {
 
   @Patch('institution/tickets/:ticketId/status')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('candidate.view')
+  @RequirePermission('support.manage', 'candidate.view')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Update ticket resolution status (Institution Staff)',
@@ -189,7 +189,7 @@ export class SupportController {
 
   @Get('admin/tickets')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('system.admin')
+  @RequirePermission('support.view', 'support.manage', 'system.admin')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'List all support tickets across all institutions (Global Admin)',
@@ -202,7 +202,7 @@ export class SupportController {
 
   @Get('admin/stats')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('system.admin')
+  @RequirePermission('support.view', 'support.manage', 'system.admin')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Global support ticket metrics',
@@ -215,7 +215,7 @@ export class SupportController {
 
   @Get('admin/tickets/:ticketId')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('system.admin')
+  @RequirePermission('support.view', 'support.manage', 'system.admin')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Get any support ticket details (Admin)',
@@ -228,7 +228,7 @@ export class SupportController {
 
   @Post('admin/tickets/:ticketId/reply')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('system.admin')
+  @RequirePermission('support.manage', 'system.admin')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Admin reply to support ticket',
@@ -245,7 +245,7 @@ export class SupportController {
 
   @Patch('admin/tickets/:ticketId')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermission('system.admin')
+  @RequirePermission('support.manage', 'system.admin')
   @ApiBearerAuth('JWT')
   @ApiOperation({
     summary: 'Update ticket details / assignment / priority (Admin)',

@@ -1277,8 +1277,11 @@ export class FinanceService {
       throw new NotFoundException(`Payment not found for identifier: ${paymentIdOrUuid}`);
     }
 
-    const rawStatus = dto.status || PaymentStatus.SUCCESSFUL;
-    const targetStatus = rawStatus === PaymentStatus.CONFIRMED ? PaymentStatus.SUCCESSFUL : rawStatus;
+    const rawStatus = (dto.status || PaymentStatus.SUCCESSFUL).trim().toLowerCase();
+    const targetStatus =
+      rawStatus === PaymentStatus.CONFIRMED || rawStatus === 'confirmed'
+        ? PaymentStatus.SUCCESSFUL
+        : (dto.status || PaymentStatus.SUCCESSFUL);
     const confirmedAmount =
       dto.confirmed_amount !== undefined ? dto.confirmed_amount : Number(payment.amount);
 

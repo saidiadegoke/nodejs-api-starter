@@ -1,6 +1,7 @@
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { UserRepository, UserListOptions } from '../repositories/user.repository';
 import { ProfileRepository } from '../repositories/profile.repository';
@@ -68,10 +69,21 @@ export class UsersService {
       ? await this.scopeService.effectiveUniversityId(currentUserId)
       : null;
 
+    const includeAll = options.include_all === true || options.include_all === 'true';
+    let excludeRoleNames: string[] = [];
+    if (!includeAll && !options.role) {
+      if (options.exclude_roles) {
+        excludeRoleNames = options.exclude_roles.split(',').map((s) => s.trim()).filter(Boolean);
+      } else {
+        excludeRoleNames = ['student', 'institution_admin', 'program_director'];
+      }
+    }
+
     const filterOptions: UserListOptions = {
       q: search?.trim() || undefined,
       role: options.role?.trim() || undefined,
       universityId: universityId || undefined,
+      excludeRoleNames: excludeRoleNames.length ? excludeRoleNames : undefined,
     };
 
     const users = await this.userRepo.findAll(limitNum, offset, filterOptions.q, filterOptions);
@@ -87,10 +99,25 @@ export class UsersService {
     };
   }
 
-  async getUserById(userId: string, _currentUserId?: string) {
+  async getUserById(userId: string, currentUserId?: string) {
     const user = await this.userRepo.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+    if (currentUserId) {
+      const callerUniId = await this.scopeService.effectiveUniversityId(currentUserId);
+      if (callerUniId) {
+        let inScope = false;
+        if (user.jupeb_university_id && String(user.jupeb_university_id) === String(callerUniId)) {
+          inScope = true;
+        } else {
+          const targetUniId = await this.scopeService.getProfileJupebUniversityId(userId);
+          inScope = String(targetUniId) === String(callerUniId);
+        }
+        if (!inScope) {
+          throw new ForbiddenException('User is outside your institution scope');
+        }
+      }
     }
     return this.formatUser(user);
   }

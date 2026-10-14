@@ -109,12 +109,14 @@ describe('Support API Module', () => {
     // Link student to Uni A via jupeb_registrations
     const sessRow = await pool.query('SELECT id FROM jupeb_registration_sessions LIMIT 1');
     const sessionId = sessRow.rows[0]?.id;
+    const scRow = await pool.query('SELECT id FROM jupeb_subject_combinations WHERE deleted_at IS NULL LIMIT 1');
+    const scId = scRow.rows[0]?.id;
     if (sessionId && studentId) {
       const regIns = await pool.query(
-        `INSERT INTO jupeb_registrations (session_id, university_id, user_id, status, created_by, provisional_serial)
-         VALUES ($1, $2, $3, 'claimed', $3, $4)
+        `INSERT INTO jupeb_registrations (session_id, university_id, user_id, status, created_by, provisional_serial, subject_combination_id)
+         VALUES ($1, $2, $3, 'claimed', $3, $4, $5)
          RETURNING id`,
-        [sessionId, uniAId, studentId, Math.floor(Math.random() * 9000 + 1000)]
+        [sessionId, uniAId, studentId, Math.floor(Math.random() * 9000 + 1000), scId || null]
       );
       regAId = regIns.rows[0].id;
     }
@@ -381,8 +383,13 @@ describe('Support API Module', () => {
       expect(Array.isArray(res.body.data)).toBe(true);
 
       // Must include Uni A student ticket
-      const hasUniA = res.body.data.some((t) => t.id === createdTicketId);
-      expect(hasUniA).toBe(true);
+      const ticketUniA = res.body.data.find((t) => t.id === createdTicketId);
+      expect(ticketUniA).toBeDefined();
+      if (regAId && ticketUniA.subject_combination) {
+        expect(ticketUniA.subject_combination.code).toBeDefined();
+        expect(ticketUniA.subject_combination.title).toBeDefined();
+        expect(Array.isArray(ticketUniA.subject_combination.subject_items)).toBe(true);
+      }
 
       // Must NOT leak Uni B student ticket
       const hasUniB = res.body.data.some((t) => t.id === otherUniTicketId);
@@ -521,6 +528,11 @@ describe('Support API Module', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.id).toBe(createdTicketId);
       expect(res.body.data.user_email).toBeDefined();
+      if (regAId && res.body.data.subject_combination) {
+        expect(res.body.data.subject_combination.code).toBeDefined();
+        expect(res.body.data.subject_combination.title).toBeDefined();
+        expect(Array.isArray(res.body.data.subject_combination.subject_items)).toBe(true);
+      }
       expect(Array.isArray(res.body.data.messages)).toBe(true);
     });
 

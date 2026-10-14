@@ -37,13 +37,12 @@ export class AdminUsersController {
   @Post()
   @Audit('user.create_with_university', {
     resourceType: 'user',
-    resourceId: 'result:id',
-    universityId: 'result:university_id',
-    // Never store the submitted password — pick the fields the legacy row carried.
+    resourceId: 'result:user:user_id',
+    universityId: 'result:university:id',
     details: ({ result }) => ({
-      email: result?.email,
-      role: result?.role,
-      university_id: result?.university_id,
+      email: result?.user?.email || result?.email,
+      role: result?.user?.role || result?.role,
+      university_id: result?.university?.id || result?.university_id,
     }),
   })
   @ApiOperation({
@@ -55,6 +54,14 @@ export class AdminUsersController {
     @Body() dto: CreateAdminUserDto,
     @CurrentUser('user_id') userId: string,
   ) {
-    return this.adminUsersService.createUserWithUniversity(dto, userId);
+    const result = await this.adminUsersService.createUserWithUniversity(dto, userId);
+    return {
+      success: true,
+      message: result.university
+        ? 'User created and associated with university'
+        : 'User created',
+      data: result,
+      ...result,
+    };
   }
 }

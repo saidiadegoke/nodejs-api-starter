@@ -387,6 +387,8 @@ export class FinanceController {
   }
 
   @Get('reports/session/:sessionId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('reports.view', 'reports.generate', 'generate.report', 'jupeb.finance.manage')
   @ApiOperation({
     summary: 'Session financial audit report',
     description: 'Revenue totals and transaction counts for specified academic session.',

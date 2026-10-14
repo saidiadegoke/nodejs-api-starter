@@ -14,13 +14,14 @@ import {
   ApiProduces,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { JwtAuthGuard } from '../../../utils';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
 import { AdminAuditService, AuditListFilters } from '../services/admin-audit.service';
 import { AuditListQueryDto } from '../dto';
 
 @ApiTags('Admin Audit Trail')
 @Controller(['audit', 'admin/audit'])
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermission('audit.view', 'activity_logs.view', 'system.admin')
 @ApiBearerAuth('JWT')
 export class AdminAuditController {
   constructor(private readonly auditService: AdminAuditService) {}

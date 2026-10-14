@@ -291,7 +291,7 @@ export class UploadPaymentReceiptDto {
 
 export class ConfirmPaymentDto {
   @ApiPropertyOptional({
-    description: 'Updated payment status',
+    description: 'Updated payment status (confirmed is treated as an alias for successful)',
     enum: ['successful', 'confirmed', 'rejected', 'failed', 'pending'],
     example: 'successful',
     default: 'successful',
