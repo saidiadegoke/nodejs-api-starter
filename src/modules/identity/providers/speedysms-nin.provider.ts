@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as crypto from 'crypto';
 import { INinProvider, NinVerificationResult } from './nin-provider.interface';
@@ -12,29 +12,15 @@ function joinNonEmpty(parts: (string | null | undefined)[], sep: string): string
 }
 
 /**
- * Request signing (SpeedySMS "signed requests" — docs/SIGNED_REQUESTS_DESIGN.md).
- * Returns {} when SPEEDYSMS_SIGNING_SECRET is unset,
- * else X-Timestamp / X-Nonce / X-Signature over a canonical string binding
- * method + path + body + time + a single-use nonce.
+ * Request signing (SpeedySMS "Signed requests": X-Timestamp / X-Nonce /
+ * X-Signature over a canonical string binding method + path + body + time
+ * + a single-use nonce). See buildSignedHeaders below.
  */
-function signedHeaders(
-  method: string,
-  path: string,
-  bodyStr: string,
-  secret?: string,
-): Record<string, string> {
-  const s = String(secret || '').replace(/^["']|["']$/g, '').trim();
-  if (!s) return {};
-  const ts = Date.now().toString();
-  const nonce = crypto.randomUUID();
-  const bodyHash = crypto.createHash('sha256').update(bodyStr).digest('hex');
-  const canonical = [method.toUpperCase(), path, bodyHash, ts, nonce].join('\n');
-  const signature = crypto.createHmac('sha256', s).update(canonical).digest('hex');
-  return {
-    'X-Timestamp': ts,
-    'X-Nonce': nonce,
-    'X-Signature': signature,
-  };
+interface SigningDebug {
+  bodyHash: string;
+  ts: string;
+  nonce: string;
+  signature: string;
 }
 
 function mapProfile(lookupResult: any) {
@@ -105,6 +91,10 @@ function isBalanceOrPoolExhaustedMessage(message?: string): boolean {
 export class SpeedySmsNinProvider implements INinProvider {
   readonly name = 'speedysms';
 
+  private readonly logger = new Logger(SpeedySmsNinProvider.name);
+
+  private signingDisabledWarned = false;
+
   private get apiKey(): string {
     return (
       process.env.SPEEDYSMS_API_KEY ||
@@ -119,6 +109,24 @@ export class SpeedySmsNinProvider implements INinProvider {
       process.env.JUPEB_SPEEDYSMS_SIGNING_SECRET ||
       ''
     ).replace(/^["']|["']$/g, '').trim();
+  }
+
+  /**
+   * Explicit kill-switch for request signing. Set
+   * SPEEDYSMS_SIGNING_ENABLED=false to send Bearer-only requests (e.g. while
+   * the dashboard secret is being fixed). Defaults to enabled. NOTE: if the
+   * SpeedySMS key policy is "required", unsigned requests are rejected with
+   * "Signed request required" — re-enable signing before switching policy.
+   */
+  private get signingEnabled(): boolean {
+    const raw = (
+      process.env.SPEEDYSMS_SIGNING_ENABLED ||
+      process.env.JUPEB_SPEEDYSMS_SIGNING_ENABLED ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    return !['false', '0', 'no', 'off', 'disabled'].includes(raw);
   }
 
   private get baseUrl(): string {
@@ -137,6 +145,57 @@ export class SpeedySmsNinProvider implements INinProvider {
       process.env.JUPEB_SPEEDYSMS_TIMEOUT_MS;
     const n = parseInt(String(raw), 10);
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
+  }
+
+  /**
+   * Build SpeedySMS signed-request headers for the exact body bytes about to
+   * be sent. Canonical string (newline-joined):
+   *   METHOD\n<path>\n<sha256(raw body)>\n<X-Timestamp>\n<X-Nonce>
+   * with X-Signature = hex HMAC-SHA256 over it. Returns {} headers when the
+   * signing secret is unset or SPEEDYSMS_SIGNING_ENABLED=false (unsigned
+   * requests still flow while the key policy is verify_if_present).
+   * The debug context carries only non-secret inputs (truncated at the log
+   * site) so signing failures are triageable without leaking credentials.
+   */
+  private buildSignedHeaders(
+    method: string,
+    path: string,
+    bodyStr: string,
+  ): { headers: Record<string, string>; debug: SigningDebug | null } {
+    const s = String(this.signingSecret || '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+    if (!this.signingEnabled) {
+      if (!this.signingDisabledWarned) {
+        this.signingDisabledWarned = true;
+        this.logger.warn(
+          'speedysms request signing disabled via SPEEDYSMS_SIGNING_ENABLED=false — sending Bearer-only requests',
+        );
+      }
+      return { headers: {}, debug: null };
+    }
+    if (!s) return { headers: {}, debug: null };
+    const ts = Date.now().toString();
+    const nonce = crypto.randomUUID();
+    const bodyHash = crypto
+      .createHash('sha256')
+      .update(bodyStr)
+      .digest('hex');
+    const canonical = [method.toUpperCase(), path, bodyHash, ts, nonce].join(
+      '\n',
+    );
+    const signature = crypto
+      .createHmac('sha256', s)
+      .update(canonical)
+      .digest('hex');
+    return {
+      headers: {
+        'X-Timestamp': ts,
+        'X-Nonce': nonce,
+        'X-Signature': signature,
+      },
+      debug: { bodyHash, ts, nonce, signature },
+    };
   }
 
   async verifyNin(
@@ -169,11 +228,27 @@ export class SpeedySmsNinProvider implements INinProvider {
       // keep default path
     }
 
+    const { headers: signingHeaders, debug: signingDebug } =
+      this.buildSignedHeaders('POST', path, bodyStr);
+    if (path !== '/identity/nin') {
+      this.logger.warn(
+        `speedysms nin unexpected signing path (path=${path}) for url=${url}`,
+      );
+    }
+    if (signingDebug) {
+      this.logger.debug(
+        `speedysms nin signing method=POST path=${path} ` +
+          `bodyHash=${signingDebug.bodyHash} ts=${signingDebug.ts} ` +
+          `nonce=${signingDebug.nonce.slice(0, 8)}… ` +
+          `sig=${signingDebug.signature.slice(0, 8)}…`,
+      );
+    }
+
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      ...signedHeaders('POST', path, bodyStr, this.signingSecret),
+      ...signingHeaders,
     };
 
     try {
@@ -182,8 +257,9 @@ export class SpeedySmsNinProvider implements INinProvider {
         timeout: this.timeoutMs,
       });
 
-      console.log('response', response);
-      console.info('response', response);
+      this.logger.debug(
+        `speedysms nin upstream status=${response.status} path=${path}`,
+      );
 
       const body = response.data;
       const data = body?.data ?? body;
