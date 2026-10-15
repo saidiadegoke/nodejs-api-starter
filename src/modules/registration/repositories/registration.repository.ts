@@ -207,7 +207,53 @@ export class RegistrationRepository {
           )), ''),
           nv.intake_payload->>'name'
         ) AS display_name`,
-        'COALESCE(p.profile_photo_url, nv.response_payload->>\'photo_url\', nv.response_payload->>\'photo\') AS profile_photo_url',
+        `COALESCE(
+          (
+            SELECT COALESCE(
+              f.file_url,
+              CASE WHEN bc.external_reference LIKE 'http%' THEN bc.external_reference ELSE NULL END
+            )
+            FROM jupeb_biometric_captures bc
+            LEFT JOIN files f ON f.id = bc.file_id OR f.id::text = bc.external_reference
+            WHERE bc.registration_id = r.id AND bc.capture_type = 'face' AND bc.replaced_at IS NULL
+            ORDER BY bc.created_at DESC
+            LIMIT 1
+          ),
+          p.profile_photo_url,
+          nv.response_payload->>'photo_url',
+          nv.response_payload->>'photo'
+        ) AS profile_photo_url`,
+        `(
+          SELECT COALESCE(
+            f.file_url,
+            CASE WHEN bc.external_reference LIKE 'http%' THEN bc.external_reference ELSE NULL END
+          )
+          FROM jupeb_biometric_captures bc
+          LEFT JOIN files f ON f.id = bc.file_id OR f.id::text = bc.external_reference
+          WHERE bc.registration_id = r.id AND bc.capture_type = 'face' AND bc.replaced_at IS NULL
+          ORDER BY bc.created_at DESC
+          LIMIT 1
+        ) AS captured_photo_url`,
+        `(
+          SELECT json_build_object(
+            'id', nok.id,
+            'name', nok.name,
+            'relationship', nok.relationship,
+            'phone', nok.phone,
+            'email', nok.email,
+            'address', nok.address,
+            'source', nok.source,
+            'created_at', nok.created_at,
+            'updated_at', nok.updated_at
+          )
+          FROM jupeb_next_of_kin nok
+          WHERE nok.registration_id = r.id AND nok.deleted_at IS NULL
+          ORDER BY nok.created_at DESC
+          LIMIT 1
+        ) AS next_of_kin`,
+        'nv.response_payload->\'next_of_kin\' AS nin_nok',
+        'nv.response_payload->\'next_of_kin_record\' AS nin_nok_record',
+        'nv.intake_payload->\'next_of_kin\' AS intake_nok',
         'COALESCE(usr.email, nv.intake_payload->>\'email\') AS email',
         'COALESCE(usr.phone, nv.response_payload->>\'phone\', nv.response_payload->>\'phone_number\', nv.response_payload->>\'telephoneno\', nv.intake_payload->>\'phone\') AS phone',
         'nv.nin_last4 AS nin_last4',

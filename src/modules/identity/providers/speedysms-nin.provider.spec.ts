@@ -100,9 +100,22 @@ describe('SpeedySmsNinProvider signing', () => {
     expect(result.outcome).toBe('verified');
   });
 
+  test('does not sign by default even when a secret is set', async () => {
+    process.env.SPEEDYSMS_SIGNING_SECRET = 'whsec_shared';
+
+    await provider.verifyNin(NIN);
+
+    const { headers } = sentCall();
+    expect(headers.Authorization).toBe('Bearer sk_live_test');
+    expect(headers['X-Signature']).toBeUndefined();
+    expect(headers['X-Timestamp']).toBeUndefined();
+    expect(headers['X-Nonce']).toBeUndefined();
+  });
+
   test('signs the exact body sent, verifiable with the shared secret', async () => {
     const secret = 'whsec_shared';
     process.env.SPEEDYSMS_SIGNING_SECRET = secret;
+    process.env.SPEEDYSMS_SIGNING_ENABLED = 'true';
 
     await provider.verifyNin(NIN);
 
@@ -134,6 +147,7 @@ describe('SpeedySmsNinProvider signing', () => {
   test('matches the official spec vector for fixed inputs', async () => {
     const secret = 'whsec_test';
     process.env.SPEEDYSMS_SIGNING_SECRET = secret;
+    process.env.SPEEDYSMS_SIGNING_ENABLED = 'true';
     const ts = 1713090000000;
     const nonce = '00000000-0000-4000-a000-000000000000';
     jest.spyOn(Date, 'now').mockReturnValue(ts);
@@ -154,6 +168,7 @@ describe('SpeedySmsNinProvider signing', () => {
   test('hashes the exact bytes sent including provider and force_fresh overrides', async () => {
     const secret = 'whsec_shared';
     process.env.SPEEDYSMS_SIGNING_SECRET = secret;
+    process.env.SPEEDYSMS_SIGNING_ENABLED = 'true';
 
     await provider.verifyNin(NIN, { provider: 'mock', force_fresh: true });
 
@@ -168,6 +183,7 @@ describe('SpeedySmsNinProvider signing', () => {
 
   test('uses a fresh nonce per request', async () => {
     process.env.SPEEDYSMS_SIGNING_SECRET = 's';
+    process.env.SPEEDYSMS_SIGNING_ENABLED = 'true';
     mockedPost.mockResolvedValue(successResponse());
 
     await provider.verifyNin(NIN);

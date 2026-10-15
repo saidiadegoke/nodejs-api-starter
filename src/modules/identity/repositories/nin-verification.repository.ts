@@ -109,6 +109,28 @@ export class NinVerificationRepository {
     return this.repo.save(existing);
   }
 
+  /**
+   * Transition any row (e.g. a previously failed one being retried under the
+   * same idempotency key) back to pending with a fresh attempt recorded.
+   * Unlike incrementAttempt, this is not restricted to pending rows.
+   */
+  async markPending(
+    id: string,
+    params: { retry_after?: Date | null; last_error_code?: string | null; error_payload?: Record<string, any> },
+  ): Promise<NinVerificationEntity | null> {
+    const existing = await this.findById(id);
+    if (!existing) return null;
+
+    existing.status = NinVerificationStatus.PENDING;
+    if (params.retry_after !== undefined) existing.retryAfter = params.retry_after;
+    if (params.last_error_code !== undefined) existing.lastErrorCode = params.last_error_code;
+    if (params.error_payload !== undefined) existing.errorPayload = params.error_payload;
+    existing.lastAttemptAt = new Date();
+    existing.attemptCount = (existing.attemptCount || 0) + 1;
+
+    return this.repo.save(existing);
+  }
+
   async incrementAttempt(
     id: string,
     params: { retry_after?: Date | null; last_error_code?: string | null; error_payload?: Record<string, any> },

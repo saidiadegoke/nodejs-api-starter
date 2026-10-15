@@ -93,7 +93,7 @@ export class SpeedySmsNinProvider implements INinProvider {
 
   private readonly logger = new Logger(SpeedySmsNinProvider.name);
 
-  private signingDisabledWarned = false;
+  private unsignedWarned = false;
 
   private get apiKey(): string {
     return (
@@ -112,11 +112,10 @@ export class SpeedySmsNinProvider implements INinProvider {
   }
 
   /**
-   * Explicit kill-switch for request signing. Set
-   * SPEEDYSMS_SIGNING_ENABLED=false to send Bearer-only requests (e.g. while
-   * the dashboard secret is being fixed). Defaults to enabled. NOTE: if the
-   * SpeedySMS key policy is "required", unsigned requests are rejected with
-   * "Signed request required" — re-enable signing before switching policy.
+   * Explicit opt-in for request signing. Requests are sent Bearer-only
+   * UNLESS SPEEDYSMS_SIGNING_ENABLED=true. Signing requires the current
+   * dashboard secret — a stale secret gets HTTP 401 "Bad request signature"
+   * on every call, so the default is deliberately off.
    */
   private get signingEnabled(): boolean {
     const raw = (
@@ -126,7 +125,7 @@ export class SpeedySmsNinProvider implements INinProvider {
     )
       .trim()
       .toLowerCase();
-    return !['false', '0', 'no', 'off', 'disabled'].includes(raw);
+    return ['true', '1', 'yes', 'on', 'enabled'].includes(raw);
   }
 
   private get baseUrl(): string {
@@ -151,9 +150,9 @@ export class SpeedySmsNinProvider implements INinProvider {
    * Build SpeedySMS signed-request headers for the exact body bytes about to
    * be sent. Canonical string (newline-joined):
    *   METHOD\n<path>\n<sha256(raw body)>\n<X-Timestamp>\n<X-Nonce>
-   * with X-Signature = hex HMAC-SHA256 over it. Returns {} headers when the
-   * signing secret is unset or SPEEDYSMS_SIGNING_ENABLED=false (unsigned
-   * requests still flow while the key policy is verify_if_present).
+   * with X-Signature = hex HMAC-SHA256 over it. Returns {} headers unless
+   * SPEEDYSMS_SIGNING_ENABLED=true (unsigned requests still flow while the
+   * key policy is verify_if_present).
    * The debug context carries only non-secret inputs (truncated at the log
    * site) so signing failures are triageable without leaking credentials.
    */
@@ -166,10 +165,10 @@ export class SpeedySmsNinProvider implements INinProvider {
       .replace(/^["']|["']$/g, '')
       .trim();
     if (!this.signingEnabled) {
-      if (!this.signingDisabledWarned) {
-        this.signingDisabledWarned = true;
+      if (s && !this.unsignedWarned) {
+        this.unsignedWarned = true;
         this.logger.warn(
-          'speedysms request signing disabled via SPEEDYSMS_SIGNING_ENABLED=false — sending Bearer-only requests',
+          'speedysms request signing is OFF (set SPEEDYSMS_SIGNING_ENABLED=true to enable) — sending Bearer-only requests',
         );
       }
       return { headers: {}, debug: null };

@@ -7,6 +7,15 @@ const RETURNING_COLUMNS = `
   cleared_at
 `;
 
+// Raw rows come back nested one level deep for UPDATE...RETURNING statements
+// through the TypeORM pool wrapper (rows[0] is [row], not row), while
+// SELECT/INSERT come back flat. Unwrap defensively so single-row readers
+// work for both shapes.
+function firstRow(result) {
+  const row = result && result.rows && result.rows[0];
+  return (Array.isArray(row) ? row[0] : row) || null;
+}
+
 class NinVerificationModel {
   async findByIdempotencyKey(key) {
     if (!key) return null;
@@ -14,12 +23,12 @@ class NinVerificationModel {
       `SELECT * FROM jupeb_nin_verifications WHERE idempotency_key = $1 ORDER BY created_at DESC LIMIT 1`,
       [key]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   async findById(id) {
     const result = await pool.query(`SELECT * FROM jupeb_nin_verifications WHERE id = $1`, [id]);
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   async create(data) {
@@ -77,7 +86,7 @@ class NinVerificationModel {
        RETURNING ${RETURNING_COLUMNS}`,
       [id, JSON.stringify(cleaned)]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   async createPending(data) {
@@ -130,7 +139,7 @@ class NinVerificationModel {
        RETURNING ${RETURNING_COLUMNS}`,
       [id, JSON.stringify(response_payload || {}), provider_reference || null]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   async markFailed(id, { error_payload, last_error_code }) {
@@ -146,7 +155,31 @@ class NinVerificationModel {
        RETURNING ${RETURNING_COLUMNS}`,
       [id, JSON.stringify(error_payload || {}), last_error_code || null]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
+  }
+
+  // Transition any row (e.g. a previously failed one being retried under the
+  // same idempotency key) back to pending with a fresh attempt recorded.
+  // Unlike incrementAttempt, this is not restricted to pending rows.
+  async markPending(id, { retry_after, last_error_code, error_payload }) {
+    const result = await pool.query(
+      `UPDATE jupeb_nin_verifications
+         SET status = 'pending',
+             retry_after = $2,
+             last_error_code = $3,
+             error_payload = COALESCE($4::jsonb, error_payload),
+             last_attempt_at = CURRENT_TIMESTAMP,
+             attempt_count = attempt_count + 1
+       WHERE id = $1
+       RETURNING ${RETURNING_COLUMNS}`,
+      [
+        id,
+        retry_after || null,
+        last_error_code || null,
+        error_payload === undefined ? null : JSON.stringify(error_payload || {}),
+      ]
+    );
+    return firstRow(result);
   }
 
   async incrementAttempt(id, { retry_after, last_error_code, error_payload }) {
@@ -166,7 +199,7 @@ class NinVerificationModel {
         error_payload === undefined ? null : JSON.stringify(error_payload || {}),
       ]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   // Cache lookup: the latest verified row for this nin_hash that hasn't been
@@ -183,7 +216,7 @@ class NinVerificationModel {
        LIMIT 1`,
       [ninHash]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   async findActiveCacheByNinHashBatch(hashes) {
@@ -211,7 +244,7 @@ class NinVerificationModel {
        RETURNING ${RETURNING_COLUMNS}`,
       [id]
     );
-    return result.rows[0] || null;
+    return firstRow(result);
   }
 
   async findDuePending({ now, limit }) {

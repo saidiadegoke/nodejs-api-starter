@@ -40,7 +40,7 @@ export class NextOfKinEntity {
 
   @Column({
     type: 'varchar',
-    length: 10,
+    length: 30,
     default: NextOfKinSource.STUDENT,
   })
   source: NextOfKinSource;

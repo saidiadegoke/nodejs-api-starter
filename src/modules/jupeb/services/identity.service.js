@@ -309,18 +309,27 @@ class IdentityService {
       throw err;
     }
 
+    // Idempotency: replay the in-flight or resolved row for a reused key —
+    // except terminal failures, which must never be replayed. A failed row
+    // falls through for a fresh upstream attempt and is updated in place
+    // below (preserves the unique idempotency key and the attempt history).
+    let idempotentFailedRow = null;
     if (idemKey) {
       const existing = await ninVerificationModel.findByIdempotencyKey(idemKey);
       if (existing) {
         if (existing.nin_hash !== ninHash) {
           throw httpError(409, 'idempotency_key was already used for a different NIN');
         }
-        let rowOut = existing;
-        if (Object.keys(intake).length) {
-          const updated = await ninVerificationModel.mergeIntakePayload(existing.id, intake);
-          if (updated) rowOut = updated;
+        if (existing.status === 'failed') {
+          idempotentFailedRow = existing;
+        } else {
+          let rowOut = existing;
+          if (Object.keys(intake).length) {
+            const updated = await ninVerificationModel.mergeIntakePayload(existing.id, intake);
+            if (updated) rowOut = updated;
+          }
+          return publicVerifyResponse(rowOut, userId);
         }
-        return publicVerifyResponse(rowOut, userId);
       }
     }
 
@@ -347,56 +356,99 @@ class IdentityService {
     if (adapterResult.outcome === 'unavailable') {
       const seconds = adapterResult.retry_after_seconds || 300;
       const retry_after = new Date(Date.now() + seconds * 1000).toISOString();
-      const row = await ninVerificationModel.createPending({
-        nin_hash: ninHash,
-        nin_last4: last4,
-        provider,
-        idempotency_key: idemKey,
-        intake_payload: intake,
-        retry_after,
-        last_error_code: adapterResult.error_code || 'provider_unavailable',
-        error_payload: {
-          code: adapterResult.error_code || 'provider_unavailable',
-          message: adapterResult.error_message || null,
-        },
-        requested_by: userId,
-      });
+      let row = null;
+      if (idempotentFailedRow) {
+        if (Object.keys(intake).length) {
+          await ninVerificationModel.mergeIntakePayload(idempotentFailedRow.id, intake);
+        }
+        row = await ninVerificationModel.markPending(idempotentFailedRow.id, {
+          retry_after,
+          last_error_code: adapterResult.error_code || 'provider_unavailable',
+          error_payload: {
+            code: adapterResult.error_code || 'provider_unavailable',
+            message: adapterResult.error_message || null,
+          },
+        });
+      }
+      row =
+        row ||
+        (await ninVerificationModel.createPending({
+          nin_hash: ninHash,
+          nin_last4: last4,
+          provider,
+          idempotency_key: idemKey,
+          intake_payload: intake,
+          retry_after,
+          last_error_code: adapterResult.error_code || 'provider_unavailable',
+          error_payload: {
+            code: adapterResult.error_code || 'provider_unavailable',
+            message: adapterResult.error_message || null,
+          },
+          requested_by: userId,
+        }));
       return publicVerifyResponse(row, userId);
     }
 
     if (adapterResult.outcome === 'failed') {
-      const row = await ninVerificationModel.create({
+      let row = null;
+      if (idempotentFailedRow) {
+        if (Object.keys(intake).length) {
+          await ninVerificationModel.mergeIntakePayload(idempotentFailedRow.id, intake);
+        }
+        row = await ninVerificationModel.markFailed(idempotentFailedRow.id, {
+          error_payload: {
+            code: adapterResult.error_code || 'verification_failed',
+            message: adapterResult.error_message || 'Verification failed',
+          },
+          last_error_code: adapterResult.error_code || 'verification_failed',
+        });
+      }
+      row =
+        row ||
+        (await ninVerificationModel.create({
+          nin_hash: ninHash,
+          nin_last4: last4,
+          provider,
+          provider_reference: adapterResult.provider_reference || null,
+          idempotency_key: idemKey,
+          status: 'failed',
+          response_payload: {},
+          error_payload: {
+            code: adapterResult.error_code || 'verification_failed',
+            message: adapterResult.error_message || 'Verification failed',
+          },
+          verified_at: null,
+          requested_by: userId,
+          intake_payload: intake,
+        }));
+      return publicVerifyFailedResponse(row, userId);
+    }
+
+    let verifiedRow = null;
+    if (idempotentFailedRow) {
+      if (Object.keys(intake).length) {
+        await ninVerificationModel.mergeIntakePayload(idempotentFailedRow.id, intake);
+      }
+      verifiedRow = await ninVerificationModel.markVerified(idempotentFailedRow.id, {
+        response_payload: { ...adapterResult.profile },
+        provider_reference: adapterResult.provider_reference || null,
+      });
+    }
+    const row =
+      verifiedRow ||
+      (await ninVerificationModel.create({
         nin_hash: ninHash,
         nin_last4: last4,
         provider,
         provider_reference: adapterResult.provider_reference || null,
         idempotency_key: idemKey,
-        status: 'failed',
-        response_payload: {},
-        error_payload: {
-          code: adapterResult.error_code || 'verification_failed',
-          message: adapterResult.error_message || 'Verification failed',
-        },
-        verified_at: null,
+        status: 'verified',
+        response_payload: { ...adapterResult.profile },
+        error_payload: {},
+        verified_at: new Date().toISOString(),
         requested_by: userId,
         intake_payload: intake,
-      });
-      return publicVerifyFailedResponse(row, userId);
-    }
-
-    const row = await ninVerificationModel.create({
-      nin_hash: ninHash,
-      nin_last4: last4,
-      provider,
-      provider_reference: adapterResult.provider_reference || null,
-      idempotency_key: idemKey,
-      status: 'verified',
-      response_payload: { ...adapterResult.profile },
-      error_payload: {},
-      verified_at: new Date().toISOString(),
-      requested_by: userId,
-      intake_payload: intake,
-    });
+      }));
     return publicVerifyResponse(row, userId);
   }
 
