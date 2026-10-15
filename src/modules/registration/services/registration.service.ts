@@ -699,10 +699,10 @@ export class RegistrationService {
       ninPayload.address ||
       null;
     const stateOfOrigin =
-      row.state_of_origin || ninPayload.state_of_origin || ninPayload.origin_state || null;
-    const lga = row.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || null;
+      row.state_of_origin || ninPayload.state_of_origin || ninPayload.origin_state || ninIntake.state_of_origin || ninIntake.state || null;
+    const lga = row.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || ninIntake.lga || null;
     const placeOfBirth =
-      row.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place || null;
+      row.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place || ninIntake.place_of_birth || null;
     const middleName =
       ninStatus === 'verified' && (ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName)
         ? String(ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName).trim()
@@ -737,8 +737,8 @@ export class RegistrationService {
         ninIntake.name ||
         null;
     }
-    const gender = row.gender || ninPayload.gender || null;
-    const dateOfBirth = row.date_of_birth || ninPayload.date_of_birth || ninPayload.birthdate || null;
+    const gender = row.gender || ninPayload.gender || ninIntake.gender || null;
+    const dateOfBirth = row.date_of_birth || ninPayload.date_of_birth || ninPayload.birthdate || ninIntake.date_of_birth || ninIntake.birthdate || null;
     const email = row.email || ninIntake.email || null;
     const phone = row.phone || ninIntake.phone || ninPayload.phone || null;
     const faceBio = bioRows.find((b: any) => b.capture_type === 'face');
