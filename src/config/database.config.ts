@@ -1,4 +1,5 @@
 import { registerAs } from '@nestjs/config';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -42,6 +43,8 @@ class EnvironmentVariablesValidator {
   @IsOptional()
   DATABASE_URL?: string;
 
+  // Parse explicitly: implicit conversion turns the string 'false' into true
+  @Transform(({ obj }) => (obj.DB_SSL === undefined ? undefined : String(obj.DB_SSL).toLowerCase() === 'true'))
   @IsBoolean()
   @IsOptional()
   DB_SSL?: boolean;

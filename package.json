@@ -21,6 +21,8 @@
     "clean:candidates": "ts-node -r tsconfig-paths/register src/database/seeds/candidate/clean-candidates.ts",
     "clear-db": "node scripts/clear-db.js",
     "db:clear": "node scripts/clear-db.js",
+    "email:check": "node scripts/check-email.js",
+    "email:test-otp": "node scripts/send-test-email.js",
     "universities:clear": "node scripts/clear-universities.js",
     "email:check": "node scripts/check-email.js",
     "email:test-otp": "node scripts/send-test-email.js",
