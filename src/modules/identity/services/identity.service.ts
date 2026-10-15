@@ -323,14 +323,23 @@ export class IdentityService {
       });
     }
 
+    // Idempotency: replay the in-flight or resolved row for a reused key —
+    // except terminal failures, which must never be replayed. A failed row
+    // falls through for a fresh upstream attempt and is updated in place
+    // below (preserves the unique idempotency key and the attempt history).
+    let idempotentFailedRow: any = null;
     if (dto.idempotency_key) {
       const existing = await this.ninRepo.findByIdempotencyKey(dto.idempotency_key);
       if (existing) {
-        if (Object.keys(intakePayload).length) {
-          const merged = await this.ninRepo.mergeIntakePayload(existing.id, intakePayload);
-          return this.sanitizeVerification(merged || existing, userId);
+        if (existing.status === NinVerificationStatus.FAILED) {
+          idempotentFailedRow = existing;
+        } else {
+          if (Object.keys(intakePayload).length) {
+            const merged = await this.ninRepo.mergeIntakePayload(existing.id, intakePayload);
+            return this.sanitizeVerification(merged || existing, userId);
+          }
+          return this.sanitizeVerification(existing, userId);
         }
-        return this.sanitizeVerification(existing, userId);
       }
     }
 
@@ -351,57 +360,94 @@ export class IdentityService {
     });
 
     if (result.outcome === 'verified') {
-      const created = await this.ninRepo.create({
-        ninHash: hashed,
-        ninLast4: last4,
-        provider: provider_name,
-        providerReference: result.provider_reference || null,
-        idempotencyKey: dto.idempotency_key || null,
-        status: NinVerificationStatus.VERIFIED,
-        responsePayload: result.profile || {},
-        errorPayload: {},
-        verifiedAt: new Date(),
-        requestedBy: userId || null,
-        intakePayload,
-      });
+      let row: any = null;
+      if (idempotentFailedRow) {
+        if (Object.keys(intakePayload).length) {
+          await this.ninRepo.mergeIntakePayload(idempotentFailedRow.id, intakePayload);
+        }
+        row = await this.ninRepo.markVerified(idempotentFailedRow.id, {
+          response_payload: result.profile || {},
+          provider_reference: result.provider_reference || null,
+        });
+      }
+      const created =
+        row ||
+        (await this.ninRepo.create({
+          ninHash: hashed,
+          ninLast4: last4,
+          provider: provider_name,
+          providerReference: result.provider_reference || null,
+          idempotencyKey: dto.idempotency_key || null,
+          status: NinVerificationStatus.VERIFIED,
+          responsePayload: result.profile || {},
+          errorPayload: {},
+          verifiedAt: new Date(),
+          requestedBy: userId || null,
+          intakePayload,
+        }));
       await this.ninEvents.emitNinResolved(created.id, 'verified');
       return this.sanitizeVerification(created, userId);
     }
 
     if (result.outcome === 'pending') {
-      const created = await this.ninRepo.create({
-        ninHash: hashed,
-        ninLast4: last4,
-        provider: provider_name,
-        idempotencyKey: dto.idempotency_key || null,
-        status: NinVerificationStatus.PENDING,
-        responsePayload: {},
-        errorPayload: (result.error as Record<string, unknown>) || {},
-        requestedBy: userId || null,
-        intakePayload,
-        retryAfter: result.retry_after ? new Date(result.retry_after) : null,
-        lastErrorCode: result.error?.code || null,
-        attemptCount: 1,
-        lastAttemptAt: new Date(),
-      });
+      let row: any = null;
+      if (idempotentFailedRow) {
+        if (Object.keys(intakePayload).length) {
+          await this.ninRepo.mergeIntakePayload(idempotentFailedRow.id, intakePayload);
+        }
+        row = await this.ninRepo.markPending(idempotentFailedRow.id, {
+          retry_after: result.retry_after ? new Date(result.retry_after) : null,
+          last_error_code: result.error?.code || null,
+          error_payload: (result.error as Record<string, unknown>) || {},
+        });
+      }
+      const created =
+        row ||
+        (await this.ninRepo.create({
+          ninHash: hashed,
+          ninLast4: last4,
+          provider: provider_name,
+          idempotencyKey: dto.idempotency_key || null,
+          status: NinVerificationStatus.PENDING,
+          responsePayload: {},
+          errorPayload: (result.error as Record<string, unknown>) || {},
+          requestedBy: userId || null,
+          intakePayload,
+          retryAfter: result.retry_after ? new Date(result.retry_after) : null,
+          lastErrorCode: result.error?.code || null,
+          attemptCount: 1,
+          lastAttemptAt: new Date(),
+        }));
       return this.sanitizeVerification(created, userId);
     }
 
     // Failed
-    const created = await this.ninRepo.create({
-      ninHash: hashed,
-      ninLast4: last4,
-      provider: provider_name,
-      idempotencyKey: dto.idempotency_key || null,
-      status: NinVerificationStatus.FAILED,
-      responsePayload: {},
-      errorPayload: (result.error as Record<string, unknown>) || {},
-      requestedBy: userId || null,
-      intakePayload,
-      lastErrorCode: result.error?.code || null,
-      attemptCount: 1,
-      lastAttemptAt: new Date(),
-    });
+    let failedRow: any = null;
+    if (idempotentFailedRow) {
+      if (Object.keys(intakePayload).length) {
+        await this.ninRepo.mergeIntakePayload(idempotentFailedRow.id, intakePayload);
+      }
+      failedRow = await this.ninRepo.markFailed(idempotentFailedRow.id, {
+        error_payload: (result.error as Record<string, unknown>) || {},
+        last_error_code: result.error?.code || null,
+      });
+    }
+    const created =
+      failedRow ||
+      (await this.ninRepo.create({
+        ninHash: hashed,
+        ninLast4: last4,
+        provider: provider_name,
+        idempotencyKey: dto.idempotency_key || null,
+        status: NinVerificationStatus.FAILED,
+        responsePayload: {},
+        errorPayload: (result.error as Record<string, unknown>) || {},
+        requestedBy: userId || null,
+        intakePayload,
+        lastErrorCode: result.error?.code || null,
+        attemptCount: 1,
+        lastAttemptAt: new Date(),
+      }));
     await this.ninEvents.emitNinResolved(created.id, 'failed');
     return this.sanitizeVerification(created, userId);
   }

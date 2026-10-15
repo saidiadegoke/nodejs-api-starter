@@ -526,7 +526,13 @@ export class RegistrationController {
   })
   async getSubmissionPreview(@Req() req: any) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.registrationService.getSubmissionPreview(userId);
+    const result = await this.registrationService.getSubmissionPreview(userId);
+    return {
+      success: true,
+      message: 'Submission preview retrieved successfully',
+      data: result,
+      ...result,
+    };
   }
 
   @Get('me/exam-results')

@@ -58,6 +58,27 @@ export class RegistrationListItemDto {
   @ApiProperty({ example: true })
   has_biometrics: boolean;
 
+  @ApiPropertyOptional({ example: 'https://example.com/captured-face.jpg' })
+  captured_photo_url?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/captured-face.jpg' })
+  captured_photo?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/captured-face.jpg' })
+  face_photo_url?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/photo.jpg' })
+  photo_url?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/photo.jpg' })
+  profile_photo_url?: string;
+
+  @ApiPropertyOptional({ example: { name: 'Jane Doe', relationship: 'mother', phone: '08012345678' } })
+  next_of_kin?: any;
+
+  @ApiPropertyOptional()
+  candidate?: any;
+
   @ApiProperty({ example: '2026-09-29T12:00:00.000Z' })
   created_at: string;
 }
@@ -111,6 +132,54 @@ export class CodeStatusResponseDto {
 export class SubmissionPreviewResponseDto {
   @ApiProperty({ example: 'd3b07384-d113-40f4-8a4e-379e4971c260' })
   registration_id: string;
+
+  @ApiPropertyOptional()
+  candidate?: any;
+
+  @ApiPropertyOptional()
+  basic_information?: any;
+
+  @ApiPropertyOptional()
+  contact_information?: any;
+
+  @ApiPropertyOptional({ example: { name: 'Jane Doe', relationship: 'mother', phone: '08012345678' } })
+  next_of_kin?: any;
+
+  @ApiPropertyOptional()
+  subject_combination?: any;
+
+  @ApiPropertyOptional()
+  university?: any;
+
+  @ApiPropertyOptional()
+  session?: any;
+
+  @ApiPropertyOptional()
+  nin_verification?: any;
+
+  @ApiPropertyOptional()
+  documents?: any[];
+
+  @ApiPropertyOptional()
+  biometrics?: any[];
+
+  @ApiPropertyOptional({ example: 'complete' })
+  biometric_status?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/captured-face.jpg' })
+  captured_photo_url?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/captured-face.jpg' })
+  captured_photo?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/captured-face.jpg' })
+  face_photo_url?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/photo.jpg' })
+  photo_url?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/photo.jpg' })
+  profile_photo_url?: string;
 
   @ApiProperty({ example: true })
   profile_completed: boolean;

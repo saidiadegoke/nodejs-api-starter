@@ -77,6 +77,58 @@ function enrichRegistrationRow(row: any) {
     row.institution_issued_code ||
     null;
 
+  let nextOfKin: any = null;
+  if (row.next_of_kin) {
+    if (typeof row.next_of_kin === 'string') {
+      try {
+        nextOfKin = JSON.parse(row.next_of_kin);
+      } catch {
+        nextOfKin = null;
+      }
+    } else if (typeof row.next_of_kin === 'object') {
+      nextOfKin = row.next_of_kin;
+    }
+  }
+  if (nextOfKin && !nextOfKin.name && !nextOfKin.phone && !nextOfKin.email && !nextOfKin.address) {
+    nextOfKin = null;
+  }
+  if (!nextOfKin) {
+    const ninNok = row.nin_nok || (row.nin_payload && (row.nin_payload.next_of_kin || row.nin_payload.next_of_kin_record)) || null;
+    const intakeNok = row.intake_nok || (row.nin_intake && row.nin_intake.next_of_kin) || null;
+    const nokObj = (ninNok && typeof ninNok === 'object' ? ninNok : null) || (intakeNok && typeof intakeNok === 'object' ? intakeNok : null);
+    if (nokObj) {
+      const resolvedName =
+        [nokObj.firstname, nokObj.middlename, nokObj.surname, nokObj.first_name, nokObj.middle_name, nokObj.last_name].filter(Boolean).join(' ') ||
+        nokObj.name ||
+        nokObj.full_name ||
+        null;
+      const resolvedPhone = nokObj.telephoneno || nokObj.phone || nokObj.nok_phone || nokObj.contact || null;
+      const resolvedEmail = nokObj.email || nokObj.nok_email || null;
+      const resolvedAddress =
+        [nokObj.address1, nokObj.address2, nokObj.lga, nokObj.state].filter(Boolean).join(', ') ||
+        nokObj.address ||
+        nokObj.nok_address ||
+        null;
+      if (resolvedName || resolvedPhone || resolvedEmail || resolvedAddress) {
+        nextOfKin = {
+          name: resolvedName,
+          relationship: nokObj.relationship || nokObj.nok_relationship || null,
+          phone: resolvedPhone,
+          email: resolvedEmail,
+          address: resolvedAddress,
+          source: 'nin',
+        };
+      }
+    }
+  }
+
+  const capturedPhotoUrl =
+    row.captured_photo_url ||
+    row.face_photo_url ||
+    row.captured_photo ||
+    null;
+  const photoUrl = capturedPhotoUrl || row.profile_photo_url || row.photo_url || null;
+
   const candidate = {
     id: row.user_id || null,
     candidate_id: candidateId,
@@ -88,6 +140,12 @@ function enrichRegistrationRow(row: any) {
     display_name: displayName || null,
     email: row.email || null,
     phone: row.phone || null,
+    photo_url: photoUrl,
+    profile_photo_url: photoUrl,
+    face_photo_url: capturedPhotoUrl,
+    captured_photo: capturedPhotoUrl,
+    captured_photo_url: capturedPhotoUrl,
+    next_of_kin: nextOfKin,
     status: row.status || 'pending',
   };
 
@@ -122,6 +180,12 @@ function enrichRegistrationRow(row: any) {
     biometric_status: biometricStatus,
     biometricStatus: biometricStatus,
     has_biometrics: hasBiometrics,
+    photo_url: photoUrl,
+    profile_photo_url: photoUrl,
+    face_photo_url: capturedPhotoUrl,
+    captured_photo: capturedPhotoUrl,
+    captured_photo_url: capturedPhotoUrl,
+    next_of_kin: nextOfKin,
     bucket,
     candidate,
     university,
@@ -678,7 +742,12 @@ export class RegistrationService {
     const email = row.email || ninIntake.email || null;
     const phone = row.phone || ninIntake.phone || ninPayload.phone || null;
     const faceBio = bioRows.find((b: any) => b.capture_type === 'face');
-    const facePhotoUrl = faceBio?.file_url || null;
+    let facePhotoUrl = faceBio?.file_url || null;
+    if (!facePhotoUrl && faceBio?.external_reference) {
+      if (faceBio.external_reference.startsWith('http://') || faceBio.external_reference.startsWith('https://')) {
+        facePhotoUrl = faceBio.external_reference;
+      }
+    }
     const profilePhotoUrl =
       facePhotoUrl ||
       row.profile_photo_url ||
@@ -687,6 +756,9 @@ export class RegistrationService {
 
     // Next of kin resolution
     let nextOfKin = nokRows[0] || null;
+    if (nextOfKin && !nextOfKin.name && !nextOfKin.phone && !nextOfKin.email && !nextOfKin.address) {
+      nextOfKin = null;
+    }
     if (!nextOfKin) {
       const nok =
         (ninPayload.next_of_kin && typeof ninPayload.next_of_kin === 'object' ? ninPayload.next_of_kin : null) ||
@@ -694,30 +766,35 @@ export class RegistrationService {
         (ninIntake.next_of_kin && typeof ninIntake.next_of_kin === 'object' ? ninIntake.next_of_kin : null);
 
       if (nok) {
-        nextOfKin = {
-          registration_id: registrationId,
-          name:
-            [nok.firstname, nok.middlename, nok.surname].filter(Boolean).join(' ') ||
-            nok.name ||
-            nok.full_name ||
-            null,
-          relationship: nok.relationship || nok.nok_relationship || null,
-          phone: nok.telephoneno || nok.phone || nok.nok_phone || null,
-          email: nok.email || nok.nok_email || null,
-          address:
-            [nok.address1, nok.address2, nok.lga, nok.state].filter(Boolean).join(', ') ||
-            nok.address ||
-            nok.nok_address ||
-            null,
-          source: 'nin',
-        };
+        const resolvedName =
+          [nok.firstname, nok.middlename, nok.surname, nok.first_name, nok.middle_name, nok.last_name].filter(Boolean).join(' ') ||
+          nok.name ||
+          nok.full_name ||
+          null;
+        const resolvedPhone = nok.telephoneno || nok.phone || nok.nok_phone || nok.contact || null;
+        const resolvedEmail = nok.email || nok.nok_email || null;
+        const resolvedAddress =
+          [nok.address1, nok.address2, nok.lga, nok.state].filter(Boolean).join(', ') ||
+          nok.address ||
+          nok.nok_address ||
+          null;
 
-        if (nextOfKin.name || nextOfKin.phone || nextOfKin.email) {
+        if (resolvedName || resolvedPhone || resolvedEmail || resolvedAddress) {
+          nextOfKin = {
+            registration_id: registrationId,
+            name: resolvedName,
+            relationship: nok.relationship || nok.nok_relationship || null,
+            phone: resolvedPhone,
+            email: resolvedEmail,
+            address: resolvedAddress,
+            source: 'nin',
+          };
+
           this.dataSource
             .query(
               `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
                VALUES ($1, $2, $3, $4, $5, $6, 'nin', NOW(), NOW())
-               ON CONFLICT DO NOTHING`,
+               ON CONFLICT (registration_id) WHERE (deleted_at IS NULL) DO NOTHING`,
               [
                 registrationId,
                 nextOfKin.name || 'Next of Kin',
@@ -765,12 +842,15 @@ export class RegistrationService {
       profile_photo_url: profilePhotoUrl,
       photo_url: profilePhotoUrl,
       face_photo_url: facePhotoUrl,
+      captured_photo: facePhotoUrl,
+      captured_photo_url: facePhotoUrl,
       nin_photo_url: ninPayload.photo_url || null,
       residential_address: residentialAddress,
       state_of_origin: stateOfOrigin,
       lga,
       place_of_birth: placeOfBirth,
       country: row.country || 'Nigeria',
+      next_of_kin: nextOfKin,
     };
 
     const hasFace = bioRows.some((b: any) => b.capture_type === 'face') || Boolean(row.face_skipped_at);
@@ -814,6 +894,10 @@ export class RegistrationService {
       email,
       phone,
       profile_photo_url: profilePhotoUrl,
+      photo_url: profilePhotoUrl,
+      face_photo_url: facePhotoUrl,
+      captured_photo: facePhotoUrl,
+      captured_photo_url: facePhotoUrl,
       // Only the onboarding (institution-issued) code belongs on `code`; the
       // provisional code is internal and must not masquerade as it.
       code: row.institution_issued_code || null,
@@ -1163,22 +1247,40 @@ export class RegistrationService {
       const nokEmail = nok.email || nok.nok_email;
       const nokAddress = nok.address || nok.nok_address;
 
+      const nokSource = nok.source || 'institution';
+
       if (nokName || nokPhone || nokEmail || nokAddress) {
         await this.dataSource
           .query(
             `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, 'institution', NOW(), NOW())
-             ON CONFLICT (registration_id) DO UPDATE
-             SET name = EXCLUDED.name, relationship = EXCLUDED.relationship, phone = EXCLUDED.phone, email = EXCLUDED.email, address = EXCLUDED.address, updated_at = NOW()`,
-            [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null],
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+             ON CONFLICT (registration_id) WHERE (deleted_at IS NULL) DO UPDATE
+             SET name = EXCLUDED.name, relationship = EXCLUDED.relationship, phone = EXCLUDED.phone, email = EXCLUDED.email, address = EXCLUDED.address, source = EXCLUDED.source, updated_at = NOW()`,
+            [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null, nokSource],
           )
           .catch(async () => {
-            await this.dataSource
+            const existing = await this.dataSource
               .query(
-                `UPDATE jupeb_next_of_kin SET name = $2, relationship = $3, phone = $4, email = $5, address = $6, updated_at = NOW() WHERE registration_id = $1`,
-                [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null],
+                `SELECT id FROM jupeb_next_of_kin WHERE registration_id = $1 AND deleted_at IS NULL LIMIT 1`,
+                [registrationId],
               )
-              .catch(() => {});
+              .catch(() => []);
+            if (existing && existing.length > 0) {
+              await this.dataSource
+                .query(
+                  `UPDATE jupeb_next_of_kin SET name = $2, relationship = $3, phone = $4, email = $5, address = $6, source = $7, updated_at = NOW() WHERE id = $1`,
+                  [existing[0].id, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null, nokSource],
+                )
+                .catch(() => {});
+            } else {
+              await this.dataSource
+                .query(
+                  `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+                  [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null, nokSource],
+                )
+                .catch(() => {});
+            }
           });
       }
     }
@@ -2322,9 +2424,17 @@ export class RegistrationService {
         provisional_candidate_code: reg.provisionalCandidateCode || null,
         jupeb_candidate_number: reg.jupebCandidateNumber || null,
         photo_url: resolvedPhoto,
+        profile_photo_url: resolvedPhoto,
         face_photo_url: facePhotoUrl,
+        captured_photo_url: facePhotoUrl,
+        captured_photo: facePhotoUrl,
         status: reg.status,
       },
+      photo_url: resolvedPhoto,
+      profile_photo_url: resolvedPhoto,
+      face_photo_url: facePhotoUrl,
+      captured_photo_url: facePhotoUrl,
+      captured_photo: facePhotoUrl,
       basic_information: {
         date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
         gender: ninPayload.gender || u.gender || null,
@@ -2400,7 +2510,10 @@ export class RegistrationService {
     await this.restoreSubjectCombinationFromNinIntake(reg);
 
     const details: any = await this.getRegistrationById(reg.id, userId);
-    const docs = await this.docRepo.findByRegistrationId(reg.id);
+    const docs =
+      Array.isArray(details.documents) && details.documents.length
+        ? details.documents
+        : await this.docRepo.findByRegistrationId(reg.id);
 
     const fullName =
       details.display_name ||
@@ -2449,7 +2562,21 @@ export class RegistrationService {
     if (!subjectsConfirmed) missing.push('Subject combination');
 
     return {
+      ...details,
       registration_id: reg.id,
+      candidate: details.candidate,
+      basic_information: details.basic_information,
+      contact_information: details.contact_information,
+      next_of_kin: details.next_of_kin || null,
+      subject_combination: details.subject_combination,
+      documents: details.documents,
+      biometrics: details.biometrics,
+      biometric_status: details.biometric_status,
+      photo_url: details.photo_url || details.profile_photo_url || details.candidate?.photo_url || null,
+      profile_photo_url: details.profile_photo_url || details.candidate?.photo_url || null,
+      face_photo_url: details.face_photo_url || details.candidate?.face_photo_url || null,
+      captured_photo: details.captured_photo || details.candidate?.captured_photo || null,
+      captured_photo_url: details.captured_photo_url || details.candidate?.captured_photo_url || null,
       profile_completed: profileCompleted,
       documents_completed: documentsCompleted,
       biometrics_completed: biometricsCompleted,
