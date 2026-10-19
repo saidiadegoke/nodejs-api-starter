@@ -411,11 +411,12 @@ export class AuthService {
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
+      const isEmailVerified = intakePayload.email_verified !== false;
       const userInsert = await queryRunner.query(
-        `INSERT INTO users (email, phone, password_hash, status)
-         VALUES ($1, $2, $3, 'active')
-         RETURNING id, email, phone, status, created_at`,
-        [email, phone, passwordHash]
+        `INSERT INTO users (email, phone, password_hash, status, email_verified, email_verified_at)
+         VALUES ($1, $2, $3, 'active', $4, ${isEmailVerified ? 'NOW()' : 'NULL'})
+         RETURNING id, email, phone, status, email_verified, created_at`,
+        [email, phone, passwordHash, isEmailVerified]
       );
       const user = userInsert[0];
 
@@ -537,7 +538,8 @@ export class AuthService {
           permissions: [],
           profile_photo: facePhotoUrl || ninResponse.photo_url || null,
           rating: null,
-          verified: false,
+          verified: isEmailVerified,
+          email_verified: isEmailVerified,
           created_at: user.created_at,
         },
         registration: {
@@ -694,7 +696,8 @@ export class AuthService {
         permissions,
         profile_photo: user.profile_photo_url || null,
         rating: null,
-        verified: user.email_verified && user.phone_verified,
+        verified: Boolean(user.email_verified),
+        email_verified: Boolean(user.email_verified),
         created_at: user.created_at,
       },
       university,
