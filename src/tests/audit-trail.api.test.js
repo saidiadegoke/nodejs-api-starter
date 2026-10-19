@@ -324,6 +324,22 @@ describe('Audit Trail & Activity Tracking API', () => {
     expect(actions).toContain(admin2Action);
     // Should NOT see institution admin's action
     expect(actions).not.toContain(instAction);
+
+    // Registrar / Super Admin queries /audit
+    const registrarList = await request(app)
+      .get('/audit?limit=100')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(registrarList.status).toBe(200);
+    const regActions = registrarList.body.data.map((l) => l.action);
+    // Should see registrar's own action
+    expect(regActions).toContain(registrarAction);
+    // Should see action by created admin 1
+    expect(regActions).toContain(admin1Action);
+    // Should see action by created admin 2
+    expect(regActions).toContain(admin2Action);
+    // Should NOT see institution admin's action
+    expect(regActions).not.toContain(instAction);
   });
 });
 
