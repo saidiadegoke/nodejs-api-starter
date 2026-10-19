@@ -62,8 +62,6 @@ interface SelfScope {
 }
 type RbacScope = FullScope | AdminScope | InstitutionScope | SelfScope;
 
-const FULL_ACCESS_ROLES = new Set(['super_admin', 'registrar']);
-
 export interface AuditLogOptions {
   actorUserId: string;
   action: string;
@@ -121,93 +119,109 @@ export class AdminAuditService {
 
   // ── Resolve scope of users visible to an admin ───────────────────────────
   /**
-   * Central admins are scoped to their root registrar and all other admins
-   * created under that registrar's creation hierarchy (plus themselves).
+   * Central admins (including the registrar and super_admin) are scoped to their root registrar
+   * and all other admins created under that registrar's creation hierarchy (plus themselves).
    */
   private async resolveAdminScopeUsers(actorUserId: string): Promise<string[]> {
     const allowed = new Set<string>([actorUserId]);
 
-    // 1. Find the direct assigner/creator of this admin's role
-    const directAssignerRows: { assigned_by: string }[] = await this.dataSource.query(
-      `SELECT ur.assigned_by
+    // Check if actorUserId is already a registrar or super_admin
+    const actorRolesRows: { name: string }[] = await this.dataSource.query(
+      `SELECT r.name
        FROM user_roles ur
        JOIN roles r ON r.id = ur.role_id
        WHERE ur.user_id = $1
-         AND r.name IN ('admin', 'jupeb_admin')
-         AND ur.assigned_by IS NOT NULL
-         AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-       LIMIT 1`,
+         AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
       [actorUserId],
     );
-
-    let directAssigner = directAssignerRows[0]?.assigned_by || null;
-
-    // Fallback: check audit logs for user creation
-    if (!directAssigner) {
-      const auditCreateRows: { admin_user_id: string }[] = await this.dataSource.query(
-        `SELECT admin_user_id
-         FROM admin_audit_logs
-         WHERE action IN ('user.create', 'user.create_with_university')
-           AND (resource_id = $1 OR resource_id = $2)
-           AND admin_user_id IS NOT NULL
-         ORDER BY created_at ASC
-         LIMIT 1`,
-        [actorUserId, String(actorUserId)],
-      );
-      directAssigner = auditCreateRows[0]?.admin_user_id || null;
-    }
+    const actorRoles = actorRolesRows.map((r) => r.name);
+    const isRegistrarOrSuper = actorRoles.some((r) => r === 'registrar' || r === 'super_admin');
 
     let rootRegistrarIds: string[] = [];
 
-    if (directAssigner) {
-      // Walk UP the chain of assigned_by to find the root registrar / super_admin
-      const ancestorRows: { registrar_id: string }[] = await this.dataSource.query(
-        `WITH RECURSIVE ancestors AS (
-          SELECT $1::uuid AS user_id, 1 AS depth
-
-          UNION
-
-          SELECT ur.assigned_by AS user_id, a.depth + 1
-          FROM user_roles ur
-          JOIN ancestors a ON ur.user_id = a.user_id
-          WHERE ur.assigned_by IS NOT NULL
-            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-            AND a.depth < 10
-        )
-        SELECT DISTINCT a.user_id AS registrar_id
-        FROM ancestors a
-        JOIN user_roles ur ON ur.user_id = a.user_id
-        JOIN roles r ON r.id = ur.role_id
-        WHERE r.name IN ('registrar', 'super_admin')
-          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
-        [directAssigner],
-      );
-
-      rootRegistrarIds = ancestorRows.map((r) => r.registrar_id).filter(Boolean);
-
-      // If direct assigner was an admin but no ancestor has role registrar/super_admin, treat directAssigner as root
-      if (rootRegistrarIds.length === 0) {
-        rootRegistrarIds = [directAssigner];
-      }
-    }
-
-    // If still no root registrar found (e.g. legacy/seeded admin with assigned_by = null),
-    // discover active registrar/super_admin users in the system
-    if (rootRegistrarIds.length === 0) {
-      const globalRegistrars: { user_id: string }[] = await this.dataSource.query(
-        `SELECT DISTINCT ur.user_id
+    if (isRegistrarOrSuper) {
+      rootRegistrarIds = [actorUserId];
+    } else {
+      // 1. Find the direct assigner/creator of this admin's role
+      const directAssignerRows: { assigned_by: string }[] = await this.dataSource.query(
+        `SELECT ur.assigned_by
          FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
-         WHERE r.name IN ('registrar', 'super_admin')
-           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
+         WHERE ur.user_id = $1
+           AND r.name NOT IN ('institution_admin', 'student', 'user')
+           AND ur.assigned_by IS NOT NULL
+           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+         LIMIT 1`,
+        [actorUserId],
       );
-      rootRegistrarIds = globalRegistrars.map((r) => r.user_id).filter(Boolean);
+
+      let directAssigner = directAssignerRows[0]?.assigned_by || null;
+
+      // Fallback: check audit logs for user creation
+      if (!directAssigner) {
+        const auditCreateRows: { admin_user_id: string }[] = await this.dataSource.query(
+          `SELECT admin_user_id
+           FROM admin_audit_logs
+           WHERE action IN ('user.create', 'user.create_with_university')
+             AND (resource_id = $1 OR resource_id = $2)
+             AND admin_user_id IS NOT NULL
+           ORDER BY created_at ASC
+           LIMIT 1`,
+          [actorUserId, String(actorUserId)],
+        );
+        directAssigner = auditCreateRows[0]?.admin_user_id || null;
+      }
+
+      if (directAssigner) {
+        // Walk UP the chain of assigned_by to find the root registrar / super_admin
+        const ancestorRows: { registrar_id: string }[] = await this.dataSource.query(
+          `WITH RECURSIVE ancestors AS (
+            SELECT $1::uuid AS user_id, 1 AS depth
+
+            UNION
+
+            SELECT ur.assigned_by AS user_id, a.depth + 1
+            FROM user_roles ur
+            JOIN ancestors a ON ur.user_id = a.user_id
+            WHERE ur.assigned_by IS NOT NULL
+              AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+              AND a.depth < 10
+          )
+          SELECT DISTINCT a.user_id AS registrar_id
+          FROM ancestors a
+          JOIN user_roles ur ON ur.user_id = a.user_id
+          JOIN roles r ON r.id = ur.role_id
+          WHERE r.name IN ('registrar', 'super_admin')
+            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
+          [directAssigner],
+        );
+
+        rootRegistrarIds = ancestorRows.map((r) => r.registrar_id).filter(Boolean);
+
+        // If direct assigner was an admin but no ancestor has role registrar/super_admin, treat directAssigner as root
+        if (rootRegistrarIds.length === 0) {
+          rootRegistrarIds = [directAssigner];
+        }
+      }
+
+      // If still no root registrar found (e.g. legacy/seeded admin with assigned_by = null),
+      // discover active registrar/super_admin users in the system
+      if (rootRegistrarIds.length === 0) {
+        const globalRegistrars: { user_id: string }[] = await this.dataSource.query(
+          `SELECT DISTINCT ur.user_id
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+           WHERE r.name IN ('registrar', 'super_admin')
+             AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
+        );
+        rootRegistrarIds = globalRegistrars.map((r) => r.user_id).filter(Boolean);
+      }
     }
 
     rootRegistrarIds.forEach((id) => allowed.add(id));
 
     if (rootRegistrarIds.length > 0) {
-      // Walk DOWN from root registrars to find all admins created under them
+      // Walk DOWN from root registrars to find all admins created under them (excluding institution admins)
       const treeRows: { user_id: string }[] = await this.dataSource.query(
         `WITH RECURSIVE admin_tree AS (
           SELECT u.id AS user_id, 0 AS depth
@@ -221,7 +235,9 @@ export class AdminAuditService {
           FROM user_roles ur
           JOIN roles r ON r.id = ur.role_id
           JOIN admin_tree at ON ur.assigned_by = at.user_id
-          WHERE r.name IN ('admin', 'jupeb_admin')
+          LEFT JOIN profiles p ON p.user_id = ur.user_id
+          WHERE r.name NOT IN ('institution_admin', 'student', 'user')
+            AND p.jupeb_university_id IS NULL
             AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
             AND at.depth < 10
         )
@@ -239,9 +255,11 @@ export class AdminAuditService {
            FROM admin_audit_logs a
            JOIN user_roles ur ON ur.user_id::text = a.resource_id
            JOIN roles r ON r.id = ur.role_id
+           LEFT JOIN profiles p ON p.user_id = ur.user_id
            WHERE a.action IN ('user.create', 'user.create_with_university')
              AND a.admin_user_id = ANY($1::uuid[])
-             AND r.name IN ('admin', 'jupeb_admin')
+             AND r.name NOT IN ('institution_admin', 'student', 'user')
+             AND p.jupeb_university_id IS NULL
              AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
           [treeArray],
         );
@@ -253,19 +271,17 @@ export class AdminAuditService {
     }
 
     // For legacy/seeded admins where directAssigner was not recorded, also include other legacy central admins
-    if (!directAssigner) {
-      const legacyAdmins: { user_id: string }[] = await this.dataSource.query(
-        `SELECT DISTINCT ur.user_id
-         FROM user_roles ur
-         JOIN roles r ON r.id = ur.role_id
-         LEFT JOIN profiles p ON p.user_id = ur.user_id
-         WHERE r.name IN ('admin', 'jupeb_admin')
-           AND p.jupeb_university_id IS NULL
-           AND ur.assigned_by IS NULL
-           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
-      );
-      legacyAdmins.forEach((r) => allowed.add(r.user_id));
-    }
+    const legacyAdmins: { user_id: string }[] = await this.dataSource.query(
+      `SELECT DISTINCT ur.user_id
+       FROM user_roles ur
+       JOIN roles r ON r.id = ur.role_id
+       LEFT JOIN profiles p ON p.user_id = ur.user_id
+       WHERE r.name IN ('admin', 'jupeb_admin', 'registrar', 'super_admin', 'financial_admin')
+         AND p.jupeb_university_id IS NULL
+         AND ur.assigned_by IS NULL
+         AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
+    );
+    legacyAdmins.forEach((r) => allowed.add(r.user_id));
 
     return Array.from(allowed);
   }
@@ -282,24 +298,22 @@ export class AdminAuditService {
     );
     const roles = rolesRows.map((r) => r.name);
 
-    if (roles.some((r) => FULL_ACCESS_ROLES.has(r))) {
-      return { mode: 'full' };
-    }
-
-    const isAdmin = roles.includes('admin') || roles.includes('jupeb_admin');
-    if (isAdmin) {
-      const allowedUserIds = await this.resolveAdminScopeUsers(userId);
-      return { mode: 'admin', actorId: userId, allowedUserIds };
-    }
-
     const profileRows: { jupeb_university_id: string | null }[] = await this.dataSource.query(
       `SELECT jupeb_university_id FROM profiles WHERE user_id = $1 LIMIT 1`,
       [userId],
     );
     const universityId = profileRows[0]?.jupeb_university_id || null;
 
-    if (universityId) {
-      return { mode: 'institution', universityId, actorId: userId };
+    if (universityId || roles.includes('institution_admin')) {
+      return { mode: 'institution', universityId: universityId || '', actorId: userId };
+    }
+
+    const isCentralAdmin = roles.some((r) =>
+      ['super_admin', 'registrar', 'admin', 'jupeb_admin', 'financial_admin'].includes(r)
+    );
+    if (isCentralAdmin) {
+      const allowedUserIds = await this.resolveAdminScopeUsers(userId);
+      return { mode: 'admin', actorId: userId, allowedUserIds };
     }
 
     return { mode: 'self', actorId: userId };
