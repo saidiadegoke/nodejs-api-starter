@@ -129,6 +129,10 @@ function enrichRegistrationRow(row: any) {
     null;
   const photoUrl = capturedPhotoUrl || row.profile_photo_url || row.photo_url || null;
 
+  const isEmailVerified = row.user_id
+    ? Boolean(row.email_verified)
+    : (row.nin_intake?.email_verified !== false);
+
   const candidate = {
     id: row.user_id || null,
     candidate_id: candidateId,
@@ -140,6 +144,7 @@ function enrichRegistrationRow(row: any) {
     display_name: displayName || null,
     email: row.email || null,
     phone: row.phone || null,
+    email_verified: isEmailVerified,
     photo_url: photoUrl,
     profile_photo_url: photoUrl,
     face_photo_url: capturedPhotoUrl,
@@ -196,11 +201,14 @@ function enrichRegistrationRow(row: any) {
     contact_information: {
       email: row.email || null,
       phone: row.phone || null,
+      email_verified: isEmailVerified,
     },
     user: {
       id: row.user_id || null,
       email: row.email || null,
+      email_verified: isEmailVerified,
     },
+    email_verified: isEmailVerified,
   };
 }
 
@@ -823,6 +831,10 @@ export class RegistrationService {
       row.institution_issued_code ||
       null;
 
+    const isEmailVerified = row.user_id
+      ? Boolean(row.email_verified)
+      : (ninIntake.email_verified !== false);
+
     const candidateObj = {
       id: row.user_id || null,
       name: displayName,
@@ -836,8 +848,7 @@ export class RegistrationService {
       date_of_birth: dateOfBirth,
       email,
       phone,
-      email_verified: row.email_verified ?? null,
-      phone_verified: row.phone_verified ?? null,
+      email_verified: isEmailVerified,
       last_login_at: row.last_login_at || null,
       profile_photo_url: profilePhotoUrl,
       photo_url: profilePhotoUrl,
@@ -893,6 +904,7 @@ export class RegistrationService {
       date_of_birth: dateOfBirth,
       email,
       phone,
+      email_verified: isEmailVerified,
       profile_photo_url: profilePhotoUrl,
       photo_url: profilePhotoUrl,
       face_photo_url: facePhotoUrl,
@@ -1180,6 +1192,7 @@ export class RegistrationService {
     }
 
     // 2. Update user profile and contact details
+    let emailChanged = false;
     if (reg.userId) {
       const profileFields: Record<string, any> = {};
       if (firstName) profileFields.first_name = String(firstName).trim();
@@ -1208,14 +1221,21 @@ export class RegistrationService {
         );
       }
 
-      if (reg.ninVerificationId && middleName) {
-        await this.dataSource.query(
-          `UPDATE jupeb_nin_verifications
-           SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || jsonb_build_object('middle_name', $2::text),
-               updated_at = NOW()
-           WHERE id = $1`,
-          [reg.ninVerificationId, String(middleName).trim()],
-        ).catch(() => {});
+      if (email) {
+        const curUser = (
+          await this.dataSource.query('SELECT id, email, email_verified FROM users WHERE id = $1', [reg.userId])
+        )[0];
+        const curEmail = curUser?.email ? String(curUser.email).trim().toLowerCase() : null;
+        if (email.toLowerCase() !== curEmail) {
+          emailChanged = true;
+          const conflict = await this.dataSource.query(
+            'SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND id <> $2 AND deleted_at IS NULL LIMIT 1',
+            [email, reg.userId],
+          );
+          if (conflict.length > 0) {
+            throw new ConflictException('Email already in use');
+          }
+        }
       }
 
       if (email || phone) {
@@ -1224,6 +1244,10 @@ export class RegistrationService {
         if (email) {
           userSets.push(`email = $${userVals.length + 1}`);
           userVals.push(email);
+          if (emailChanged) {
+            userSets.push('email_verified = false');
+            userSets.push('email_verified_at = NULL');
+          }
         }
         if (phone) {
           userSets.push(`phone = $${userVals.length + 1}`);
@@ -1233,6 +1257,94 @@ export class RegistrationService {
           `UPDATE users SET ${userSets.join(', ')}, updated_at = NOW() WHERE id = $1`,
           userVals,
         );
+      }
+
+      if (emailChanged) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const AuthService = require('../../auth/services/auth.service');
+          await AuthService.sendVerificationEmail(reg.userId);
+        } catch (err: any) {
+          this.logger.warn(`Failed to send verification email for candidate ${registrationId} (user ${reg.userId}): ${err?.message}`);
+        }
+      }
+
+      if (reg.ninVerificationId) {
+        const intakeFields: Record<string, any> = {};
+        if (email) intakeFields.email = email;
+        if (phone) intakeFields.phone = phone;
+        if (firstName) intakeFields.first_name = String(firstName).trim();
+        if (lastName) intakeFields.last_name = String(lastName).trim();
+        if (middleName) intakeFields.middle_name = String(middleName).trim();
+        if (gender) intakeFields.gender = String(gender).trim();
+        if (dateOfBirth) intakeFields.date_of_birth = dateOfBirth;
+        if (stateOfOrigin) intakeFields.state_of_origin = String(stateOfOrigin).trim();
+        if (lga) intakeFields.lga = String(lga).trim();
+        if (residentialAddress) intakeFields.residential_address = String(residentialAddress).trim();
+        if (placeOfBirth) intakeFields.place_of_birth = String(placeOfBirth).trim();
+        if (firstName || lastName || middleName) {
+          const constructed = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+          if (constructed) intakeFields.name = constructed;
+        }
+        if (Object.keys(intakeFields).length) {
+          await this.dataSource.query(
+            `UPDATE jupeb_nin_verifications
+             SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [reg.ninVerificationId, JSON.stringify(intakeFields)],
+          ).catch(() => {});
+        }
+      }
+    } else {
+      // Candidate does not have a linked user account yet (e.g. status code_issued)
+      if (reg.ninVerificationId) {
+        const ninRow = (
+          await this.dataSource.query('SELECT intake_payload FROM jupeb_nin_verifications WHERE id = $1', [reg.ninVerificationId])
+        )[0];
+        const curIntake = ninRow?.intake_payload || {};
+        const curEmail = curIntake.email ? String(curIntake.email).trim().toLowerCase() : null;
+        if (email && email.toLowerCase() !== curEmail) {
+          emailChanged = true;
+        }
+
+        const intakeFields: Record<string, any> = {};
+        if (email) {
+          intakeFields.email = email;
+          if (emailChanged) {
+            intakeFields.email_verified = false;
+          }
+        }
+        if (phone) intakeFields.phone = phone;
+        if (firstName) intakeFields.first_name = String(firstName).trim();
+        if (lastName) intakeFields.last_name = String(lastName).trim();
+        if (middleName) intakeFields.middle_name = String(middleName).trim();
+        if (gender) intakeFields.gender = String(gender).trim();
+        if (dateOfBirth) intakeFields.date_of_birth = dateOfBirth;
+        if (stateOfOrigin) intakeFields.state_of_origin = String(stateOfOrigin).trim();
+        if (lga) intakeFields.lga = String(lga).trim();
+        if (residentialAddress) intakeFields.residential_address = String(residentialAddress).trim();
+        if (placeOfBirth) intakeFields.place_of_birth = String(placeOfBirth).trim();
+        if (firstName || lastName || middleName) {
+          const constructed = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+          if (constructed) intakeFields.name = constructed;
+        }
+        if (Object.keys(intakeFields).length) {
+          await this.dataSource.query(
+            `UPDATE jupeb_nin_verifications
+             SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [reg.ninVerificationId, JSON.stringify(intakeFields)],
+          ).catch(() => {});
+        }
+
+        if (emailChanged && reg.status === RegistrationStatus.CODE_ISSUED) {
+          this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
+            registrationId: reg.id,
+            userId,
+          });
+        }
       }
     }
 
@@ -2286,7 +2398,7 @@ export class RegistrationService {
 
     const [userRows, ninRows, nokRows, bioRows, uniRows, sessionRows, scRows] = await Promise.all([
       this.dataSource.query(
-        `SELECT u.id, u.email, u.phone, p.title, p.first_name, p.last_name, p.display_name,
+        `SELECT u.id, u.email, u.phone, u.email_verified, p.title, p.first_name, p.last_name, p.display_name,
                 p.date_of_birth, p.gender, p.profile_photo_url,
                 p.residential_address, p.state_of_origin, p.lga, p.place_of_birth,
                 c.name as country
@@ -2429,6 +2541,7 @@ export class RegistrationService {
         captured_photo_url: facePhotoUrl,
         captured_photo: facePhotoUrl,
         status: reg.status,
+        email_verified: Boolean(u.email_verified),
       },
       photo_url: resolvedPhoto,
       profile_photo_url: resolvedPhoto,
@@ -2447,6 +2560,7 @@ export class RegistrationService {
       contact_information: {
         email: u.email || intake.email || null,
         phone: u.phone || intake.phone || ninPayload.phone || null,
+        email_verified: Boolean(u.email_verified),
       },
       next_of_kin: nokRow
         ? {
