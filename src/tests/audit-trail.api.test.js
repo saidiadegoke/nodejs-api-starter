@@ -202,6 +202,37 @@ describe('Audit Trail & Activity Tracking API', () => {
     }
   });
 
+  async function createCentralAdmin({ email, assignedBy }) {
+    const ins = await pool.query(
+      `INSERT INTO users (email, phone, email_verified, phone_verified, password_hash, status)
+       VALUES ($1, $2, true, true, $3, 'active') RETURNING id`,
+      [email, uniquePhone('7'), passwordHash]
+    );
+    const userId = ins.rows[0].id;
+    await pool.query(
+      `INSERT INTO profiles (user_id, first_name, last_name, display_name)
+       VALUES ($1, 'Central', 'Admin', 'Central Admin')`,
+      [userId]
+    );
+    const roleRow = await pool.query(
+      `SELECT id FROM roles WHERE name = 'admin' AND owner_jupeb_university_id IS NULL LIMIT 1`
+    );
+    if (roleRow.rows[0]) {
+      await pool.query(
+        `INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES ($1, $2, $3)`,
+        [userId, roleRow.rows[0].id, assignedBy || null]
+      );
+    }
+    const perm = await pool.query(`SELECT id FROM permissions WHERE name = 'activity_logs.view' LIMIT 1`);
+    if (perm.rows[0]) {
+      await pool.query(
+        `INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [userId, perm.rows[0].id]
+      );
+    }
+    return userId;
+  }
+
   it('GET /audit/export returns CSV formatted for Figma table', async () => {
     if (!dbReady) return;
     const adminToken = await getAdminToken();
@@ -214,6 +245,85 @@ describe('Audit Trail & Activity Tracking API', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
     expect(res.text).toContain('S/N,TIME STAMP,ROLE,USER,EMAIL,ACTION,DETAILS');
+  });
+
+  it('central admin only sees audits of the registrar and other admins created by the registrar', async () => {
+    if (!dbReady) return;
+    const adminToken = await getAdminToken();
+    if (!adminToken) return;
+
+    const suffix = Date.now();
+    const adminUser = await pool.query(`SELECT id FROM users WHERE email = 'admin@example.com' LIMIT 1`);
+    const registrarId = adminUser.rows[0]?.id;
+    if (!registrarId) return;
+
+    // Create Admin 1 (created by registrarId)
+    const admin1Email = `central_admin1_${suffix}@example.com`;
+    const admin1Id = await createCentralAdmin({ email: admin1Email, assignedBy: registrarId });
+    const admin1Token = await login(admin1Email);
+
+    // Create Admin 2 (created by registrarId)
+    const admin2Email = `central_admin2_${suffix}@example.com`;
+    const admin2Id = await createCentralAdmin({ email: admin2Email, assignedBy: registrarId });
+
+    // Create Institution Admin (at uniA)
+    const uniA = await createUniversity(adminToken, `${suffix}c`);
+    const instEmail = `inst_other_${suffix}@example.com`;
+    const instAdminId = await createInstitutionAdmin({ email: instEmail, universityId: uniA });
+
+    const registrarAction = `registrar_action_${suffix}`;
+    const admin1Action = `admin1_action_${suffix}`;
+    const admin2Action = `admin2_action_${suffix}`;
+    const instAction = `inst_unrelated_action_${suffix}`;
+
+    // Event by Registrar
+    await AdminAuditService.log({
+      actorUserId: registrarId,
+      action: registrarAction,
+      resourceType: 'system',
+      resourceId: 'sys-1',
+    });
+
+    // Event by Admin 1
+    await AdminAuditService.log({
+      actorUserId: admin1Id,
+      action: admin1Action,
+      resourceType: 'course',
+      resourceId: 'course-1',
+    });
+
+    // Event by Admin 2
+    await AdminAuditService.log({
+      actorUserId: admin2Id,
+      action: admin2Action,
+      resourceType: 'course',
+      resourceId: 'course-2',
+    });
+
+    // Event by Institution Admin
+    await AdminAuditService.log({
+      actorUserId: instAdminId,
+      action: instAction,
+      resourceType: 'candidate',
+      resourceId: 'cand-inst',
+      universityId: uniA,
+    });
+
+    // Admin 1 queries /audit
+    const admin1List = await request(app)
+      .get('/audit?limit=100')
+      .set('Authorization', `Bearer ${admin1Token}`);
+
+    expect(admin1List.status).toBe(200);
+    const actions = admin1List.body.data.map((l) => l.action);
+    // Should see registrar's action
+    expect(actions).toContain(registrarAction);
+    // Should see own action
+    expect(actions).toContain(admin1Action);
+    // Should see sibling admin's action
+    expect(actions).toContain(admin2Action);
+    // Should NOT see institution admin's action
+    expect(actions).not.toContain(instAction);
   });
 });
 
