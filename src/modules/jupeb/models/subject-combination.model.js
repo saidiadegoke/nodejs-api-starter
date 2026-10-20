@@ -1,4 +1,5 @@
 const pool = require('../../../database/pool');
+const { getActiveStudentStatusCondition } = require('../utils/student-count');
 
 class SubjectCombinationModel {
 
@@ -87,7 +88,7 @@ class SubjectCombinationModel {
     const uniqueIds = Array.from(new Set(combinationIds));
     for (const id of uniqueIds) map.set(id, 0);
 
-    const conditions = ["r.status <> 'withdrawn'"];
+    const conditions = [getActiveStudentStatusCondition('r')];
     const params = [uniqueIds];
     let pIdx = 2;
     if (sessionId) {

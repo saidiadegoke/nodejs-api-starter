@@ -6,6 +6,7 @@ import {
   SubjectCombinationStatus,
 } from '../entities/subject-combination.entity';
 import { SubjectCombinationItemEntity } from '../entities/subject-combination-item.entity';
+import { getActiveStudentStatusCondition } from '../../../shared/enums';
 
 @Injectable()
 export class SubjectCombinationRepository {
@@ -134,7 +135,7 @@ export class SubjectCombinationRepository {
     const uniqueIds = Array.from(new Set(combinationIds));
     for (const id of uniqueIds) map.set(id, 0);
 
-    const conditions = ["r.status <> 'withdrawn'"];
+    const conditions = [getActiveStudentStatusCondition('r')];
     const params: any[] = [uniqueIds];
     let pIdx = 2;
     if (options?.sessionId) {

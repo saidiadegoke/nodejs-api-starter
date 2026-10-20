@@ -1,6 +1,7 @@
 const axios = require('axios');
 const pool = require('../../../database/pool');
 const registrationKpi = require('../services/registration-kpi.service');
+const { getActiveStudentStatusCondition } = require('../utils/student-count');
 
 class RegistrationModel {
   async appendHistory({ registration_id, from_status, to_status, reason, changed_by }) {
@@ -411,7 +412,7 @@ class RegistrationModel {
    */
   async byUniversity({ session_id, university_id, limit = 12 }) {
     const values = [];
-    const where = ['1=1'];
+    const where = [getActiveStudentStatusCondition('r')];
     let idx = 1;
     if (session_id) {
       where.push(`r.session_id = $${idx++}`);

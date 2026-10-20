@@ -73,6 +73,8 @@ function growthTrend(curVal, prevVal) {
  *   total_subject_combinations: number
  * }>}
  */
+const { getActiveStudentStatusCondition } = require('../utils/student-count');
+
 async function kpiCounts(universityId, sessionId) {
   const filters = [];
   const params = [];
@@ -88,26 +90,27 @@ async function kpiCounts(universityId, sessionId) {
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const pendingIdx = i;
   params.push(PENDING_STATUSES);
+  const activeFilter = getActiveStudentStatusCondition('r');
   const sql = `
     SELECT
-      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE ${activeFilter})::int AS total,
       COUNT(*) FILTER (WHERE r.status = 'approved')::int AS approved,
       COUNT(*) FILTER (WHERE r.status = ANY($${pendingIdx}::text[]))::int AS pending,
       COUNT(*) FILTER (WHERE r.status = 'rejected')::int AS rejected,
       COUNT(*) FILTER (
-        WHERE r.status <> 'withdrawn' AND EXISTS (
+        WHERE ${activeFilter} AND EXISTS (
           SELECT 1 FROM jupeb_biometric_captures bc
           WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
         )
       )::int AS biometric,
       COUNT(*) FILTER (
-        WHERE r.status <> 'withdrawn' AND NOT EXISTS (
+        WHERE ${activeFilter} AND NOT EXISTS (
           SELECT 1 FROM jupeb_biometric_captures bc
           WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
         )
       )::int AS without_biometric,
       COUNT(DISTINCT CASE
-        WHEN r.status <> 'withdrawn' AND r.subject_combination_id IS NOT NULL
+        WHEN ${activeFilter} AND r.subject_combination_id IS NOT NULL
         THEN r.subject_combination_id
       END)::int AS total_subject_combinations
     FROM jupeb_registrations r

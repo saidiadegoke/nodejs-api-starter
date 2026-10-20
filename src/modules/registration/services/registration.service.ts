@@ -18,6 +18,7 @@ import { RegistrationEventsService } from './registration-events.service';
 import { RegistrationFormPdfService } from './registration-form-pdf.service';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
 import { RegistrationEntity, RegistrationStatus } from '../entities/registration.entity';
+import { getActiveStudentStatusCondition } from '../../../shared/enums';
 import { SessionStatus } from '../../sessions/entities/academic-session.entity';
 import {
   CreateRegistrationDto,
@@ -1531,11 +1532,12 @@ export class RegistrationService {
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
     const params: any[] = [];
     const universityFilters: string[] = ['u.deleted_at IS NULL'];
-    let sessionJoinClause = '';
+    const activeStudentFilter = getActiveStudentStatusCondition('r');
+    let sessionJoinClause = ` AND ${activeStudentFilter}`;
 
     if (query.session_id) {
       params.push(query.session_id);
-      sessionJoinClause = ` AND r.session_id = $${params.length}`;
+      sessionJoinClause += ` AND r.session_id = $${params.length}`;
     }
 
     if (scopedUniversityId) {

@@ -142,6 +142,7 @@ export class SessionRepository {
     });
     if (open) return open;
     return this.repo.findOne({
+      where: {},
       order: { opensAt: 'DESC' },
     });
   }

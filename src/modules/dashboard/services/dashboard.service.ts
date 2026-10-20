@@ -22,7 +22,7 @@ import {
   MetricValueDto,
 } from '../dto';
 
-import { RegistrationStatus } from '../../../shared/enums';
+import { RegistrationStatus, getActiveStudentStatusCondition } from '../../../shared/enums';
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -125,26 +125,27 @@ export class DashboardService {
     const pendingIdx = i;
     params.push(PENDING_STATUSES);
 
+    const activeFilter = getActiveStudentStatusCondition('r');
     const sql = `
       SELECT
-        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE ${activeFilter})::int AS total,
         COUNT(*) FILTER (WHERE r.status = 'approved')::int AS approved,
         COUNT(*) FILTER (WHERE r.status = ANY($${pendingIdx}::text[]))::int AS pending,
         COUNT(*) FILTER (WHERE r.status = 'rejected')::int AS rejected,
         COUNT(*) FILTER (
-          WHERE r.status <> 'withdrawn' AND EXISTS (
+          WHERE ${activeFilter} AND EXISTS (
             SELECT 1 FROM jupeb_biometric_captures bc
             WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
           )
         )::int AS biometric,
         COUNT(*) FILTER (
-          WHERE r.status <> 'withdrawn' AND NOT EXISTS (
+          WHERE ${activeFilter} AND NOT EXISTS (
             SELECT 1 FROM jupeb_biometric_captures bc
             WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL
           )
         )::int AS without_biometric,
         COUNT(DISTINCT CASE
-          WHEN r.status <> 'withdrawn' AND r.subject_combination_id IS NOT NULL
+          WHEN ${activeFilter} AND r.subject_combination_id IS NOT NULL
           THEN r.subject_combination_id
         END)::int AS total_subject_combinations
       FROM jupeb_registrations r
@@ -279,7 +280,7 @@ export class DashboardService {
     const params: any[] = [];
     let q = `SELECT COUNT(DISTINCT user_id)::int AS total
              FROM jupeb_registrations
-             WHERE user_id IS NOT NULL AND status <> 'withdrawn'`;
+             WHERE user_id IS NOT NULL AND ${getActiveStudentStatusCondition('')}`;
     if (scopedUniversityId) {
       q += ` AND university_id = $1`;
       params.push(scopedUniversityId);
@@ -350,7 +351,7 @@ export class DashboardService {
     // ── Session-scoped mode: when session is resolved (active or requested)
     if (session && opensAt && closesAt) {
       const params: any[] = [session.id];
-      let where = `session_id = $1 AND status <> 'withdrawn'`;
+      let where = `session_id = $1 AND ${getActiveStudentStatusCondition('')}`;
       let i = 2;
       if (scopedUniversityId) {
         where += ` AND university_id = $${i++}`;
@@ -392,7 +393,7 @@ export class DashboardService {
 
     const monthlyForYear = async (yy: number) => {
       const params: any[] = [yy];
-      let where = `EXTRACT(YEAR FROM created_at) = $1 AND status <> 'withdrawn'`;
+      let where = `EXTRACT(YEAR FROM created_at) = $1 AND ${getActiveStudentStatusCondition('')}`;
       let i = 2;
       if (scopedUniversityId) {
         where += ` AND university_id = $${i++}`;
@@ -480,7 +481,7 @@ export class DashboardService {
     const params: any[] = [session.id];
     const filters = [
       `r.subject_combination_id IS NOT NULL`,
-      `r.status <> 'withdrawn'`,
+      getActiveStudentStatusCondition('r'),
       `r.session_id = $1`,
     ];
     let i = 2;
@@ -538,7 +539,7 @@ export class DashboardService {
     const params: any[] = [session.id];
     const filters = [
       `r.subject_combination_id IS NOT NULL`,
-      `r.status <> 'withdrawn'`,
+      getActiveStudentStatusCondition('r'),
       `r.session_id = $1`,
     ];
     let i = 2;
@@ -593,7 +594,7 @@ export class DashboardService {
 
     const params: any[] = [session.id];
     const filters = [
-      `r.status <> 'withdrawn'`,
+      getActiveStudentStatusCondition('r'),
       `r.session_id = $1`,
       `s.deleted_at IS NULL`,
     ];
@@ -672,7 +673,7 @@ export class DashboardService {
     const lim = Math.min(50, Math.max(1, Number(query.limit) || 5));
 
     const params: any[] = [];
-    const filters = [`r.status <> 'withdrawn'`];
+    const filters = [getActiveStudentStatusCondition('r')];
     let i = 1;
     if (scopedUniversityId) {
       filters.push(`r.university_id = $${i++}`);
