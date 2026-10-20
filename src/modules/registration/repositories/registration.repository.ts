@@ -8,7 +8,7 @@ export interface RegistrationListFilter {
   universityId?: string;
   status?: string;
   bucket?: string;
-  biometrics?: string;
+  biometric_status?: string;
   q?: string;
   limit?: number;
   offset?: number;
@@ -309,13 +309,17 @@ export class RegistrationRepository {
         qb.andWhere('r.status = :bucket', { bucket: filter.bucket });
       }
     }
-    if (filter.biometrics === 'with_biometrics') {
+    if (filter.biometric_status === 'Yes') {
       qb.andWhere(
         `EXISTS (SELECT 1 FROM jupeb_biometric_captures bc WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL)`,
       );
-    } else if (filter.biometrics === 'without_biometrics') {
+    } else if (filter.biometric_status === 'No') {
       qb.andWhere(
         `NOT EXISTS (SELECT 1 FROM jupeb_biometric_captures bc WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL)`,
+      );
+    } else if (filter.biometric_status === 'Partial') {
+      qb.andWhere(
+        `EXISTS (SELECT 1 FROM jupeb_biometric_captures bc WHERE bc.registration_id = r.id AND bc.replaced_at IS NULL)`,
       );
     }
     if (filter.q && filter.q.trim()) {

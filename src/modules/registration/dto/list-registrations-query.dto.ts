@@ -58,12 +58,12 @@ export class ListRegistrationsQueryDto {
 
   @ApiPropertyOptional({
     description: 'Filter by biometric capture status',
-    enum: ['all', 'with_biometrics', 'without_biometrics'],
-    example: 'all',
+    enum: ['Yes', 'No', 'Partial'],
+    example: 'Yes',
   })
   @IsOptional()
   @IsString()
-  biometrics?: string;
+  biometric_status?: string;
 
   @ApiPropertyOptional({
     description: 'Search query across name, candidate number, email, phone, NIN last 4',

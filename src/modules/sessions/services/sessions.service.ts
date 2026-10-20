@@ -365,7 +365,8 @@ export class SessionsService {
         let next = (counters.get(reg.universityId) ?? 0) + 1;
         let candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
 
-        while (true) {
+        let isDuplicate = true;
+        while (isDuplicate) {
           const existing = await manager.query(
             `SELECT id
              FROM jupeb_registrations
@@ -374,9 +375,12 @@ export class SessionsService {
             [candidateNumber, reg.id],
           );
 
-          if (!existing.length) break;
-          next += 1;
-          candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
+          if (existing.length === 0) {
+            isDuplicate = false;
+          } else {
+            next += 1;
+            candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
+          }
         }
 
         counters.set(reg.universityId, next);
