@@ -25,7 +25,7 @@ describe('Catalog bulk CSV upload — accepts multipart, raw csv, JSON', () => {
   afterAll(async () => {
     if (cleanupCodes.length) {
       await pool.query(
-        `UPDATE jupeb_universities SET deleted_at = NOW() WHERE code = ANY($1::text[])`,
+        `UPDATE jupeb_universities SET deleted_at = NOW() WHERE code = ANY($1::text[]) OR jupeb_prefix = ANY($1::text[])`,
         [cleanupCodes]
       );
     }

@@ -53,6 +53,7 @@ export class UsersController {
       currentUserId,
       {
         role: query.role,
+        status: query.status,
         include_all: query.include_all,
         include_students: query.include_students,
         include_institution: query.include_institution,

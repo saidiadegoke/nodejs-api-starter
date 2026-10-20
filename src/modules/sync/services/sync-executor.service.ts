@@ -242,7 +242,7 @@ export class SyncExecutorService {
       try {
         const attPayload = {
           institutions: universities.map((u) => ({
-            institutionCode: u.jupebPrefix || u.code,
+            institutionCode: u.code || u.jupebPrefix,
             institutionName: u.name,
             address: u.address || 'Nigeria',
             coordinates: {
@@ -272,9 +272,9 @@ export class SyncExecutorService {
             ? u.universityType.charAt(0).toUpperCase() + u.universityType.slice(1).toLowerCase()
             : null;
           return {
-            code: u.jupebPrefix || u.code,
+            code: u.code || u.jupebPrefix,
             name: u.name,
-            shortCode: u.shortName || u.code,
+            shortCode: u.shortName || u.jupebPrefix || u.code,
             category,
             state: u.metadata?.state || null,
             city: u.metadata?.city || null,
@@ -470,7 +470,7 @@ export class SyncExecutorService {
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         u.email AS "email",
-        COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
+        COALESCE(uni.code, uni.jupeb_prefix, '') AS "institutionCode",
         'STUDENT' AS "role",
         UPPER(COALESCE(p.gender, '')) AS "gender",
         p.date_of_birth AS "dateOfBirth",
@@ -501,7 +501,7 @@ export class SyncExecutorService {
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName') AS "middleName",
-        COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
+        COALESCE(uni.code, uni.jupeb_prefix, '') AS "institutionCode",
         s.academic_year AS "sessionAcademicYear",
         s.year_short AS "sessionYearShort",
         (

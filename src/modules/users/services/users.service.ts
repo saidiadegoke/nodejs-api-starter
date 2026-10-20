@@ -53,6 +53,7 @@ export class UsersService {
     currentUserId?: string,
     options: {
       role?: string;
+      status?: string;
       include_all?: string | boolean;
       include_students?: string | boolean;
       include_institution?: string | boolean;
@@ -82,6 +83,7 @@ export class UsersService {
     const filterOptions: UserListOptions = {
       q: search?.trim() || undefined,
       role: options.role?.trim() || undefined,
+      status: options.status?.trim() || undefined,
       universityId: universityId || undefined,
       excludeRoleNames: excludeRoleNames.length ? excludeRoleNames : undefined,
     };

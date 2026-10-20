@@ -13,6 +13,7 @@ async function getApp() {
         logger: false,
       });
 
+      app.use(express.text({ type: ['text/csv', 'application/csv'], limit: '10mb' }));
       app.use(express.json({ limit: '10mb' }));
       app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       app.use((req, res, next) => {

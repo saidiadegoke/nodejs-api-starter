@@ -936,8 +936,9 @@ class RegistrationService {
   }) {
     const institution_issued_code = await generateUniqueInstitutionCode();
     const provisional_serial = await registrationModel.nextProvisionalSerial(session_id, university_id);
+    const numberingCode = university.code || university.jupeb_prefix;
     const provisional_candidate_code = buildProvisionalCandidateCode(
-      university.jupeb_prefix,
+      numberingCode,
       provisional_serial
     );
     try {
@@ -2219,7 +2220,8 @@ class RegistrationService {
     const seen = new Map();
     const conflicts = [];
     for (const r of rows) {
-      const num = formatCandidateNumber(session.year_short, r.university_jupeb_prefix, r.provisional_serial);
+      const numberingCode = r.university_code || r.university_jupeb_prefix;
+      const num = formatCandidateNumber(session.year_short, numberingCode, r.provisional_serial);
       if (seen.has(num)) {
         conflicts.push({ jupeb_candidate_number: num, registration_ids: [seen.get(num), r.id] });
       } else {
@@ -2246,7 +2248,8 @@ class RegistrationService {
     let skipped = 0;
     const numbers = [];
     for (const r of rows) {
-      const num = formatCandidateNumber(session.year_short, r.university_jupeb_prefix, r.provisional_serial);
+      const numberingCode = r.university_code || r.university_jupeb_prefix;
+      const num = formatCandidateNumber(session.year_short, numberingCode, r.provisional_serial);
       const updated = await registrationModel.setCandidateNumberIfNull(r.id, num);
       if (updated) {
         assigned += 1;

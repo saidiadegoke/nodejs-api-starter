@@ -6,7 +6,13 @@ const {
 } = require('./institution-admin-provision.service');
 const subjectCombinationModel = require('../models/subject-combination.model');
 const subjectModel = require('../models/subject.model');
-const { cleanJupebPrefix, validateJupebPrefix, normalizeSubjects } = require('../utils/catalog-validation');
+const {
+  cleanUniversityCode,
+  validateUniversityCode,
+  cleanJupebPrefix,
+  validateJupebPrefix,
+  normalizeSubjects,
+} = require('../utils/catalog-validation');
 const { parseCsv, runBulk } = require('../utils/bulk-upload');
 const { resolveEffectiveSession } = require('./session-context.service');
 const crmsProviders = require('../../../integrations/crms');
@@ -81,14 +87,28 @@ class CatalogService {
     const rows = await universityModel.findAllAdmin({ limit: safeLimit, offset, status, q });
     const total = await universityModel.countAdmin({ status, q });
     const session = await resolveEffectiveSession(userId, sessionId || null);
-    const enrolledMap = await universityModel.enrolledCountsForUniversities(
-      rows.map((r) => r.id),
-      session && session.id
-    );
-    const enriched = rows.map((row) => ({
-      ...row,
-      enrolled_count: enrolledMap.get(row.id) || 0,
-    }));
+    const sId = session && session.id;
+    const [enrolledMap, locksMap] = await Promise.all([
+      universityModel.enrolledCountsForUniversities(
+        rows.map((r) => r.id),
+        sId
+      ),
+      universityModel.locksForUniversities(
+        rows.map((r) => r.id),
+        sId
+      ),
+    ]);
+    const enriched = rows.map((row) => {
+      const lock = locksMap.get(row.id);
+      return {
+        ...row,
+        enrolled_count: enrolledMap.get(row.id) || 0,
+        locked: Boolean(lock && lock.locked),
+        is_locked: Boolean(lock && lock.locked),
+        lock_reason: lock && lock.locked ? lock.reason : null,
+        locked_at: lock && lock.locked ? lock.locked_at : null,
+      };
+    });
     return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
 
@@ -127,6 +147,10 @@ class CatalogService {
     if (!code || !name || !jupeb_prefix) {
       throw httpError(422, 'code, name, and jupeb_prefix are required');
     }
+    const cleanedCode = cleanUniversityCode(code);
+    const c = validateUniversityCode(cleanedCode);
+    if (!c.ok) throw httpError(422, c.error);
+
     const cleanedPrefix = cleanJupebPrefix(jupeb_prefix);
     const p = validateJupebPrefix(cleanedPrefix);
     if (!p.ok) throw httpError(422, p.error);
@@ -141,9 +165,9 @@ class CatalogService {
     let university;
     try {
       university = await universityModel.create({
-        code,
+        code: cleanedCode,
         name,
-        short_name,
+        short_name: short_name ? String(short_name).trim() : cleanedPrefix,
         jupeb_prefix: cleanedPrefix,
         metadata: metadata && typeof metadata === 'object' ? metadata : {},
         university_type: university_type || null,
@@ -193,7 +217,12 @@ class CatalogService {
     if (body.name !== undefined) fields.name = body.name;
     if (body.short_name !== undefined) fields.short_name = body.short_name;
     if (body.metadata !== undefined) fields.metadata = body.metadata;
-    if (body.code !== undefined) fields.code = body.code;
+    if (body.code !== undefined) {
+      const cleanedCode = cleanUniversityCode(body.code);
+      const c = validateUniversityCode(cleanedCode);
+      if (!c.ok) throw httpError(422, c.error);
+      fields.code = cleanedCode;
+    }
     if (body.jupeb_prefix !== undefined) {
       const cleanedPrefix = cleanJupebPrefix(body.jupeb_prefix);
       const p = validateJupebPrefix(cleanedPrefix);
@@ -584,20 +613,40 @@ class CatalogService {
 
   async bulkCreateUniversities(csvText) {
     const rows = parseCsv(csvText);
-    return runBulk(rows, (row) => this.createUniversity({
-      code: row.code,
-      name: row.name,
-      short_name: row.short_name || undefined,
-      jupeb_prefix: cleanJupebPrefix(row.jupeb_prefix || row.prefix),
-      university_type: row.university_type || undefined,
-      email: row.email || undefined,
-      address: row.address || undefined,
-      phone: row.phone || undefined,
-      expected_candidate_count: row.expected_candidate_count || undefined,
-      description: row.description || undefined,
-      state: row.state || undefined,
-      category: row.category || undefined,
-    }));
+    return runBulk(rows, (row) => {
+      let rawCode = row.code || row.center_code || row.institution_code || row.university_code || '';
+      let rawPrefix = row.jupeb_prefix || row.prefix || row.jupeb_code || '';
+      let rawShortName = row.short_name || row.shortname || row.acronym || '';
+
+      const isDigits = (v) => {
+        const s = String(v || '').trim().replace(/^['’`"]+/, '').trim();
+        return s.length > 0 && /^\d+$/.test(s);
+      };
+
+      if (rawCode && rawPrefix && !isDigits(rawCode) && isDigits(rawPrefix)) {
+        const temp = rawCode;
+        rawCode = rawPrefix;
+        rawPrefix = temp;
+        if (!rawShortName) rawShortName = temp;
+      }
+
+      const cleanedCode = cleanUniversityCode(rawCode);
+      const cleanedPrefix = cleanJupebPrefix(rawPrefix || rawShortName);
+      return this.createUniversity({
+        code: cleanedCode,
+        name: row.name || row.institution_name || row.university_name,
+        short_name: rawShortName ? String(rawShortName).trim() : cleanedPrefix,
+        jupeb_prefix: cleanedPrefix,
+        university_type: row.university_type || row.type || undefined,
+        email: row.email || row.admin_email || undefined,
+        address: row.address || undefined,
+        phone: row.phone || undefined,
+        expected_candidate_count: row.expected_candidate_count || row.quota || undefined,
+        description: row.description || undefined,
+        state: row.state || undefined,
+        category: row.category || undefined,
+      });
+    });
   }
 
   async _syncInstitutionToCrms(university, body = {}) {
@@ -605,9 +654,9 @@ class CatalogService {
       const crmsProvider = crmsProviders.get();
       if (!crmsProvider.syncInstitutions) return;
 
-      const code = university.jupeb_prefix || university.code || body.code;
+      const code = university.code || university.jupeb_prefix || body.code;
       const name = university.name || body.name;
-      const shortCode = university.short_name || body.short_name || body.shortCode || university.code;
+      const shortCode = university.short_name || university.jupeb_prefix || body.short_name || body.shortCode || university.code;
       const rawCategory = body.category || university.university_type;
       const category = rawCategory
         ? rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase()
@@ -641,7 +690,7 @@ class CatalogService {
       const attendanceProvider = attendanceProviders.get();
       if (!attendanceProvider.syncInstitutions) return;
 
-      const institutionCode = university.jupeb_prefix || university.code || body.jupeb_prefix || body.code;
+      const institutionCode = university.code || university.jupeb_prefix || body.code;
       const institutionName = university.name || body.name;
       const address = (body.address || university.address || extractState(body, university) || 'Nigeria').trim();
 

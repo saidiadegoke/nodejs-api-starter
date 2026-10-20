@@ -24,7 +24,7 @@ export class UniversityEntity {
   @Column({ type: 'varchar', length: 80, nullable: true, name: 'short_name' })
   shortName: string | null;
 
-  @Column({ type: 'char', length: 3, name: 'jupeb_prefix' })
+  @Column({ type: 'varchar', length: 20, name: 'jupeb_prefix' })
   jupebPrefix: string;
 
   @Column({

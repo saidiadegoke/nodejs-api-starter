@@ -18,7 +18,7 @@ export class UniversityResponseDto {
   @ApiProperty({ example: '7d3b2075-816a-4d22-b5e1-0cf24a66a7b7' })
   id: string;
 
-  @ApiProperty({ example: 'UNILAG' })
+  @ApiProperty({ example: '001' })
   code: string;
 
   @ApiProperty({ example: 'University of Lagos' })
@@ -27,7 +27,7 @@ export class UniversityResponseDto {
   @ApiPropertyOptional({ example: 'UNILAG' })
   short_name: string | null;
 
-  @ApiProperty({ example: '001' })
+  @ApiProperty({ example: 'UNILAG' })
   jupeb_prefix: string;
 
   @ApiProperty({ example: 'active' })
@@ -56,6 +56,18 @@ export class UniversityResponseDto {
 
   @ApiPropertyOptional({ example: 342, description: 'Number of candidates enrolled in current session' })
   enrolled_count?: number;
+
+  @ApiPropertyOptional({ example: false, description: 'Whether registration is locked for this institution in the current/effective session' })
+  locked?: boolean;
+
+  @ApiPropertyOptional({ example: false, description: 'Alias for locked' })
+  is_locked?: boolean;
+
+  @ApiPropertyOptional({ example: 'Quota reached', description: 'Reason for institution registration lock' })
+  lock_reason?: string | null;
+
+  @ApiPropertyOptional({ example: '2026-01-15T10:00:00.000Z', description: 'When the lock was applied' })
+  locked_at?: Date | string | null;
 
   @ApiPropertyOptional({ type: InstitutionAdminSummaryDto })
   institution_admin?: InstitutionAdminSummaryDto;

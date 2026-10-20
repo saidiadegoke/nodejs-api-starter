@@ -27,6 +27,7 @@ async function bootstrap() {
   app.enableCors(getCorsConfig());
 
   // Request body parsing limits
+  app.use(express.text({ type: ['text/csv', 'application/csv'], limit: '10mb' }));
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

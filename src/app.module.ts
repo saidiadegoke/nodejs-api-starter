@@ -149,5 +149,23 @@ export class AppModule implements NestModule {
     consumer
       .apply(RequestIdMiddleware, RequestLogMiddleware, SearchAliasMiddleware)
       .forRoutes('*');
+
+    const { csvUpload } = require('./utils/middleware/csv-upload.middleware');
+    consumer
+      .apply(csvUpload)
+      .forRoutes(
+        'catalog/universities/bulk',
+        'institutions/bulk',
+        'catalog/subjects/bulk',
+        'subjects/bulk',
+        'catalog/subject-combinations/bulk',
+        'subject-combinations/bulk',
+        'api/v1/catalog/universities/bulk',
+        'api/v1/institutions/bulk',
+        'api/v1/catalog/subjects/bulk',
+        'api/v1/subjects/bulk',
+        'api/v1/catalog/subject-combinations/bulk',
+        'api/v1/subject-combinations/bulk',
+      );
   }
 }

@@ -439,7 +439,7 @@ class RegistrationModel {
 
   async findApprovedWithoutCandidateNumber(sessionId) {
     const result = await pool.query(
-      `SELECT r.*, u.jupeb_prefix AS university_jupeb_prefix
+      `SELECT r.*, u.code AS university_code, u.jupeb_prefix AS university_jupeb_prefix
        FROM jupeb_registrations r
        JOIN jupeb_universities u ON u.id = r.university_id
        WHERE r.session_id = $1 AND r.status = 'approved' AND r.jupeb_candidate_number IS NULL

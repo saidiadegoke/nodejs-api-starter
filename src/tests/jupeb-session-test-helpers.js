@@ -114,11 +114,13 @@ function nextJupebAcademicSession() {
 /** Default payload for POST /catalog/universities (email required for institution_admin). */
 function buildCatalogUniversityPayload(tag = 'U', overrides = {}) {
   const ts = Date.now();
-  const tagSafe = String(tag || 'U').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'U';
+  const rawTag = String(tag || 'U').replace(/[^a-zA-Z0-9]/g, '').slice(0, 6) || 'U';
+  const tagSafe = rawTag.length >= 2 ? rawTag.toUpperCase() : `${rawTag.toUpperCase()}U`;
   return {
-    code: nextJupebTestUniversityCode(tag),
+    code: overrides.code || nextJupebTestPrefix(),
     name: overrides.name || `Test Uni ${tagSafe} ${ts}`,
-    jupeb_prefix: nextJupebTestPrefix(),
+    jupeb_prefix: overrides.jupeb_prefix || tagSafe,
+    short_name: overrides.short_name || tagSafe,
     email: overrides.email || `catalog-${tagSafe}-${ts}@example.com`,
     ...overrides,
   };
