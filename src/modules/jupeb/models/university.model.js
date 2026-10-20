@@ -1,5 +1,6 @@
 const pool = require('../../../database/pool');
 const { normalizeStatus } = require('../../../utils/utils/status');
+const { getActiveStudentStatusCondition } = require('../utils/student-count');
 
 class UniversityModel {
   async create({
@@ -331,7 +332,7 @@ class UniversityModel {
        FROM jupeb_registrations
        WHERE university_id = ANY($1::uuid[])
          AND session_id = $2
-         AND status <> 'withdrawn'
+         AND ${getActiveStudentStatusCondition('')}
        GROUP BY university_id`,
       [universityIds, sessionId]
     );

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, IsNull, ILike } from 'typeorm';
 import { SubjectEntity, SubjectStatus } from '../entities/subject.entity';
+import { getActiveStudentStatusCondition } from '../../../shared/enums';
 
 @Injectable()
 export class SubjectRepository {
@@ -84,7 +85,7 @@ export class SubjectRepository {
        FROM jupeb_subject_combination_items i
        JOIN jupeb_registrations r ON r.subject_combination_id = i.combination_id
        WHERE i.subject_id = ANY($1::uuid[])
-         AND r.status <> 'withdrawn'
+         AND ${getActiveStudentStatusCondition('r')}
          AND r.session_id = $2
        GROUP BY i.subject_id`,
       [subjectIds, sessionId],

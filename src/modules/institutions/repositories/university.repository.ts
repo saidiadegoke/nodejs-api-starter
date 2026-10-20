@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, IsNull, ILike } from 'typeorm';
 import { UniversityEntity, UniversityStatus } from '../entities/university.entity';
+import { getActiveStudentStatusCondition } from '../../../shared/enums';
 
 @Injectable()
 export class UniversityRepository {
@@ -267,7 +268,7 @@ export class UniversityRepository {
        FROM jupeb_registrations
        WHERE university_id = ANY($1::uuid[])
          AND session_id = $2
-         AND status <> 'withdrawn'
+         AND ${getActiveStudentStatusCondition('')}
        GROUP BY university_id`,
       [universityIds, sessionId],
     );

@@ -14,6 +14,7 @@ const {
   getSessionContext,
   toSessionSummary,
 } = require('./session-context.service');
+const { getActiveStudentStatusCondition } = require('../utils/student-count');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -196,7 +197,7 @@ class DashboardService {
     const params = [];
     let q = `SELECT COUNT(DISTINCT user_id)::int AS total
              FROM jupeb_registrations
-             WHERE user_id IS NOT NULL AND status <> 'withdrawn'`;
+             WHERE user_id IS NOT NULL AND ${getActiveStudentStatusCondition('')}`;
     if (scopedUniversityId) {
       q += ` AND university_id = $1`;
       params.push(scopedUniversityId);
@@ -284,7 +285,7 @@ class DashboardService {
     const params = [session.id];
     const filters = [
       `r.subject_combination_id IS NOT NULL`,
-      `r.status <> 'withdrawn'`,
+      getActiveStudentStatusCondition('r'),
       `r.session_id = $1`,
     ];
     let i = 2;
@@ -395,7 +396,7 @@ class DashboardService {
     // `year` param and the previous-year comparison don't apply here.
     if (session) {
       const params = [session.id];
-      let where = `session_id = $1 AND status <> 'withdrawn'`;
+      let where = `session_id = $1 AND ${getActiveStudentStatusCondition('')}`;
       let i = 2;
       if (scopedUniversityId) {
         where += ` AND university_id = $${i++}`;
@@ -437,7 +438,7 @@ class DashboardService {
 
     const monthlyForYear = async (yy) => {
       const params = [yy];
-      let where = `EXTRACT(YEAR FROM created_at) = $1 AND status <> 'withdrawn'`;
+      let where = `EXTRACT(YEAR FROM created_at) = $1 AND ${getActiveStudentStatusCondition('')}`;
       let i = 2;
       if (scopedUniversityId) {
         where += ` AND university_id = $${i++}`;
@@ -475,7 +476,7 @@ class DashboardService {
     const params = [session.id];
     const filters = [
       `r.subject_combination_id IS NOT NULL`,
-      `r.status <> 'withdrawn'`,
+      getActiveStudentStatusCondition('r'),
       `r.session_id = $1`,
     ];
     let i = 2;
@@ -521,7 +522,7 @@ class DashboardService {
 
     const params = [session.id];
     const filters = [
-      `r.status <> 'withdrawn'`,
+      getActiveStudentStatusCondition('r'),
       `r.session_id = $1`,
       `s.deleted_at IS NULL`,
     ];
@@ -564,7 +565,7 @@ class DashboardService {
     const lim = Math.min(50, Math.max(1, parseInt(limit, 10) || 5));
 
     const params = [];
-    const filters = [`r.status <> 'withdrawn'`];
+    const filters = [getActiveStudentStatusCondition('r')];
     let i = 1;
     if (scopedUniversityId) {
       filters.push(`r.university_id = $${i++}`);

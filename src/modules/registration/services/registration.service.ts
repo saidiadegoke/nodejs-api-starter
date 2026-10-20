@@ -18,6 +18,7 @@ import { RegistrationEventsService } from './registration-events.service';
 import { RegistrationFormPdfService } from './registration-form-pdf.service';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
 import { RegistrationEntity, RegistrationStatus } from '../entities/registration.entity';
+import { getActiveStudentStatusCondition } from '../../../shared/enums';
 import { SessionStatus } from '../../sessions/entities/academic-session.entity';
 import {
   CreateRegistrationDto,
@@ -577,7 +578,7 @@ export class RegistrationService {
       universityId: scopedUniversityId || undefined,
       status: query.status,
       bucket: query.bucket,
-      biometrics: query.biometrics,
+      biometric_status: query.biometric_status,
       q: searchTerm,
       limit,
       offset,
@@ -1531,11 +1532,12 @@ export class RegistrationService {
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
     const params: any[] = [];
     const universityFilters: string[] = ['u.deleted_at IS NULL'];
-    let sessionJoinClause = '';
+    const activeStudentFilter = getActiveStudentStatusCondition('r');
+    let sessionJoinClause = ` AND ${activeStudentFilter}`;
 
     if (query.session_id) {
       params.push(query.session_id);
-      sessionJoinClause = ` AND r.session_id = $${params.length}`;
+      sessionJoinClause += ` AND r.session_id = $${params.length}`;
     }
 
     if (scopedUniversityId) {
@@ -2145,7 +2147,7 @@ export class RegistrationService {
       sessionId: query.session_id,
       universityId: scopedUniversityId || undefined,
       status: query.status,
-      biometrics: query.biometrics,
+      biometric_status: query.biometric_status,
       q: query.q,
       limit: 10000,
       offset: 0,
@@ -2228,8 +2230,8 @@ export class RegistrationService {
     for (const u of unfinalized) {
       let serial = Number(u.seq) || 1;
       let candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
-
-      while (true) {
+      let isDuplicate = true;
+      while (isDuplicate) {
         const existing = await this.dataSource.query(
           `SELECT id
            FROM jupeb_registrations
@@ -2238,9 +2240,12 @@ export class RegistrationService {
           [candidateNumber, u.id],
         );
 
-        if (!existing.length) break;
-        serial += 1;
-        candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
+        if (existing.length === 0) {
+          isDuplicate = false;
+        } else {
+          serial += 1;
+          candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
+        }
       }
 
       await this.regRepo.updateById(u.id, {

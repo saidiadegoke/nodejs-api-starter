@@ -1,4 +1,5 @@
 const pool = require('../../../database/pool');
+const { getActiveStudentStatusCondition } = require('../utils/student-count');
 
 class SubjectModel {
   async create({ code, name, description = null, status = 'active' }) {
@@ -89,7 +90,7 @@ class SubjectModel {
        FROM jupeb_subject_combination_items i
        JOIN jupeb_registrations r ON r.subject_combination_id = i.combination_id
        WHERE i.subject_id = ANY($1::uuid[])
-         AND r.status <> 'withdrawn'
+         AND ${getActiveStudentStatusCondition('r')}
          AND r.session_id = $2
        GROUP BY i.subject_id`,
       [subjectIds, sessionId]

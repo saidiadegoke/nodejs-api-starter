@@ -119,169 +119,37 @@ export class AdminAuditService {
 
   // ── Resolve scope of users visible to an admin ───────────────────────────
   /**
-   * Central admins (including the registrar and super_admin) are scoped to their root registrar
-   * and all other admins created under that registrar's creation hierarchy (plus themselves).
+   * Central admins (including the registrar and super_admin) share visibility across all
+   * central administrators so any admin with permission can see the same audit logs.
    */
   private async resolveAdminScopeUsers(actorUserId: string): Promise<string[]> {
     const allowed = new Set<string>([actorUserId]);
 
-    // Check if actorUserId is already a registrar or super_admin
-    const actorRolesRows: { name: string }[] = await this.dataSource.query(
-      `SELECT r.name
-       FROM user_roles ur
-       JOIN roles r ON r.id = ur.role_id
-       WHERE ur.user_id = $1
-         AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
-      [actorUserId],
-    );
-    const actorRoles = actorRolesRows.map((r) => r.name);
-    const isRegistrarOrSuper = actorRoles.some((r) => r === 'registrar' || r === 'super_admin');
-
-    let rootRegistrarIds: string[] = [];
-
-    if (isRegistrarOrSuper) {
-      rootRegistrarIds = [actorUserId];
-    } else {
-      // 1. Find the direct assigner/creator of this admin's role
-      const directAssignerRows: { assigned_by: string }[] = await this.dataSource.query(
-        `SELECT ur.assigned_by
-         FROM user_roles ur
-         JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = $1
-           AND r.name NOT IN ('institution_admin', 'student', 'user')
-           AND ur.assigned_by IS NOT NULL
-           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-         LIMIT 1`,
-        [actorUserId],
-      );
-
-      let directAssigner = directAssignerRows[0]?.assigned_by || null;
-
-      // Fallback: check audit logs for user creation
-      if (!directAssigner) {
-        const auditCreateRows: { admin_user_id: string }[] = await this.dataSource.query(
-          `SELECT admin_user_id
-           FROM admin_audit_logs
-           WHERE action IN ('user.create', 'user.create_with_university')
-             AND (resource_id = $1 OR resource_id = $2)
-             AND admin_user_id IS NOT NULL
-           ORDER BY created_at ASC
-           LIMIT 1`,
-          [actorUserId, String(actorUserId)],
-        );
-        directAssigner = auditCreateRows[0]?.admin_user_id || null;
-      }
-
-      if (directAssigner) {
-        // Walk UP the chain of assigned_by to find the root registrar / super_admin
-        const ancestorRows: { registrar_id: string }[] = await this.dataSource.query(
-          `WITH RECURSIVE ancestors AS (
-            SELECT $1::uuid AS user_id, 1 AS depth
-
-            UNION
-
-            SELECT ur.assigned_by AS user_id, a.depth + 1
-            FROM user_roles ur
-            JOIN ancestors a ON ur.user_id = a.user_id
-            WHERE ur.assigned_by IS NOT NULL
-              AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-              AND a.depth < 10
-          )
-          SELECT DISTINCT a.user_id AS registrar_id
-          FROM ancestors a
-          JOIN user_roles ur ON ur.user_id = a.user_id
-          JOIN roles r ON r.id = ur.role_id
-          WHERE r.name IN ('registrar', 'super_admin')
-            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
-          [directAssigner],
-        );
-
-        rootRegistrarIds = ancestorRows.map((r) => r.registrar_id).filter(Boolean);
-
-        // If direct assigner was an admin but no ancestor has role registrar/super_admin, treat directAssigner as root
-        if (rootRegistrarIds.length === 0) {
-          rootRegistrarIds = [directAssigner];
-        }
-      }
-
-      // If still no root registrar found (e.g. legacy/seeded admin with assigned_by = null),
-      // discover active registrar/super_admin users in the system
-      if (rootRegistrarIds.length === 0) {
-        const globalRegistrars: { user_id: string }[] = await this.dataSource.query(
-          `SELECT DISTINCT ur.user_id
-           FROM user_roles ur
-           JOIN roles r ON r.id = ur.role_id
-           WHERE r.name IN ('registrar', 'super_admin')
-             AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
-        );
-        rootRegistrarIds = globalRegistrars.map((r) => r.user_id).filter(Boolean);
-      }
-    }
-
-    rootRegistrarIds.forEach((id) => allowed.add(id));
-
-    if (rootRegistrarIds.length > 0) {
-      // Walk DOWN from root registrars to find all admins created under them (excluding institution admins)
-      const treeRows: { user_id: string }[] = await this.dataSource.query(
-        `WITH RECURSIVE admin_tree AS (
-          SELECT u.id AS user_id, 0 AS depth
-          FROM users u
-          WHERE u.id = ANY($1::uuid[])
-
-          UNION
-
-          -- Admins assigned by someone in the tree
-          SELECT ur.user_id, at.depth + 1
-          FROM user_roles ur
-          JOIN roles r ON r.id = ur.role_id
-          JOIN admin_tree at ON ur.assigned_by = at.user_id
-          LEFT JOIN profiles p ON p.user_id = ur.user_id
-          WHERE r.name NOT IN ('institution_admin', 'student', 'user')
-            AND p.jupeb_university_id IS NULL
-            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-            AND at.depth < 10
-        )
-        SELECT DISTINCT user_id FROM admin_tree`,
-        [rootRegistrarIds],
-      );
-
-      treeRows.forEach((r) => allowed.add(r.user_id));
-
-      // Also check admin_audit_logs where anyone in the tree created an admin user
-      const treeArray = Array.from(allowed);
-      if (treeArray.length > 0) {
-        const auditCreatedAdmins: { resource_id: string }[] = await this.dataSource.query(
-          `SELECT DISTINCT a.resource_id
-           FROM admin_audit_logs a
-           JOIN user_roles ur ON ur.user_id::text = a.resource_id
-           JOIN roles r ON r.id = ur.role_id
-           LEFT JOIN profiles p ON p.user_id = ur.user_id
-           WHERE a.action IN ('user.create', 'user.create_with_university')
-             AND a.admin_user_id = ANY($1::uuid[])
-             AND r.name NOT IN ('institution_admin', 'student', 'user')
-             AND p.jupeb_university_id IS NULL
-             AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
-          [treeArray],
-        );
-
-        auditCreatedAdmins.forEach((r) => {
-          if (r.resource_id) allowed.add(r.resource_id);
-        });
-      }
-    }
-
-    // For legacy/seeded admins where directAssigner was not recorded, also include other legacy central admins
-    const legacyAdmins: { user_id: string }[] = await this.dataSource.query(
+    // All central admins, registrars, super_admins, and users with central admin roles
+    const centralAdmins: { user_id: string }[] = await this.dataSource.query(
       `SELECT DISTINCT ur.user_id
        FROM user_roles ur
        JOIN roles r ON r.id = ur.role_id
        LEFT JOIN profiles p ON p.user_id = ur.user_id
-       WHERE r.name IN ('admin', 'jupeb_admin', 'registrar', 'super_admin', 'financial_admin')
+       WHERE r.name NOT IN ('institution_admin', 'student', 'user')
+         AND r.owner_jupeb_university_id IS NULL
          AND p.jupeb_university_id IS NULL
-         AND ur.assigned_by IS NULL
          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
     );
-    legacyAdmins.forEach((r) => allowed.add(r.user_id));
+    centralAdmins.forEach((r) => allowed.add(r.user_id));
+
+    // Also include users who have explicit audit.view / activity_logs.view permissions
+    const permAdmins: { user_id: string }[] = await this.dataSource.query(
+      `SELECT DISTINCT up.user_id
+       FROM user_permissions up
+       JOIN permissions p ON p.id = up.permission_id
+       LEFT JOIN profiles pr ON pr.user_id = up.user_id
+       WHERE p.name IN ('audit.view', 'activity_logs.view', 'system.admin')
+         AND up.granted = true
+         AND pr.jupeb_university_id IS NULL
+         AND (up.expires_at IS NULL OR up.expires_at > NOW())`,
+    );
+    permAdmins.forEach((r) => allowed.add(r.user_id));
 
     return Array.from(allowed);
   }
@@ -308,10 +176,34 @@ export class AdminAuditService {
       return { mode: 'institution', universityId: universityId || '', actorId: userId };
     }
 
-    const isCentralAdmin = roles.some((r) =>
-      ['super_admin', 'registrar', 'admin', 'jupeb_admin', 'financial_admin'].includes(r)
+    const isCentralAdminRole = roles.some((r) =>
+      ['super_admin', 'registrar', 'admin', 'jupeb_admin', 'financial_admin'].includes(r),
     );
-    if (isCentralAdmin) {
+
+    let hasAuditAccess = isCentralAdminRole;
+    if (!hasAuditAccess) {
+      const permCheck = await this.dataSource.query(
+        `SELECT EXISTS (
+          SELECT 1 FROM user_permissions up
+          JOIN permissions p ON up.permission_id = p.id
+          WHERE up.user_id = $1
+            AND p.name IN ('audit.view', 'activity_logs.view', 'system.admin')
+            AND up.granted = true
+            AND (up.expires_at IS NULL OR up.expires_at > NOW())
+          UNION
+          SELECT 1 FROM user_roles ur
+          JOIN role_permissions rp ON ur.role_id = rp.role_id
+          JOIN permissions p ON rp.permission_id = p.id
+          WHERE ur.user_id = $1
+            AND p.name IN ('audit.view', 'activity_logs.view', 'system.admin')
+            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+        ) AS has_perm`,
+        [userId],
+      );
+      hasAuditAccess = Boolean(permCheck[0]?.has_perm);
+    }
+
+    if (hasAuditAccess) {
       const allowedUserIds = await this.resolveAdminScopeUsers(userId);
       return { mode: 'admin', actorId: userId, allowedUserIds };
     }
@@ -356,12 +248,6 @@ export class AdminAuditService {
       params.push(scope.universityId, scope.actorId);
       paramIdx += 2;
     } else if (scope.mode === 'admin') {
-      conditions.push(
-        `(a.admin_user_id = ANY($${paramIdx}::uuid[]) OR (a.resource_type IN ('user', 'users') AND a.resource_id = ANY($${paramIdx + 1}::text[])))`,
-      );
-      params.push(scope.allowedUserIds, scope.allowedUserIds.map((id) => String(id)));
-      paramIdx += 2;
-
       const explicitUni =
         filters.university_id ||
         filters.jupeb_university_id ||
@@ -369,6 +255,12 @@ export class AdminAuditService {
       if (explicitUni) {
         conditions.push(`a.jupeb_university_id = $${paramIdx++}`);
         params.push(explicitUni);
+      } else {
+        conditions.push(
+          `(a.admin_user_id = ANY($${paramIdx}::uuid[]) OR a.admin_user_id IS NULL OR (a.resource_type IN ('user', 'users') AND a.resource_id = ANY($${paramIdx + 1}::text[])))`,
+        );
+        params.push(scope.allowedUserIds, scope.allowedUserIds.map((id) => String(id)));
+        paramIdx += 2;
       }
     } else if (scope.mode === 'self') {
       conditions.push(
