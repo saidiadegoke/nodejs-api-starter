@@ -4,18 +4,39 @@ import { DataSource } from 'typeorm';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /**
- * Provisional candidate code: 3-digit university JUPEB prefix + 4+ digit serial (no year).
+ * Provisional candidate code: 3-digit university code + 4+ digit serial (no year).
  */
 export function formatProvisionalCandidateCode(
-  jupebPrefix: string | number | null | undefined,
+  universityCodeOrPrefix: string | number | null | undefined,
   provisionalSerial: number | string | null | undefined,
 ): string {
-  const pref = String(jupebPrefix ?? '')
+  const pref = String(universityCodeOrPrefix ?? '')
     .replace(/\D/g, '')
     .slice(0, 3)
     .padStart(3, '0');
   const ser = Math.max(0, parseInt(String(provisionalSerial ?? ''), 10) || 0);
   return `${pref}${String(ser).padStart(4, '0')}`;
+}
+
+/**
+ * Final candidate number: 2-digit session year short + 3-digit university code + 4+ digit serial.
+ * Must satisfy DB check `^[0-9]{2}[0-9]{3}[0-9]{4,}$`.
+ */
+export function formatCandidateNumber(
+  yearShort: string | number | null | undefined,
+  universityCodeOrPrefix: string | number | null | undefined,
+  provisionalSerial: number | string | null | undefined,
+): string {
+  const ys = String(yearShort ?? '')
+    .replace(/\D/g, '')
+    .slice(-2)
+    .padStart(2, '0');
+  const pref = String(universityCodeOrPrefix ?? '')
+    .replace(/\D/g, '')
+    .slice(0, 3)
+    .padStart(3, '0');
+  const ser = Math.max(0, parseInt(String(provisionalSerial ?? ''), 10) || 0);
+  return `${ys}${pref}${String(ser).padStart(4, '0')}`;
 }
 
 /**

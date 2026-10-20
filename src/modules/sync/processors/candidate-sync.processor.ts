@@ -198,7 +198,7 @@ export class CandidateSyncProcessor extends WorkerHost {
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         u.email AS "email",
-        COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
+        COALESCE(uni.code, uni.jupeb_prefix, '') AS "institutionCode",
         'STUDENT' AS "role",
         UPPER(COALESCE(p.gender, '')) AS "gender",
         p.date_of_birth AS "dateOfBirth",
@@ -228,7 +228,7 @@ export class CandidateSyncProcessor extends WorkerHost {
         p.first_name AS "firstName",
         p.last_name AS "lastName",
         COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName') AS "middleName",
-        COALESCE(uni.jupeb_prefix, uni.code, '') AS "institutionCode",
+        COALESCE(uni.code, uni.jupeb_prefix, '') AS "institutionCode",
         s.academic_year AS "sessionAcademicYear",
         s.year_short AS "sessionYearShort",
         (

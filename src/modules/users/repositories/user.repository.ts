@@ -6,6 +6,7 @@ import { UserEntity } from '../entities/user.entity';
 export interface UserListOptions {
   q?: string;
   role?: string;
+  status?: string;
   universityId?: string;
   excludeGlobalRoleNames?: string[];
   excludeRoleNames?: string[];
@@ -56,6 +57,7 @@ export class UserRepository {
   private _buildListFilters(options: UserListOptions = {}) {
     const {
       q = null,
+      status = null,
       universityId = null,
       excludeGlobalRoleNames = [],
       excludeRoleNames = [],
@@ -144,6 +146,46 @@ export class UserRepository {
       )`);
       values.push(role);
       idx++;
+    }
+
+    if (status && status.trim() && status.trim().toLowerCase() !== 'all') {
+      const statusTokens = status
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (statusTokens.length === 1) {
+        const token = statusTokens[0];
+        if (token === 'active') {
+          conditions.push(`COALESCE(LOWER(u.status), 'active') = 'active'`);
+        } else if (token === 'inactive') {
+          conditions.push(
+            `(LOWER(u.status) = 'inactive' OR (u.status IS NOT NULL AND LOWER(u.status) NOT IN ('active', 'deleted')))`
+          );
+        } else {
+          conditions.push(`LOWER(u.status) = $${idx}`);
+          values.push(token);
+          idx++;
+        }
+      } else if (statusTokens.length > 1) {
+        const tokenConditions: string[] = [];
+        for (const token of statusTokens) {
+          if (token === 'active') {
+            tokenConditions.push(`COALESCE(LOWER(u.status), 'active') = 'active'`);
+          } else if (token === 'inactive') {
+            tokenConditions.push(
+              `(LOWER(u.status) = 'inactive' OR (u.status IS NOT NULL AND LOWER(u.status) NOT IN ('active', 'deleted')))`
+            );
+          } else {
+            tokenConditions.push(`LOWER(u.status) = $${idx}`);
+            values.push(token);
+            idx++;
+          }
+        }
+        if (tokenConditions.length > 0) {
+          conditions.push(`(${tokenConditions.join(' OR ')})`);
+        }
+      }
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

@@ -349,6 +349,52 @@ describe('Admin RBAC — roles, permissions, user assignment', () => {
     expect(Array.isArray(res.body.data)).toBe(true);
   });
 
+  it('GET /admin/users filters by status=active and status=inactive', async () => {
+    if (!dbReady) return;
+    const token = await getAdminToken();
+    if (!token) return;
+
+    const testUserRow = await pool.query(
+      `SELECT id, status FROM users WHERE email = 'student@example.com' LIMIT 1`
+    );
+    const testUserId = testUserRow.rows[0]?.id;
+    const originalStatus = testUserRow.rows[0]?.status;
+
+    if (testUserId) {
+      await pool.query(`UPDATE users SET status = 'inactive' WHERE id = $1`, [testUserId]);
+    }
+
+    try {
+      const resActive = await request(app)
+        .get('/admin/users?limit=1000&status=active&include_all=true')
+        .set('Authorization', `Bearer ${token}`);
+      expect(resActive.status).toBe(200);
+      expect(Array.isArray(resActive.body.data)).toBe(true);
+      for (const u of resActive.body.data) {
+        expect(u.status).toBe('active');
+      }
+      if (testUserId) {
+        expect(resActive.body.data.some((u) => u.id === testUserId)).toBe(false);
+      }
+
+      const resInactive = await request(app)
+        .get('/admin/users?limit=1000&status=inactive&include_all=true')
+        .set('Authorization', `Bearer ${token}`);
+      expect(resInactive.status).toBe(200);
+      expect(Array.isArray(resInactive.body.data)).toBe(true);
+      for (const u of resInactive.body.data) {
+        expect(u.status).not.toBe('active');
+      }
+      if (testUserId) {
+        expect(resInactive.body.data.some((u) => u.id === testUserId)).toBe(true);
+      }
+    } finally {
+      if (testUserId && originalStatus) {
+        await pool.query(`UPDATE users SET status = $1 WHERE id = $2`, [originalStatus, testUserId]);
+      }
+    }
+  });
+
   it('GET /admin/users/:userId/roles returns current assignments', async () => {
     if (!dbReady) return;
     const token = await getAdminToken();

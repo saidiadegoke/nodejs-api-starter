@@ -67,7 +67,7 @@ export class UniversityRepository {
     if (options.q && options.q.trim()) {
       const term = `%${options.q.trim()}%`;
       qb.andWhere(
-        '(u.code ILIKE :term OR u.name ILIKE :term OR COALESCE(u.short_name, \'\') ILIKE :term)',
+        '(u.code ILIKE :term OR u.name ILIKE :term OR COALESCE(u.short_name, \'\') ILIKE :term OR COALESCE(u.jupeb_prefix, \'\') ILIKE :term)',
         { term },
       );
     }
@@ -274,6 +274,32 @@ export class UniversityRepository {
 
     for (const row of result) {
       map.set(row.university_id, row.c);
+    }
+    return map;
+  }
+
+  async locksForUniversities(
+    universityIds: string[],
+    sessionId?: string | null,
+  ): Promise<Map<string, { locked: boolean; reason: string | null; locked_at: Date | string | null; locked_by: string | null }>> {
+    const map = new Map<string, { locked: boolean; reason: string | null; locked_at: Date | string | null; locked_by: string | null }>();
+    if (!universityIds || !universityIds.length || !sessionId) return map;
+
+    const result = await this.dataSource.query(
+      `SELECT university_id, locked, reason, locked_at, locked_by
+       FROM jupeb_session_university_locks
+       WHERE university_id = ANY($1::uuid[])
+         AND session_id = $2`,
+      [universityIds, sessionId],
+    );
+
+    for (const row of result) {
+      map.set(row.university_id, {
+        locked: Boolean(row.locked),
+        reason: row.reason || null,
+        locked_at: row.locked_at || null,
+        locked_by: row.locked_by || null,
+      });
     }
     return map;
   }

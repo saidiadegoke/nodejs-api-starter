@@ -184,6 +184,7 @@ export class InstitutionsController {
   }
 
   @Post(["catalog/universities/bulk", "institutions/bulk"])
+  @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermission("institutions.create")
   @Audit("catalog.university_bulk_upload", {
@@ -213,7 +214,13 @@ export class InstitutionsController {
         : typeof body === "string"
           ? body
           : body?.csv || "";
-    return this.institutionsService.bulkCreate(csv, req.user?.user_id);
+    const result = await this.institutionsService.bulkCreate(csv, req.user?.user_id);
+    return {
+      success: true,
+      message: "Bulk upload processed",
+      data: result,
+      ...result,
+    };
   }
 
   @Post([

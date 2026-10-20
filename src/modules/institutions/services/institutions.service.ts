@@ -18,21 +18,40 @@ const NIGERIAN_STATES = [
   'Taraba', 'Yobe', 'Zamfara',
 ];
 
-export function cleanJupebPrefix(prefix: string | number): string {
-  if (prefix == null) return '';
-  let str = String(prefix).trim().replace(/^['’`"]+/, '').trim();
+export function cleanUniversityCode(code: string | number): string {
+  if (code == null) return '';
+  let str = String(code).trim().replace(/^['’`"]+/, '').trim();
   if (/^\d{1,2}$/.test(str)) {
     str = str.padStart(3, '0');
   }
   return str;
 }
 
+export function validateUniversityCode(code: string | number): { ok: boolean; error?: string; code?: string } {
+  const cleaned = cleanUniversityCode(code);
+  if (!/^[0-9]{3}$/.test(cleaned)) {
+    return { ok: false, error: 'code must be exactly 3 numeric characters' };
+  }
+  return { ok: true, code: cleaned };
+}
+
+export function cleanJupebPrefix(prefix: string | number): string {
+  if (prefix == null) return '';
+  return String(prefix).trim().replace(/^['’`"]+/, '').trim().toUpperCase();
+}
+
 export function validateJupebPrefix(prefix: string | number): { ok: boolean; error?: string; prefix?: string } {
   const cleaned = cleanJupebPrefix(prefix);
-  if (!/^[0-9]{3}$/.test(cleaned)) {
-    return { ok: false, error: 'jupeb_prefix must be exactly 3 numeric characters' };
+  if (!cleaned || cleaned.length < 2 || cleaned.length > 20) {
+    return { ok: false, error: 'jupeb_prefix must be between 2 and 20 characters' };
   }
   return { ok: true, prefix: cleaned };
+}
+
+export function isPureDigits(val: any): boolean {
+  if (val == null) return false;
+  const str = String(val).trim().replace(/^['’`"]+/, '').trim();
+  return str.length > 0 && /^\d+$/.test(str);
 }
 
 function extractState(body: any = {}, university: any = {}): string | null {
@@ -53,7 +72,9 @@ function extractState(body: any = {}, university: any = {}): string | null {
 
 function parseCsv(text: string): Record<string, string>[] {
   if (!text || !String(text).trim()) return [];
-  const src = String(text).replace(/\r\n?/g, '\n');
+  const cleanText = String(text).replace(/^\uFEFF/, '').trim();
+  if (!cleanText) return [];
+  const src = cleanText.replace(/\r\n?/g, '\n');
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -102,7 +123,14 @@ function parseCsv(text: string): Record<string, string>[] {
   }
   if (!rows.length) return [];
 
-  const headerRow = rows[0].map((h) => String(h).trim().toLowerCase());
+  const headerRow = rows[0].map((h) =>
+    String(h || '')
+      .replace(/^\uFEFF/, '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_')
+  );
+
   return rows
     .slice(1)
     .map((cells) => {
@@ -164,25 +192,38 @@ export class InstitutionsService {
     });
 
     let effectiveSessionId = query.session_id || null;
-    if (!effectiveSessionId && userId) {
+    if (!effectiveSessionId) {
       try {
         const { resolveEffectiveSession } = require('../../jupeb/services/session-context.service');
-        const session = await resolveEffectiveSession(userId, null);
+        const session = await resolveEffectiveSession(userId || null, null);
         effectiveSessionId = session?.id || null;
       } catch {
         // Fallback
       }
     }
 
-    const enrolledMap = await this.universityRepo.enrolledCountsForUniversities(
-      rows.map((r) => r.id),
-      effectiveSessionId,
-    );
+    const [enrolledMap, locksMap] = await Promise.all([
+      this.universityRepo.enrolledCountsForUniversities(
+        rows.map((r) => r.id),
+        effectiveSessionId,
+      ),
+      this.universityRepo.locksForUniversities(
+        rows.map((r) => r.id),
+        effectiveSessionId,
+      ),
+    ]);
 
-    const enriched = rows.map((row) => ({
-      ...row,
-      enrolled_count: enrolledMap.get(row.id) || 0,
-    }));
+    const enriched = rows.map((row) => {
+      const lock = locksMap.get(row.id);
+      return {
+        ...row,
+        enrolled_count: enrolledMap.get(row.id) || 0,
+        locked: Boolean(lock?.locked),
+        is_locked: Boolean(lock?.locked),
+        lock_reason: lock?.locked ? lock.reason : null,
+        locked_at: lock?.locked ? lock.locked_at : null,
+      };
+    });
 
     return { rows: enriched, page: safePage, limit: safeLimit, total };
   }
@@ -199,6 +240,12 @@ export class InstitutionsService {
       throw new UnprocessableEntityException('code, name, and jupeb_prefix are required');
     }
 
+    const cleanedCode = cleanUniversityCode(dto.code);
+    const codeValidation = validateUniversityCode(cleanedCode);
+    if (!codeValidation.ok) {
+      throw new UnprocessableEntityException(codeValidation.error);
+    }
+
     const cleanedPrefix = cleanJupebPrefix(dto.jupeb_prefix);
     const prefixValidation = validateJupebPrefix(cleanedPrefix);
     if (!prefixValidation.ok) {
@@ -206,11 +253,11 @@ export class InstitutionsService {
     }
 
     // Check unique constraints
-    const existingCode = await this.universityRepo.findByCode(dto.code);
+    const existingCode = await this.universityRepo.findByCode(cleanedCode);
     if (existingCode) {
       throw new ConflictException({
         message: 'University with this code already exists',
-        details: { field: 'code', value: dto.code },
+        details: { field: 'code', value: cleanedCode },
       });
     }
 
@@ -225,9 +272,9 @@ export class InstitutionsService {
     let university: UniversityEntity;
     try {
       university = await this.universityRepo.create({
-        code: dto.code.trim(),
+        code: cleanedCode,
         name: dto.name.trim(),
-        shortName: dto.short_name ? dto.short_name.trim() : null,
+        shortName: dto.short_name ? dto.short_name.trim() : cleanedPrefix,
         jupebPrefix: cleanedPrefix,
         universityType: dto.university_type || null,
         email: dto.email ? dto.email.trim().toLowerCase() : null,
@@ -271,6 +318,10 @@ export class InstitutionsService {
 
       return {
         ...university,
+        jupeb_prefix: university.jupebPrefix,
+        short_name: university.shortName,
+        university_type: university.universityType,
+        expected_candidate_count: university.expectedCandidateCount,
         institution_admin: admin.institution_admin,
       };
     } catch (err) {
@@ -288,7 +339,12 @@ export class InstitutionsService {
     if (dto.name !== undefined) fields.name = dto.name;
     if (dto.short_name !== undefined) fields.shortName = dto.short_name;
     if (dto.metadata !== undefined) fields.metadata = dto.metadata;
-    if (dto.code !== undefined) fields.code = dto.code;
+    if (dto.code !== undefined) {
+      const cleanedCode = cleanUniversityCode(dto.code);
+      const codeVal = validateUniversityCode(cleanedCode);
+      if (!codeVal.ok) throw new UnprocessableEntityException(codeVal.error);
+      fields.code = cleanedCode;
+    }
     if (dto.jupeb_prefix !== undefined) {
       const cleaned = cleanJupebPrefix(dto.jupeb_prefix);
       const val = validateJupebPrefix(cleaned);
@@ -363,33 +419,288 @@ export class InstitutionsService {
     let succeeded = 0;
     let failed = 0;
 
+    const seenCodes = new Map<string, number>();
+    const seenPrefixes = new Map<string, number>();
+    const seenEmails = new Map<string, number>();
+
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
+      const rowNumber = i + 1;
+
+      // Extract all fields using aliases
+      const rawName = (row.name || row.institution_name || row.university_name || row.institution || row.title || '').trim();
+      const rawCode = (row.code || row.center_code || row.institution_code || row.university_code || row.inst_code || '').trim();
+      const rawPrefix = (row.jupeb_prefix || row.prefix || row.jupeb_code || row.center_prefix || '').trim();
+      const rawShortName = (row.short_name || row.shortname || row.acronym || row.abbr || row.abbreviation || '').trim();
+      const rawEmail = (row.email || row.admin_email || row.contact_email || row.institution_email || '').trim();
+      const rawType = (row.university_type || row.type || row.institution_type || row.category || '').trim();
+      const rawExpected = (row.expected_candidate_count || row.quota || row.capacity || row.candidate_count || row.expected_candidates || '').trim();
+      const rawPhone = (row.phone || row.phone_number || row.telephone || row.contact_phone || '').trim();
+      const rawAddress = (row.address || row.location || '').trim();
+      const rawState = (row.state || '').trim();
+      const rawDescription = (row.description || '').trim();
+      const rawAdminFirstName = (row.admin_first_name || row.first_name || row.admin_firstname || '').trim();
+      const rawAdminLastName = (row.admin_last_name || row.last_name || row.admin_lastname || '').trim();
+
+      // Smart resolution for code, jupeb_prefix, and short_name:
+      // Inverted detection: If rawCode has letters (non-digits) and rawPrefix has digits, swap them!
+      let codeCandidate = rawCode;
+      let prefixCandidate = rawPrefix;
+      let shortNameCandidate = rawShortName;
+
+      if (rawCode && rawPrefix && !isPureDigits(rawCode) && isPureDigits(rawPrefix)) {
+        codeCandidate = rawPrefix;
+        prefixCandidate = rawCode;
+        if (!shortNameCandidate) {
+          shortNameCandidate = rawCode;
+        }
+      } else {
+        if (!prefixCandidate && shortNameCandidate) {
+          prefixCandidate = shortNameCandidate;
+        }
+      }
+
+      // If prefix is still empty but we have a name, derive an acronym fallback
+      if (!prefixCandidate && rawName) {
+        const words = rawName.split(/\s+/).filter((w) => w.length > 0);
+        if (words.length >= 2) {
+          prefixCandidate = words
+            .filter((w) => !['of', 'and', 'the', 'for', 'in', '&'].includes(w.toLowerCase()))
+            .map((w) => w[0].toUpperCase())
+            .join('')
+            .slice(0, 10);
+        }
+        if (!prefixCandidate || prefixCandidate.length < 2) {
+          prefixCandidate = rawName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+        }
+      }
+      if (!shortNameCandidate) {
+        shortNameCandidate = prefixCandidate;
+      }
+
+      // --- Per-Row Validation Checks ---
+      // 1. Name validation
+      if (!rawName) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: 'Institution name is required',
+        });
+        failed += 1;
+        continue;
+      }
+      if (rawName.length < 2) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: 'Institution name must be at least 2 characters',
+        });
+        failed += 1;
+        continue;
+      }
+
+      // 2. Code validation (must be 3 digits, e.g. 001)
+      if (!codeCandidate) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: 'Institution code is required (e.g. 001)',
+        });
+        failed += 1;
+        continue;
+      }
+      const cleanedCode = cleanUniversityCode(codeCandidate);
+      const codeValidation = validateUniversityCode(cleanedCode);
+      if (!codeValidation.ok) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: codeValidation.error || 'Institution code must be exactly 3 numeric digits (e.g. 001)',
+        });
+        failed += 1;
+        continue;
+      }
+
+      // 3. JUPEB prefix validation (2-20 characters)
+      if (!prefixCandidate) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: 'JUPEB prefix is required (2-20 characters, e.g. UNILAG)',
+        });
+        failed += 1;
+        continue;
+      }
+      const cleanedPrefix = cleanJupebPrefix(prefixCandidate);
+      const prefixValidation = validateJupebPrefix(cleanedPrefix);
+      if (!prefixValidation.ok) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: prefixValidation.error || 'JUPEB prefix must be between 2 and 20 characters',
+        });
+        failed += 1;
+        continue;
+      }
+
+      // 4. Admin email validation
+      if (!rawEmail) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: 'Admin email is required',
+        });
+        failed += 1;
+        continue;
+      }
+      const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+      const cleanedEmail = rawEmail.toLowerCase();
+      if (!EMAIL_RE.test(cleanedEmail)) {
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'validation_error',
+          error_message: `Invalid email address format: "${rawEmail}"`,
+        });
+        failed += 1;
+        continue;
+      }
+
+      // 5. University type validation
+      let parsedType: any = undefined;
+      if (rawType) {
+        const normType = rawType.toLowerCase();
+        if (!['federal', 'state', 'private'].includes(normType)) {
+          outcomes.push({
+            row: rowNumber,
+            ok: false,
+            error_code: 'validation_error',
+            error_message: `Invalid university_type "${rawType}". Must be federal, state, or private`,
+          });
+          failed += 1;
+          continue;
+        }
+        parsedType = normType;
+      }
+
+      // 6. Expected candidate count validation
+      let parsedExpectedCount: number | undefined = undefined;
+      if (rawExpected) {
+        const num = Number(rawExpected);
+        if (isNaN(num) || num < 0 || !Number.isInteger(num)) {
+          outcomes.push({
+            row: rowNumber,
+            ok: false,
+            error_code: 'validation_error',
+            error_message: `expected_candidate_count must be a non-negative integer. Received: "${rawExpected}"`,
+          });
+          failed += 1;
+          continue;
+        }
+        parsedExpectedCount = num;
+      }
+
+      // 7. In-batch duplicates validation
+      if (seenCodes.has(cleanedCode)) {
+        const firstRow = seenCodes.get(cleanedCode);
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'duplicate',
+          error_message: `Duplicate code "${cleanedCode}" in CSV (first seen at row ${firstRow})`,
+        });
+        failed += 1;
+        continue;
+      }
+
+      if (seenPrefixes.has(cleanedPrefix)) {
+        const firstRow = seenPrefixes.get(cleanedPrefix);
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'duplicate',
+          error_message: `Duplicate jupeb_prefix "${cleanedPrefix}" in CSV (first seen at row ${firstRow})`,
+        });
+        failed += 1;
+        continue;
+      }
+
+      if (seenEmails.has(cleanedEmail)) {
+        const firstRow = seenEmails.get(cleanedEmail);
+        outcomes.push({
+          row: rowNumber,
+          ok: false,
+          error_code: 'duplicate',
+          error_message: `Duplicate admin email "${cleanedEmail}" in CSV (first seen at row ${firstRow})`,
+        });
+        failed += 1;
+        continue;
+      }
+
+      seenCodes.set(cleanedCode, rowNumber);
+      seenPrefixes.set(cleanedPrefix, rowNumber);
+      seenEmails.set(cleanedEmail, rowNumber);
+
+      // 8. Attempt creation in DB & provision admin
       try {
         const created = await this.create(
           {
-            code: row.code,
-            name: row.name,
-            short_name: row.short_name || undefined,
-            jupeb_prefix: cleanJupebPrefix(row.jupeb_prefix || row.prefix),
-            university_type: (row.university_type as any) || undefined,
-            email: row.email,
-            address: row.address || undefined,
-            phone: row.phone || undefined,
-            expected_candidate_count: row.expected_candidate_count ? Number(row.expected_candidate_count) : undefined,
-            description: row.description || undefined,
-            metadata: row.state ? { state: row.state } : {},
+            code: cleanedCode,
+            name: rawName,
+            short_name: shortNameCandidate ? shortNameCandidate.trim() : cleanedPrefix,
+            jupeb_prefix: cleanedPrefix,
+            university_type: parsedType,
+            email: cleanedEmail,
+            admin_first_name: rawAdminFirstName || undefined,
+            admin_last_name: rawAdminLastName || undefined,
+            address: rawAddress || undefined,
+            phone: rawPhone || undefined,
+            expected_candidate_count: parsedExpectedCount,
+            description: rawDescription || undefined,
+            metadata: rawState ? { state: rawState } : {},
           },
           createdBy,
         );
-        outcomes.push({ row: i + 1, ok: true, data: created });
+        outcomes.push({ row: rowNumber, ok: true, data: created });
         succeeded += 1;
       } catch (err: any) {
+        let errorMessage = 'Failed to create institution';
+        let errorCode = 'error';
+
+        if (err instanceof ConflictException || err.status === 409 || err.code === '23505') {
+          errorCode = 'duplicate';
+        } else if (err instanceof UnprocessableEntityException || err.status === 422) {
+          errorCode = 'validation_error';
+        }
+
+        if (typeof err?.response?.message === 'string') {
+          errorMessage = err.response.message;
+        } else if (Array.isArray(err?.response?.message)) {
+          errorMessage = err.response.message.join('; ');
+        } else if (typeof err?.response?.details?.message === 'string') {
+          errorMessage = err.response.details.message;
+        } else if (typeof err?.message === 'string' && err.message !== '[object Object]') {
+          errorMessage = err.message;
+        } else if (err?.detail) {
+          errorMessage = err.detail;
+        }
+
+        if (/duplicate|conflict|already exists/i.test(errorMessage)) {
+          errorCode = 'duplicate';
+        }
+
         outcomes.push({
-          row: i + 1,
+          row: rowNumber,
           ok: false,
-          error_code: err.status ? `HTTP_${err.status}` : 'error',
-          error_message: err.message || String(err),
+          error_code: errorCode,
+          error_message: errorMessage,
         });
         failed += 1;
       }
@@ -416,9 +727,9 @@ export class InstitutionsService {
       const provider = crmsProviders?.get ? crmsProviders.get() : null;
       if (!provider?.syncInstitutions) return;
 
-      const code = university.jupebPrefix || university.code || body.code;
+      const code = university.code || university.jupebPrefix || body.code;
       const name = university.name || body.name;
-      const shortCode = university.shortName || body.short_name || body.shortCode || university.code;
+      const shortCode = university.shortName || university.jupebPrefix || body.short_name || body.shortCode || university.code;
       const rawCategory = body.category || university.universityType;
       const category = rawCategory
         ? rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase()
@@ -439,7 +750,7 @@ export class InstitutionsService {
       const provider = attendanceProviders?.get ? attendanceProviders.get() : null;
       if (!provider?.syncInstitutions) return;
 
-      const institutionCode = university.jupebPrefix || university.code || body.jupeb_prefix || body.code;
+      const institutionCode = university.code || university.jupebPrefix || body.code;
       const institutionName = university.name || body.name;
       const address = (body.address || university.address || extractState(body, university) || 'Nigeria').trim();
 

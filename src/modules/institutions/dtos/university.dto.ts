@@ -24,7 +24,7 @@ export enum UniversityStatusEnum {
 }
 
 export class CreateUniversityDto {
-  @ApiProperty({ example: 'UNILAG', description: 'Unique university code' })
+  @ApiProperty({ example: '001', description: 'Unique 3-digit university code' })
   @IsString()
   @IsNotEmpty()
   code: string;
@@ -39,7 +39,7 @@ export class CreateUniversityDto {
   @IsOptional()
   short_name?: string;
 
-  @ApiProperty({ example: '001', description: '3-digit JUPEB prefix' })
+  @ApiProperty({ example: 'UNILAG', description: 'JUPEB university prefix / acronym' })
   @IsString()
   @IsNotEmpty()
   jupeb_prefix: string;
@@ -97,7 +97,7 @@ export class CreateUniversityDto {
 }
 
 export class PatchUniversityDto {
-  @ApiPropertyOptional({ example: 'UNILAG' })
+  @ApiPropertyOptional({ example: '001', description: 'Unique 3-digit university code' })
   @IsString()
   @IsOptional()
   code?: string;
@@ -112,7 +112,7 @@ export class PatchUniversityDto {
   @IsOptional()
   short_name?: string;
 
-  @ApiPropertyOptional({ example: '001' })
+  @ApiPropertyOptional({ example: 'UNILAG', description: 'JUPEB university prefix / acronym' })
   @IsString()
   @IsOptional()
   jupeb_prefix?: string;
@@ -178,7 +178,7 @@ export class ListUniversitiesQueryDto {
   @IsOptional()
   status?: string;
 
-  @ApiPropertyOptional({ example: 'Lagos', description: 'Search term by code, name, short name' })
+  @ApiPropertyOptional({ example: 'Lagos', description: 'Search term by code, name, short name, or prefix' })
   @IsString()
   @IsOptional()
   q?: string;

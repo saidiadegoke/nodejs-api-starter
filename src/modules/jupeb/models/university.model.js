@@ -338,6 +338,31 @@ class UniversityModel {
     for (const row of result.rows) map.set(row.university_id, row.c);
     return map;
   }
+
+  /**
+   * Session university registration locks.
+   * @returns {Promise<Map<string, { locked: boolean, reason: string | null, locked_at: any, locked_by: string | null }>>}
+   */
+  async locksForUniversities(universityIds, sessionId) {
+    const map = new Map();
+    if (!universityIds || !universityIds.length || !sessionId) return map;
+    const result = await pool.query(
+      `SELECT university_id, locked, reason, locked_at, locked_by
+       FROM jupeb_session_university_locks
+       WHERE university_id = ANY($1::uuid[])
+         AND session_id = $2`,
+      [universityIds, sessionId]
+    );
+    for (const row of result.rows) {
+      map.set(row.university_id, {
+        locked: Boolean(row.locked),
+        reason: row.reason || null,
+        locked_at: row.locked_at || null,
+        locked_by: row.locked_by || null,
+      });
+    }
+    return map;
+  }
 }
 
 module.exports = new UniversityModel();

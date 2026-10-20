@@ -52,6 +52,11 @@ export class UserQueryDto {
   @ApiPropertyOptional({ example: 'super_admin', description: 'Comma-separated roles to exclude' })
   @IsOptional()
   exclude_roles?: string;
+
+  @ApiPropertyOptional({ example: 'active', description: 'User status filter (e.g. active, inactive, all)' })
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 export class UpdateUserDto {

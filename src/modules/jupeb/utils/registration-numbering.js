@@ -1,8 +1,8 @@
 /**
- * Provisional candidate code: 3-digit university JUPEB prefix + 4+ digit serial (no year).
+ * Provisional candidate code: 3-digit university code + 4+ digit serial (no year).
  */
-function formatProvisionalCandidateCode(jupebPrefix, provisionalSerial) {
-  const pref = String(jupebPrefix ?? '')
+function formatProvisionalCandidateCode(universityCodeOrPrefix, provisionalSerial) {
+  const pref = String(universityCodeOrPrefix ?? '')
     .replace(/\D/g, '')
     .slice(0, 3)
     .padStart(3, '0');
@@ -11,15 +11,15 @@ function formatProvisionalCandidateCode(jupebPrefix, provisionalSerial) {
 }
 
 /**
- * Final candidate number: 2-digit session year short + 3-digit university JUPEB prefix + 4+ digit serial.
+ * Final candidate number: 2-digit session year short + 3-digit university code + 4+ digit serial.
  * Must satisfy DB check `^[0-9]{2}[0-9]{3}[0-9]{4,}$`.
  */
-function formatCandidateNumber(yearShort, jupebPrefix, provisionalSerial) {
+function formatCandidateNumber(yearShort, universityCodeOrPrefix, provisionalSerial) {
   const ys = String(yearShort ?? '')
     .replace(/\D/g, '')
     .slice(-2)
     .padStart(2, '0');
-  const pref = String(jupebPrefix ?? '')
+  const pref = String(universityCodeOrPrefix ?? '')
     .replace(/\D/g, '')
     .slice(0, 3)
     .padStart(3, '0');
