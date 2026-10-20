@@ -36,6 +36,16 @@ describe('Dashboard analytics — added widgets', () => {
     expect(r.body.data).toHaveProperty('approved');
     expect(r.body.data).toHaveProperty('pending');
     expect(r.body.data).toHaveProperty('with_biometrics');
+    expect(r.body.data).toHaveProperty('total_subjects');
+    expect(r.body.data).toHaveProperty('inactive_subjects');
+    expect(r.body.data).toHaveProperty('total_subject_combinations');
+    expect(typeof r.body.data.total_subject_combinations.value).toBe('number');
+    expect(r.body.data).toHaveProperty('active_subject_combinations');
+    expect(typeof r.body.data.active_subject_combinations.value).toBe('number');
+    expect(r.body.data).toHaveProperty('inactive_subject_combinations');
+    expect(typeof r.body.data.inactive_subject_combinations.value).toBe('number');
+    expect(r.body.data).toHaveProperty('total_active_subject_combinations');
+    expect(r.body.data).toHaveProperty('total_inactive_subject_combinations');
     expect(r.body.data).toHaveProperty('registration_locked');
     expect(typeof r.body.data.registration_locked).toBe('boolean');
     expect(r.body.data.registration_lock).toEqual(

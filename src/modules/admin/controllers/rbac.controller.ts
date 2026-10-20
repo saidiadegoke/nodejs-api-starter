@@ -43,7 +43,7 @@ export class RbacController {
   @Get('roles')
   @ApiOperation({ summary: 'List roles', description: 'Paginated list of roles with optional search and status filter.' })
   async listRoles(@Query() query: ListRbacQueryDto, @Req() req: any) {
-    return this.rbacService.listRoles(query, req?.user);
+    return this.rbacService.listRoles(query, req?.user, req);
   }
 
   @Post('roles')
@@ -64,7 +64,7 @@ export class RbacController {
   @ApiOperation({ summary: 'Get role by ID', description: 'Returns a single role with its attached permission names.' })
   @ApiOkResponse({ type: RoleResponseDto })
   async getRole(@Param('roleId') roleId: string, @Req() req: any) {
-    const role = await this.rbacService.getRole(roleId, req?.user);
+    const role = await this.rbacService.getRole(roleId, req?.user, req);
     return {
       success: true,
       message: 'Role retrieved successfully',
@@ -110,8 +110,8 @@ export class RbacController {
 
   @Get('roles/:roleId/permissions')
   @ApiOperation({ summary: 'List role permissions', description: 'Returns all permissions attached to a role.' })
-  async listRolePermissions(@Param('roleId') roleId: string) {
-    return this.rbacService.listRolePermissions(roleId);
+  async listRolePermissions(@Param('roleId') roleId: string, @Req() req: any) {
+    return this.rbacService.listRolePermissions(roleId, req, req?.user);
   }
 
   @Post('roles/:roleId/permissions/:permissionId')
@@ -125,8 +125,9 @@ export class RbacController {
   async attachPermission(
     @Param('roleId') roleId: string,
     @Param('permissionId') permissionId: string,
+    @Req() req: any,
   ) {
-    const res = await this.rbacService.attachPermission(roleId, permissionId);
+    const res = await this.rbacService.attachPermission(roleId, permissionId, req?.user, req);
     return {
       success: true,
       message: res.message || 'Permission attached to role',
@@ -162,7 +163,7 @@ export class RbacController {
   @Get('permissions')
   @ApiOperation({ summary: 'List permissions', description: 'Paginated list of permissions with search and module filter.' })
   async listPermissions(@Query() query: ListRbacQueryDto, @Req() req: any) {
-    return this.rbacService.listPermissions(query, req?.user);
+    return this.rbacService.listPermissions(query, req?.user, req);
   }
 
   @Post('permissions')

@@ -185,14 +185,20 @@ export class DashboardService {
     const rows = await this.dataSource.query(
       `SELECT
          (SELECT COUNT(*)::int FROM jupeb_subjects WHERE deleted_at IS NULL) AS total_subjects,
+         (SELECT COUNT(*)::int FROM jupeb_subjects WHERE deleted_at IS NULL AND status = 'active') AS active_subjects,
          (SELECT COUNT(*)::int FROM jupeb_subjects WHERE deleted_at IS NULL AND status = 'inactive') AS inactive_subjects,
-         (SELECT COUNT(*)::int FROM jupeb_subject_combinations WHERE deleted_at IS NULL) AS total_subject_combinations`,
+         (SELECT COUNT(*)::int FROM jupeb_subject_combinations WHERE deleted_at IS NULL) AS total_subject_combinations,
+         (SELECT COUNT(*)::int FROM jupeb_subject_combinations WHERE deleted_at IS NULL AND status = 'active') AS active_subject_combinations,
+         (SELECT COUNT(*)::int FROM jupeb_subject_combinations WHERE deleted_at IS NULL AND status = 'inactive') AS inactive_subject_combinations`,
     );
     const r = rows[0] || {};
     return {
       total_subjects: Number(r.total_subjects) || 0,
+      active_subjects: Number(r.active_subjects) || 0,
       inactive_subjects: Number(r.inactive_subjects) || 0,
       total_subject_combinations: Number(r.total_subject_combinations) || 0,
+      active_subject_combinations: Number(r.active_subject_combinations) || 0,
+      inactive_subject_combinations: Number(r.inactive_subject_combinations) || 0,
     };
   }
 
@@ -261,8 +267,13 @@ export class DashboardService {
       with_biometrics: card(current.biometric, previous?.biometric),
       without_biometrics: card(current.without_biometric, previous?.without_biometric),
       total_subjects: { value: subjectCounts.total_subjects, delta_pct: null },
-      total_subject_combinations: { value: subjectCounts.total_subject_combinations, delta_pct: null },
+      active_subjects: { value: subjectCounts.active_subjects, delta_pct: null },
       inactive_subjects: { value: subjectCounts.inactive_subjects, delta_pct: null },
+      total_subject_combinations: { value: subjectCounts.total_subject_combinations, delta_pct: null },
+      active_subject_combinations: { value: subjectCounts.active_subject_combinations, delta_pct: null },
+      inactive_subject_combinations: { value: subjectCounts.inactive_subject_combinations, delta_pct: null },
+      total_active_subject_combinations: { value: subjectCounts.active_subject_combinations, delta_pct: null },
+      total_inactive_subject_combinations: { value: subjectCounts.inactive_subject_combinations, delta_pct: null },
       compared_to: previousSession
         ? {
             session_id: previousSession.id,

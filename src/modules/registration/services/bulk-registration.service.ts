@@ -8,6 +8,7 @@ import { RegistrationStatus } from '../../../shared/enums';
 import { RegistrationEntity } from '../entities/registration.entity';
 import { NinVerificationEntity, NinVerificationStatus } from '../../identity/entities/nin-verification.entity';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
+import { InstitutionRegistrationLockService } from '../../sessions/services/institution-registration-lock.service';
 import { RegistrationStatusHistoryRepository } from '../repositories/registration-status-history.repository';
 import { SyncEvent } from '../../sync/constants/sync-events.enum';
 import { RegistrationEvent } from '../constants/registration-events.enum';
@@ -223,6 +224,7 @@ export class BulkRegistrationService {
     private readonly scopeService: InstitutionUserScopeService,
     private readonly eventEmitter: EventEmitter2,
     private readonly historyRepo: RegistrationStatusHistoryRepository,
+    private readonly registrationLock: InstitutionRegistrationLockService,
   ) {}
 
   async bulkUpload(
@@ -239,11 +241,18 @@ export class BulkRegistrationService {
       throw new UnprocessableEntityException('university_id is required');
     }
 
+    // A locked institution cannot upload candidates for the session.
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: sessionId || null,
+      universityId,
+      actorUserId: userId,
+    });
+
     const universityRows = await this.dataSource.query(
-      `SELECT jupeb_prefix FROM jupeb_universities WHERE id = $1 LIMIT 1`,
+      `SELECT code FROM jupeb_universities WHERE id = $1 LIMIT 1`,
       [universityId],
     );
-    const jupebPrefix = universityRows[0]?.jupeb_prefix || '';
+    const jupebPrefix = universityRows[0]?.code || '';
     const codeExpiresAt = institutionCodeExpiresAt();
 
     if (!fileBuffer || !fileBuffer.length) {

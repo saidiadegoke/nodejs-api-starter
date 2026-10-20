@@ -184,6 +184,7 @@ export class RegistrationRepository {
         'r.university_id AS university_id',
         'r.user_id AS user_id',
         'r.status AS status',
+        'r.status_reason AS status_reason',
         'r.provisional_candidate_code AS provisional_candidate_code',
         'r.jupeb_candidate_number AS jupeb_candidate_number',
         'r.institution_issued_code AS institution_issued_code',

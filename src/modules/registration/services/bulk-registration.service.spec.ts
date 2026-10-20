@@ -16,6 +16,7 @@ import { RegistrationRepository } from '../repositories/registration.repository'
 import { NinVerificationRepository } from '../../identity/repositories/nin-verification.repository';
 import { RegistrationStatusHistoryRepository } from '../repositories/registration-status-history.repository';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
+import { InstitutionRegistrationLockService } from '../../sessions/services/institution-registration-lock.service';
 
 function sheetBuffer(headers: string[], rows: any[][]): Buffer {
   const wb = XLSX.utils.book_new();
@@ -66,6 +67,7 @@ describe('BulkRegistrationService.bulkUpload', () => {
       { effectiveUniversityId: jest.fn(async () => null) } as unknown as InstitutionUserScopeService,
       { emit: jest.fn() } as unknown as EventEmitter2,
       historyRepo as any,
+      { assertRegistrationAllowed: jest.fn() } as unknown as InstitutionRegistrationLockService,
     );
   });
 

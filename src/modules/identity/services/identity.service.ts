@@ -16,6 +16,7 @@ import { NinWriteThroughService } from './nin-write-through.service';
 import { NinVerificationStatus } from '../entities/nin-verification.entity';
 import { BiometricCaptureEntity, BiometricCaptureType } from '../entities/biometric-capture.entity';
 import { RegistrationEvent } from '../../registration/constants/registration-events.enum';
+import { InstitutionRegistrationLockService } from '../../sessions/services/institution-registration-lock.service';
 import { SyncEvent } from '../../sync/constants/sync-events.enum';
 import {
   VerifyNinDto,
@@ -64,6 +65,7 @@ export class IdentityService {
     private readonly eventEmitter: EventEmitter2,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
+    private readonly registrationLock: InstitutionRegistrationLockService,
   ) {
     this.logger = this.loggerFactory.create(IdentityService.name);
   }
@@ -284,6 +286,15 @@ export class IdentityService {
       ? intakePayload.email.trim().toLowerCase()
       : '';
 
+    // A locked institution (or session) must not be able to run new NIN
+    // verifications — the lock is enforced before the provider is called so a
+    // blocked attempt is never billed.
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: dto.session_id || (intakePayload as any)?.session_id || null,
+      universityId: (intakePayload as any)?.university_id || null,
+      actorUserId: userId,
+    });
+
     if (intakeEmail) {
       const existingUsers = await this.dataSource.query(
         `SELECT id
@@ -456,6 +467,12 @@ export class IdentityService {
     const row = await this.ninRepo.findById(verificationId);
     if (!row) throw new NotFoundException('Verification not found');
 
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: (row.intakePayload as any)?.session_id || null,
+      universityId: (row.intakePayload as any)?.university_id || null,
+      actorUserId: userId,
+    });
+
     if (row.status === NinVerificationStatus.VERIFIED) {
       // Idempotent: the record is already resolved, but the institution pressed
       // retry to repair a candidate — re-apply the payload and re-issue the code.
@@ -601,6 +618,15 @@ export class IdentityService {
     }
 
     const mergedToPersist = { ...nested, ...flat };
+
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId:
+        (mergedToPersist as any).session_id || (row.intakePayload as any)?.session_id || null,
+      universityId:
+        (mergedToPersist as any).university_id || (row.intakePayload as any)?.university_id || null,
+      actorUserId: _userId,
+    });
+
     const merged = await this.ninRepo.mergeIntakePayload(verificationId, mergedToPersist);
     return this.sanitizeVerification(merged || row, _userId);
   }

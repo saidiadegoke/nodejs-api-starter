@@ -9,12 +9,15 @@ import { NinWriteThroughService } from './services/nin-write-through.service';
 import { IdentityService } from './services/identity.service';
 import { IdentityController } from './controllers/identity.controller';
 
+import { SessionsModule } from '../sessions';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       NinVerificationEntity,
       BiometricCaptureEntity,
     ]),
+    SessionsModule,
   ],
   controllers: [IdentityController],
   providers: [

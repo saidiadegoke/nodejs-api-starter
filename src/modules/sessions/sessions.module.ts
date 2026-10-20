@@ -16,6 +16,7 @@ import {
   SessionRegistrationRepository,
 } from './repositories';
 import { SessionContextService } from './services/session-context.service';
+import { InstitutionRegistrationLockService } from './services/institution-registration-lock.service';
 import { SessionsService } from './services/sessions.service';
 import { SessionsController } from './controllers/sessions.controller';
 
@@ -42,6 +43,7 @@ import { SyncModule } from '../sync';
     SessionRegistrationRepository,
     SessionContextService,
     SessionsService,
+    InstitutionRegistrationLockService,
   ],
   exports: [
     SessionRepository,
@@ -50,6 +52,7 @@ import { SyncModule } from '../sync';
     SessionRegistrationRepository,
     SessionContextService,
     SessionsService,
+    InstitutionRegistrationLockService,
   ],
 })
 export class SessionsModule {}

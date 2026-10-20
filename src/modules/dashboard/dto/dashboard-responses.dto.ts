@@ -61,11 +61,26 @@ export class DashboardStatCardsResponseDto {
   @ApiProperty({ type: MetricValueDto })
   total_subjects: MetricValueDto;
 
+  @ApiPropertyOptional({ type: MetricValueDto })
+  active_subjects?: MetricValueDto;
+
+  @ApiProperty({ type: MetricValueDto })
+  inactive_subjects: MetricValueDto;
+
   @ApiProperty({ type: MetricValueDto })
   total_subject_combinations: MetricValueDto;
 
   @ApiProperty({ type: MetricValueDto })
-  inactive_subjects: MetricValueDto;
+  active_subject_combinations: MetricValueDto;
+
+  @ApiProperty({ type: MetricValueDto })
+  inactive_subject_combinations: MetricValueDto;
+
+  @ApiPropertyOptional({ type: MetricValueDto })
+  total_active_subject_combinations?: MetricValueDto;
+
+  @ApiPropertyOptional({ type: MetricValueDto })
+  total_inactive_subject_combinations?: MetricValueDto;
 
   @ApiPropertyOptional({ type: SessionComparisonLabelDto, nullable: true })
   compared_to?: SessionComparisonLabelDto | null;

@@ -40,6 +40,7 @@ export class AdminRepository {
     query: ListRbacQueryDto,
     universityId?: string | null,
     isInstitutionUser?: boolean,
+    allowedSystemRoles?: string[],
   ) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(10000, Math.max(1, Number(query.limit) || 20));
@@ -48,14 +49,19 @@ export class AdminRepository {
     const qb = this.roleRepo.createQueryBuilder('r');
 
     if (isInstitutionUser) {
+      const systemRoles =
+        allowedSystemRoles && allowedSystemRoles.length > 0
+          ? allowedSystemRoles
+          : ['institution_admin'];
+
       if (universityId) {
         qb.andWhere(
-          '(r.ownerJupebUniversityId = :universityId OR (r.isSystem = true AND r.name = :instAdminRole))',
-          { universityId, instAdminRole: 'institution_admin' },
+          '(r.ownerJupebUniversityId = :universityId OR (r.isSystem = true AND r.name IN (:...systemRoles)))',
+          { universityId, systemRoles },
         );
       } else {
-        qb.andWhere('(r.isSystem = true AND r.name = :instAdminRole)', {
-          instAdminRole: 'institution_admin',
+        qb.andWhere('(r.isSystem = true AND r.name IN (:...systemRoles))', {
+          systemRoles,
         });
       }
     }
@@ -156,6 +162,7 @@ export class AdminRepository {
     query: ListRbacQueryDto,
     universityId?: string | null,
     isInstitutionUser?: boolean,
+    allowedSystemRoles?: string[],
   ) {
     const rolesResult = await this.listRoles(
       {
@@ -167,6 +174,7 @@ export class AdminRepository {
       },
       universityId,
       isInstitutionUser,
+      allowedSystemRoles,
     );
 
     const groups = [];
