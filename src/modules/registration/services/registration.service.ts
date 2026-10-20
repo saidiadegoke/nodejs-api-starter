@@ -20,6 +20,7 @@ import { InstitutionUserScopeService } from './institution-user-scope.service';
 import { RegistrationEntity, RegistrationStatus } from '../entities/registration.entity';
 import { getActiveStudentStatusCondition } from '../../../shared/enums';
 import { SessionStatus } from '../../sessions/entities/academic-session.entity';
+import { InstitutionRegistrationLockService } from '../../sessions/services/institution-registration-lock.service';
 import {
   CreateRegistrationDto,
   PatchRegistrationDto,
@@ -230,6 +231,7 @@ export class RegistrationService {
     private readonly eventEmitter: EventEmitter2,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
+    private readonly registrationLock: InstitutionRegistrationLockService,
   ) {
     this.logger = this.loggerFactory.create(RegistrationService.name);
   }
@@ -967,6 +969,14 @@ export class RegistrationService {
     }
     dto.university_id = scopedUniversityId;
 
+    // Institutions locked for this session must not be able to register
+    // candidates — enforced before any row is written.
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: dto.session_id || null,
+      universityId: scopedUniversityId,
+      actorUserId: userId,
+    });
+
     if (dto.nin_verification_id) {
       const ninRows = await this.dataSource.query(
         `SELECT id, status, nin_hash FROM jupeb_nin_verifications WHERE id = $1`,
@@ -998,10 +1008,10 @@ export class RegistrationService {
     const nextSerial = serialRows[0].next_serial;
 
     const prefixRows = await this.dataSource.query(
-      `SELECT jupeb_prefix FROM jupeb_universities WHERE id = $1 LIMIT 1`,
+      `SELECT code FROM jupeb_universities WHERE id = $1 LIMIT 1`,
       [dto.university_id],
     );
-    const jupebPrefix = prefixRows[0]?.jupeb_prefix || '';
+    const jupebPrefix = prefixRows[0]?.code || '';
 
     // Onboarding code: institution-supplied or auto-allocated (legacy parity).
     const institutionIssuedCode =
@@ -1097,6 +1107,12 @@ export class RegistrationService {
 
     await this.assertUniversityAccess(userId, existing.universityId || (existing as any).university_id);
 
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: existing.sessionId || (existing as any).session_id || null,
+      universityId: existing.universityId || (existing as any).university_id || null,
+      actorUserId: userId,
+    });
+
     const subjectCombId = dto.subject_combination_id || dto.subjectCombinationId;
     const instCode = dto.institution_issued_code || dto.institutionIssuedCode;
     const reason = dto.status_reason || dto.statusReason;
@@ -1145,6 +1161,12 @@ export class RegistrationService {
     if (!reg) throw new NotFoundException('Registration not found');
 
     await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: reg.sessionId || (reg as any).session_id || null,
+      universityId: reg.universityId || (reg as any).university_id || null,
+      actorUserId: userId,
+    });
 
     const info = dto.info && typeof dto.info === 'object' ? dto.info : {};
     const subjectCombId =
@@ -1433,6 +1455,12 @@ export class RegistrationService {
     if (!reg) throw new NotFoundException('Registration not found');
 
     await this.assertUniversityAccess(userId, reg.universityId || (reg as any).university_id);
+
+    await this.registrationLock.assertRegistrationAllowed({
+      sessionId: reg.sessionId || (reg as any).session_id || null,
+      universityId: reg.universityId || (reg as any).university_id || null,
+      actorUserId: userId,
+    });
 
     if (reg.status !== RegistrationStatus.CODE_ISSUED) {
       throw new UnprocessableEntityException(

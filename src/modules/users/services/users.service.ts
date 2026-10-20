@@ -71,14 +71,24 @@ export class UsersService {
       : null;
 
     const includeAll = options.include_all === true || options.include_all === 'true';
+    const includeStudents =
+      options.include_students === true || options.include_students === 'true';
+    const hasExplicitRole = Boolean(options.role && options.role.trim());
+
     let excludeRoleNames: string[] = [];
-    if (!includeAll && !options.role) {
+    if (!includeAll && !hasExplicitRole) {
       if (options.exclude_roles) {
         excludeRoleNames = options.exclude_roles.split(',').map((s) => s.trim()).filter(Boolean);
+      } else if (includeStudents) {
+        excludeRoleNames = ['institution_admin', 'program_director'];
       } else {
-        excludeRoleNames = ['student', 'institution_admin', 'program_director'];
+        excludeRoleNames = ['student', 'candidate', 'institution_admin', 'program_director'];
       }
     }
+
+    // Candidates (self-registered students) are not system users: drop them
+    // unless the caller explicitly asks for every account.
+    const excludeCandidateAccounts = !includeAll && !includeStudents && !hasExplicitRole;
 
     const filterOptions: UserListOptions = {
       q: search?.trim() || undefined,
@@ -86,6 +96,7 @@ export class UsersService {
       status: options.status?.trim() || undefined,
       universityId: universityId || undefined,
       excludeRoleNames: excludeRoleNames.length ? excludeRoleNames : undefined,
+      excludeCandidateAccounts,
     };
 
     const users = await this.userRepo.findAll(limitNum, offset, filterOptions.q, filterOptions);

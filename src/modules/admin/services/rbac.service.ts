@@ -105,6 +105,32 @@ export const MODULE_METADATA: Record<
   },
 };
 
+export const NON_REGISTRAR_ROLES = new Set([
+  'super_admin',
+  'admin',
+  'jupeb_admin',
+  'financial_admin',
+  'agent',
+  'student',
+  'user',
+  'operator',
+]);
+
+export const REGISTRAR_ALLOWED_SYSTEM_ROLES = [
+  'institution_admin',
+  'program_director',
+  'registrar',
+];
+
+export const REGISTRAR_EXCLUDED_MODULES = new Set([
+  'ocr',
+  'posts',
+  'general',
+  'support',
+  'institutions',
+  'system',
+]);
+
 export const INSTITUTION_EXCLUDED_PERMISSIONS = new Set([
   'ocr.create',
   'ocr.manual_entry',
@@ -119,6 +145,8 @@ export const INSTITUTION_EXCLUDED_PERMISSIONS = new Set([
   'system.config',
   'system.logs',
   'posts.manage',
+  'support.manage',
+  'support.view',
   'profiles.jupeb_university_id',
   'jupeb.catalog.manage',
   'jupeb.finance.manage',
@@ -133,12 +161,26 @@ export const INSTITUTION_EXCLUDED_PERMISSIONS = new Set([
   'subject.update',
 ]);
 
-export const INSTITUTION_EXCLUDED_PREFIXES = ['ocr.', 'institutions.', 'system.', 'posts.'];
+export const INSTITUTION_EXCLUDED_PREFIXES = [
+  'ocr.',
+  'institutions.',
+  'system.',
+  'posts.',
+  'support.',
+  'profiles.',
+];
 
-export function isPermissionAllowedForInstitution(permName: string): boolean {
+export function isPermissionAllowedForInstitution(
+  perm: string | { name: string; resource?: string | null },
+): boolean {
+  const permName = typeof perm === 'string' ? perm : perm?.name;
   if (!permName) return false;
   if (INSTITUTION_EXCLUDED_PERMISSIONS.has(permName)) return false;
   if (INSTITUTION_EXCLUDED_PREFIXES.some((prefix) => permName.startsWith(prefix))) {
+    return false;
+  }
+  const modKey = getPermissionModule(typeof perm === 'string' ? { name: perm } : perm);
+  if (REGISTRAR_EXCLUDED_MODULES.has(modKey)) {
     return false;
   }
   return true;
@@ -263,16 +305,20 @@ export class RbacService {
 
   async getEffectiveCallerContext(user?: any): Promise<{
     userId: string | null;
+    roles: string[];
     isSuperAdmin: boolean;
     isAdmin: boolean;
+    isRegistrar: boolean;
     isInstitutionUser: boolean;
     universityId: string | null;
   }> {
     if (!user) {
       return {
         userId: null,
+        roles: [],
         isSuperAdmin: false,
         isAdmin: false,
+        isRegistrar: false,
         isInstitutionUser: false,
         universityId: null,
       };
@@ -281,8 +327,10 @@ export class RbacService {
     if (!userId) {
       return {
         userId: null,
+        roles: [],
         isSuperAdmin: false,
         isAdmin: false,
+        isRegistrar: false,
         isInstitutionUser: false,
         universityId: null,
       };
@@ -291,21 +339,54 @@ export class RbacService {
     const roles = await this.scopeService.getUserRoles(userId);
     const isSuperAdmin = roles.includes('super_admin');
     const isAdmin = roles.includes('admin') || isSuperAdmin;
+    const isRegistrar = roles.includes('registrar');
+    const isInstitutionAdmin = roles.includes('institution_admin');
+    const isProgramDirector = roles.includes('program_director');
     const universityId = await this.scopeService.getProfileJupebUniversityId(userId);
 
     const isInstitutionUser =
       !isSuperAdmin &&
-      (roles.includes('institution_admin') ||
-        roles.includes('program_director') ||
+      (isInstitutionAdmin ||
+        isProgramDirector ||
+        isRegistrar ||
         (Boolean(universityId) && !roles.includes('admin')));
 
     return {
       userId,
+      roles,
       isSuperAdmin,
       isAdmin,
+      isRegistrar,
       isInstitutionUser,
       universityId,
     };
+  }
+
+  isRegistrarRequest(query: ListRbacQueryDto, req?: any, ctx?: any): boolean {
+    const portal = (query?.portal || query?.scope || '').toLowerCase().trim();
+    if (portal === 'registrar' || portal === 'institution') return true;
+    if (query?.is_institution === true || (query?.is_institution as any) === 'true') return true;
+
+    const targetRole = (query?.role || query?.role_name || '').toLowerCase().trim();
+    if (
+      targetRole === 'registrar' ||
+      targetRole === 'institution_admin' ||
+      targetRole === 'program_director'
+    ) {
+      return true;
+    }
+
+    if (ctx?.isRegistrar) return true;
+
+    if (req?.headers) {
+      const xPortal = (req.headers['x-portal'] || '').toString().toLowerCase();
+      if (xPortal === 'registrar' || xPortal === 'institution') return true;
+      const origin = (req.headers['origin'] || '').toString().toLowerCase();
+      const referer = (req.headers['referer'] || '').toString().toLowerCase();
+      if (origin.includes('registrar') || referer.includes('registrar')) return true;
+    }
+
+    return false;
   }
 
   private formatRole(role: any, perms: any[]): RoleResponseDto {
@@ -334,28 +415,57 @@ export class RbacService {
     };
   }
 
-  async listRoles(query: ListRbacQueryDto, user?: any) {
+  async listRoles(query: ListRbacQueryDto, user?: any, req?: any) {
     const ctx = await this.getEffectiveCallerContext(user);
+    const isRegistrar = this.isRegistrarRequest(query, req, ctx);
+    const targetRole = (query.role || query.role_name || '').toLowerCase().trim();
+
+    const isInstitutionScope =
+      ctx.isInstitutionUser ||
+      ctx.isRegistrar ||
+      Boolean(ctx.universityId) ||
+      isRegistrar;
+
+    let allowedSystemRoles: string[] | undefined = undefined;
+    if (isInstitutionScope) {
+      if (ctx.isRegistrar || targetRole === 'registrar') {
+        allowedSystemRoles = ['registrar'];
+      } else if (ctx.roles?.includes('institution_admin') || targetRole === 'institution_admin') {
+        allowedSystemRoles = ['institution_admin'];
+      } else if (ctx.roles?.includes('program_director') || targetRole === 'program_director') {
+        allowedSystemRoles = ['program_director'];
+      } else {
+        allowedSystemRoles = REGISTRAR_ALLOWED_SYSTEM_ROLES;
+      }
+    }
+
     const res = await this.adminRepo.listRoles(
       query,
       ctx.universityId,
-      ctx.isInstitutionUser,
+      isInstitutionScope,
+      allowedSystemRoles,
     );
     const rolesWithPerms: RoleResponseDto[] = [];
 
     for (const r of res.roles) {
+      if (isInstitutionScope && NON_REGISTRAR_ROLES.has((r.name || '').toLowerCase().trim())) {
+        continue;
+      }
       const perms = await this.adminRepo.getRolePermissions(r.id);
-      rolesWithPerms.push(this.formatRole(r, perms));
+      const filteredPerms = isInstitutionScope
+        ? perms.filter((p) => isPermissionAllowedForInstitution(p))
+        : perms;
+      rolesWithPerms.push(this.formatRole(r, filteredPerms));
     }
 
-    const totalPages = Math.ceil(res.total / (res.limit || 20)) || 1;
+    const totalPages = Math.ceil(rolesWithPerms.length / (res.limit || 20)) || 1;
 
     return {
       success: true,
       message: 'Roles retrieved successfully',
       data: rolesWithPerms,
       roles: rolesWithPerms,
-      total: res.total,
+      total: rolesWithPerms.length,
       page: res.page,
       limit: res.limit,
       total_pages: totalPages,
@@ -363,21 +473,28 @@ export class RbacService {
       pagination: {
         page: res.page,
         limit: res.limit,
-        total: res.total,
+        total: rolesWithPerms.length,
         totalPages,
         total_pages: totalPages,
       },
     };
   }
 
-  async getRole(id: string, user?: any): Promise<RoleResponseDto> {
+  async getRole(id: string, user?: any, req?: any): Promise<RoleResponseDto> {
     const role = await this.adminRepo.findRoleById(id);
     if (!role) throw new NotFoundException('Role not found');
 
     const ctx = await this.getEffectiveCallerContext(user);
-    if (ctx.isInstitutionUser) {
+    const isRegistrar = this.isRegistrarRequest({}, req, ctx);
+    const isInstitutionScope =
+      ctx.isInstitutionUser ||
+      ctx.isRegistrar ||
+      Boolean(ctx.universityId) ||
+      isRegistrar;
+
+    if (isInstitutionScope) {
       if (role.isSystem) {
-        if (role.name !== 'institution_admin' && role.name !== 'program_director') {
+        if (!REGISTRAR_ALLOWED_SYSTEM_ROLES.includes(role.name)) {
           throw new ForbiddenException('You do not have access to this role');
         }
       } else {
@@ -391,7 +508,10 @@ export class RbacService {
     }
 
     const perms = await this.adminRepo.getRolePermissions(role.id);
-    return this.formatRole(role, perms);
+    const filteredPerms = isInstitutionScope
+      ? perms.filter((p) => isPermissionAllowedForInstitution(p))
+      : perms;
+    return this.formatRole(role, filteredPerms);
   }
 
   private async resolvePermission(identifier: any) {
@@ -547,8 +667,19 @@ export class RbacService {
     return { success: true };
   }
 
-  async listRolePermissions(roleId: string) {
-    const perms = await this.adminRepo.getRolePermissions(roleId);
+  async listRolePermissions(roleId: string, req?: any, user?: any) {
+    const ctx = await this.getEffectiveCallerContext(user);
+    const isRegistrar = this.isRegistrarRequest({}, req, ctx);
+    const isInstitutionScope =
+      ctx.isInstitutionUser ||
+      ctx.isRegistrar ||
+      Boolean(ctx.universityId) ||
+      isRegistrar;
+
+    let perms = await this.adminRepo.getRolePermissions(roleId);
+    if (isInstitutionScope) {
+      perms = perms.filter((p) => isPermissionAllowedForInstitution(p));
+    }
     return perms.map((p) => ({
       id: p.id,
       name: p.name,
@@ -557,7 +688,20 @@ export class RbacService {
     }));
   }
 
-  async attachPermission(roleId: string, permissionId: string) {
+  async attachPermission(roleId: string, permissionId: string, user?: any, req?: any) {
+    const role = await this.adminRepo.findRoleById(roleId);
+    if (!role) throw new NotFoundException('Role not found');
+    const perm = await this.adminRepo.findPermissionById(permissionId);
+    if (!perm) throw new NotFoundException('Permission not found');
+
+    const ctx = await this.getEffectiveCallerContext(user);
+    const isRegistrar = this.isRegistrarRequest({}, req, ctx);
+    if (ctx.isInstitutionUser || isRegistrar) {
+      if (!isPermissionAllowedForInstitution(perm)) {
+        throw new ForbiddenException('This permission is not available for institution roles');
+      }
+    }
+
     await this.adminRepo.attachPermissionToRole(roleId, permissionId);
     return { success: true, message: 'Permission attached to role' };
   }
@@ -567,32 +711,60 @@ export class RbacService {
     return { success: true, message: 'Permission detached from role' };
   }
 
-  async listPermissions(query: ListRbacQueryDto, user?: any) {
+  async listPermissions(query: ListRbacQueryDto, user?: any, req?: any) {
     const ctx = await this.getEffectiveCallerContext(user);
     const targetRole = (query.role || query.role_name || '').toLowerCase().trim();
+    const isRegistrar = this.isRegistrarRequest(query, req, ctx);
+
     const filterForInstitution =
       ctx.isInstitutionUser ||
+      ctx.isRegistrar ||
+      Boolean(ctx.universityId) ||
+      isRegistrar ||
       targetRole === 'institution_admin' ||
-      targetRole === 'program_director';
+      targetRole === 'program_director' ||
+      targetRole === 'registrar' ||
+      (targetRole !== '' && !NON_REGISTRAR_ROLES.has(targetRole));
 
     if (query.group_by === 'role') {
+      let allowedSystemRoles: string[] | undefined = undefined;
+      if (filterForInstitution) {
+        if (ctx.isRegistrar || targetRole === 'registrar') {
+          allowedSystemRoles = ['registrar'];
+        } else if (ctx.roles?.includes('institution_admin') || targetRole === 'institution_admin') {
+          allowedSystemRoles = ['institution_admin'];
+        } else if (ctx.roles?.includes('program_director') || targetRole === 'program_director') {
+          allowedSystemRoles = ['program_director'];
+        } else {
+          allowedSystemRoles = REGISTRAR_ALLOWED_SYSTEM_ROLES;
+        }
+      }
+
       const groups = await this.adminRepo.listPermissionsGroupedByRole(
         query,
         ctx.universityId,
-        ctx.isInstitutionUser,
+        filterForInstitution,
+        allowedSystemRoles,
       );
+
+      let filteredGroups = groups;
       if (filterForInstitution) {
-        for (const g of groups) {
+        filteredGroups = groups.filter((g: any) => {
+          const roleName = (g.role_name || '').toLowerCase().trim();
+          if (NON_REGISTRAR_ROLES.has(roleName)) return false;
+          return true;
+        });
+        for (const g of filteredGroups) {
           g.permissions = (g.permissions || []).filter((p: any) =>
-            isPermissionAllowedForInstitution(p.name),
+            isPermissionAllowedForInstitution(p),
           );
         }
       }
       return {
         success: true,
         message: 'Permissions grouped by role retrieved successfully',
-        data: groups,
-        roles: groups,
+        data: filteredGroups,
+        roles: filteredGroups,
       };
     }
 
@@ -605,7 +777,7 @@ export class RbacService {
 
     let filtered = res.permissions;
     if (filterForInstitution) {
-      filtered = filtered.filter((p) => isPermissionAllowedForInstitution(p.name));
+      filtered = filtered.filter((p) => isPermissionAllowedForInstitution(p));
     }
 
     const permissions = filtered.map((p) => {

@@ -224,6 +224,26 @@ export class ListRbacQueryDto {
   })
   @IsBoolean()
   isSystem?: boolean;
+
+  @ApiPropertyOptional({ example: 'registrar', description: 'Portal or scope context (e.g. registrar, institution)' })
+  @IsOptional()
+  @IsString()
+  portal?: string;
+
+  @ApiPropertyOptional({ example: 'registrar', description: 'Scope context (e.g. registrar, institution)' })
+  @IsOptional()
+  @IsString()
+  scope?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'Filter specifically for institution/registrar context' })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === true || value === 1 || value === '1') return true;
+    if (value === 'false' || value === false || value === 0 || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  is_institution?: boolean;
 }
 
 export class RolePermissionItemDto {

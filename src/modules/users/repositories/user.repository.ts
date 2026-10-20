@@ -11,7 +11,14 @@ export interface UserListOptions {
   excludeGlobalRoleNames?: string[];
   excludeRoleNames?: string[];
   excludeInstitutionRoles?: boolean;
+  excludeCandidateAccounts?: boolean;
 }
+
+/**
+ * Roles held by candidate/student accounts. An account whose roles are all
+ * candidate roles is a candidate account, not a system user.
+ */
+const CANDIDATE_ROLE_NAMES = ['user', 'student', 'candidate'];
 
 const USER_LIST_COLUMNS = `
     u.id,
@@ -62,6 +69,7 @@ export class UserRepository {
       excludeGlobalRoleNames = [],
       excludeRoleNames = [],
       excludeInstitutionRoles = false,
+      excludeCandidateAccounts = false,
       role = null,
     } = options;
 
@@ -134,6 +142,30 @@ export class UserRepository {
           AND r_inst.owner_jupeb_university_id IS NOT NULL
           AND (ur_inst.expires_at IS NULL OR ur_inst.expires_at > NOW())
       )`);
+    }
+
+    if (excludeCandidateAccounts) {
+      // Drop candidate accounts (self-registered students) from the system-user
+      // list: every role they hold is a candidate role. Accounts that also hold
+      // a staff role (e.g. admin + user) are kept.
+      conditions.push(`NOT (
+        EXISTS (
+          SELECT 1 FROM user_roles ur_c
+          JOIN roles r_c ON r_c.id = ur_c.role_id
+          WHERE ur_c.user_id = u.id
+            AND r_c.name = ANY($${idx}::text[])
+            AND (ur_c.expires_at IS NULL OR ur_c.expires_at > NOW())
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM user_roles ur_s
+          JOIN roles r_s ON r_s.id = ur_s.role_id
+          WHERE ur_s.user_id = u.id
+            AND NOT (r_s.name = ANY($${idx}::text[]))
+            AND (ur_s.expires_at IS NULL OR ur_s.expires_at > NOW())
+        )
+      )`);
+      values.push(CANDIDATE_ROLE_NAMES);
+      idx++;
     }
 
     if (role) {

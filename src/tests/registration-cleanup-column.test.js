@@ -43,6 +43,7 @@ describe('RegistrationService.cleanupStudentByEmail', () => {
       {},
       { createQueryRunner: () => queryRunner },
       { create: () => ({}) },
+      { assertRegistrationAllowed: jest.fn() },
     );
 
     await service.cleanupStudentByEmail('student@example.com');

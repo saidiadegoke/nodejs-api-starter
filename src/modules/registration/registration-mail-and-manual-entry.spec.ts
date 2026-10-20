@@ -301,6 +301,7 @@ describe('Registration Mail Dispatch & Manual Entry Integration Tests', () => {
         { emit: jest.fn() } as any,
         mockDataSource as any,
         mockLoggerFactory as any,
+        { assertRegistrationAllowed: jest.fn() } as any,
       );
 
       // Mock getRegistrationById and restoreSubjectCombinationFromNinIntake
@@ -365,6 +366,7 @@ describe('Registration Mail Dispatch & Manual Entry Integration Tests', () => {
         { emit: jest.fn() } as any,
         mockDataSource as any,
         mockLoggerFactory as any,
+        { assertRegistrationAllowed: jest.fn() } as any,
       );
 
       jest.spyOn(service, 'restoreSubjectCombinationFromNinIntake').mockResolvedValue(undefined);

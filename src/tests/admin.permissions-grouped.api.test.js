@@ -137,6 +137,8 @@ describe('Admin RBAC — grouped & role-filtered permissions', () => {
     expect(moduleKeys).not.toContain('institutions');
     expect(moduleKeys).not.toContain('system');
     expect(moduleKeys).not.toContain('posts');
+    expect(moduleKeys).not.toContain('support');
+    expect(moduleKeys).not.toContain('general');
 
     // Collect all permission names returned in all modules
     const allPermNames = [];
@@ -161,6 +163,9 @@ describe('Admin RBAC — grouped & role-filtered permissions', () => {
       'system.config',
       'system.logs',
       'posts.manage',
+      'support.manage',
+      'support.view',
+      'profiles.jupeb_university_id',
       'jupeb.catalog.manage',
       'jupeb.finance.manage',
     ];
@@ -173,8 +178,6 @@ describe('Admin RBAC — grouped & role-filtered permissions', () => {
       expect.arrayContaining([
         'candidate.create',
         'candidate.view',
-        'support.view',
-        'support.manage',
         'results.view',
         'reports.view',
       ])
@@ -234,16 +237,45 @@ describe('Admin RBAC — grouped & role-filtered permissions', () => {
       .get('/admin/permissions?group_by=role')
       .set('Authorization', `Bearer ${institutionAdminToken}`);
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(Array.isArray(res.body.data)).toBe(true);
+    const roleNames = res.body.data.map((rg) => rg.role_name);
+    // Non-registrar roles must not be present
+    expect(roleNames).not.toContain('super_admin');
+    expect(roleNames).not.toContain('admin');
+    expect(roleNames).not.toContain('student');
+    expect(roleNames).not.toContain('user');
+    expect(roleNames).not.toContain('agent');
+    expect(roleNames).not.toContain('financial_admin');
 
     for (const roleGroup of res.body.data) {
       const pNames = (roleGroup.permissions || []).map((p) => p.name);
       expect(pNames).not.toContain('ocr.create');
       expect(pNames).not.toContain('institutions.create');
       expect(pNames).not.toContain('system.admin');
+      expect(pNames).not.toContain('posts.manage');
+      expect(pNames).not.toContain('support.manage');
+      expect(pNames).not.toContain('support.view');
+      expect(pNames).not.toContain('profiles.jupeb_university_id');
     }
+  });
+
+  it('GET /admin/permissions?role=registrar filters out OCR, posts, support, general, institutions, and system', async () => {
+    if (!dbReady || !adminToken) return;
+
+    const res = await request(app)
+      .get('/admin/permissions?role=registrar')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+
+    const moduleKeys = res.body.data.map((m) => m.module);
+    expect(moduleKeys).not.toContain('ocr');
+    expect(moduleKeys).not.toContain('posts');
+    expect(moduleKeys).not.toContain('support');
+    expect(moduleKeys).not.toContain('general');
+    expect(moduleKeys).not.toContain('institutions');
+    expect(moduleKeys).not.toContain('system');
   });
 
   it('GET /permissions alias endpoint behaves identically', async () => {
@@ -260,5 +292,8 @@ describe('Admin RBAC — grouped & role-filtered permissions', () => {
     const moduleKeys = res.body.data.map((m) => m.module);
     expect(moduleKeys).not.toContain('ocr');
     expect(moduleKeys).not.toContain('institutions');
+    expect(moduleKeys).not.toContain('posts');
+    expect(moduleKeys).not.toContain('support');
+    expect(moduleKeys).not.toContain('general');
   });
 });
