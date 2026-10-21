@@ -96,10 +96,37 @@ export class RegistrationController {
     @UploadedFile() file: any,
     @Body('session_id') sessionId: string,
     @Body('university_id') universityId: string,
+    @Body('provider') provider: string,
     @Req() req: any,
+    @Res({ passthrough: true }) res: any,
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
-    return this.bulkRegistrationService.bulkUpload(file?.buffer, sessionId, universityId, userId);
+    const result = await this.bulkRegistrationService.bulkUpload(
+      file?.buffer,
+      sessionId,
+      universityId,
+      userId,
+      { provider },
+    );
+
+    const succ = result.data?.succeeded_count ?? result.succeeded_count ?? result.successful ?? 0;
+    const fail = result.data?.failed_count ?? result.failed_count ?? (typeof result.failed === 'number' ? result.failed : 0);
+    const skip = result.data?.skipped_count ?? (Array.isArray(result.skipped) ? result.skipped.length : 0);
+
+    if (succ === 0 && (fail > 0 || skip > 0)) {
+      res.status(HttpStatus.UNPROCESSABLE_ENTITY);
+    } else if (succ > 0 && (fail > 0 || skip > 0)) {
+      res.status(HttpStatus.MULTI_STATUS);
+    } else {
+      res.status(HttpStatus.OK);
+    }
+
+    return {
+      success: succ > 0,
+      message: succ > 0 ? 'Bulk upload processed' : 'Bulk upload failed',
+      data: result.data || result,
+      ...result,
+    };
   }
 
   @Post('institution/registrations')

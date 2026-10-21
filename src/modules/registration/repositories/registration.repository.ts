@@ -196,16 +196,25 @@ export class RegistrationRepository {
         'u.name AS university_name',
         'u.short_name AS university_short_name',
         'u.code AS university_code',
-        'COALESCE(p.first_name, nv.response_payload->>\'first_name\', nv.response_payload->>\'firstname\', nv.intake_payload->>\'first_name\') AS first_name',
-        'COALESCE(nv.response_payload->>\'middle_name\', nv.response_payload->>\'middlename\', nv.response_payload->>\'middleName\', nv.intake_payload->>\'middle_name\', nv.intake_payload->>\'middlename\') AS middle_name',
-        'COALESCE(p.last_name, nv.response_payload->>\'last_name\', nv.response_payload->>\'lastname\', nv.response_payload->>\'surname\', nv.intake_payload->>\'last_name\') AS last_name',
+        'COALESCE(p.first_name, CASE WHEN nv.status = \'verified\' THEN COALESCE(nv.response_payload->>\'first_name\', nv.response_payload->>\'firstname\') ELSE NULL END, nv.intake_payload->>\'first_name\', nv.response_payload->>\'first_name\', nv.response_payload->>\'firstname\') AS first_name',
+        'COALESCE(CASE WHEN nv.status = \'verified\' THEN COALESCE(nv.response_payload->>\'middle_name\', nv.response_payload->>\'middlename\', nv.response_payload->>\'middleName\') ELSE NULL END, nv.intake_payload->>\'middle_name\', nv.intake_payload->>\'middlename\', nv.response_payload->>\'middle_name\', nv.response_payload->>\'middlename\', nv.response_payload->>\'middleName\') AS middle_name',
+        'COALESCE(p.last_name, CASE WHEN nv.status = \'verified\' THEN COALESCE(nv.response_payload->>\'last_name\', nv.response_payload->>\'lastname\', nv.response_payload->>\'surname\') ELSE NULL END, nv.intake_payload->>\'last_name\', nv.response_payload->>\'last_name\', nv.response_payload->>\'lastname\', nv.response_payload->>\'surname\') AS last_name',
         `COALESCE(
           p.display_name,
-          NULLIF(TRIM(CONCAT(
-            COALESCE(nv.response_payload->>'first_name', nv.response_payload->>'firstname', nv.intake_payload->>'first_name', ''), ' ',
-            COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName', nv.intake_payload->>'middle_name', ''), ' ',
-            COALESCE(nv.response_payload->>'last_name', nv.response_payload->>'lastname', nv.response_payload->>'surname', nv.intake_payload->>'last_name', '')
-          )), ''),
+          CASE
+            WHEN nv.status = 'verified' AND COALESCE(nv.response_payload->>'first_name', nv.response_payload->>'firstname') IS NOT NULL THEN
+              NULLIF(TRIM(CONCAT(
+                COALESCE(nv.response_payload->>'first_name', nv.response_payload->>'firstname', ''), ' ',
+                COALESCE(nv.response_payload->>'middle_name', nv.response_payload->>'middlename', nv.response_payload->>'middleName', ''), ' ',
+                COALESCE(nv.response_payload->>'last_name', nv.response_payload->>'lastname', nv.response_payload->>'surname', '')
+              )), '')
+            ELSE
+              NULLIF(TRIM(CONCAT(
+                COALESCE(nv.intake_payload->>'first_name', nv.response_payload->>'first_name', nv.response_payload->>'firstname', ''), ' ',
+                COALESCE(nv.intake_payload->>'middle_name', nv.intake_payload->>'middlename', nv.response_payload->>'middle_name', nv.response_payload->>'middlename', ''), ' ',
+                COALESCE(nv.intake_payload->>'last_name', nv.response_payload->>'last_name', nv.response_payload->>'lastname', nv.response_payload->>'surname', '')
+              )), '')
+          END,
           nv.intake_payload->>'name'
         ) AS display_name`,
         `COALESCE(

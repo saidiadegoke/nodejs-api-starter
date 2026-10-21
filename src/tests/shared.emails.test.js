@@ -2,7 +2,11 @@ const fs = require('fs');
 const path = require('path');
 
 describe('email templates standard and rendering', () => {
-  const emailsDir = path.join(__dirname, '../shared/emails');
+  const candidateDirs = [
+    path.join(__dirname, '../shared/emails'),
+    path.join(__dirname, '../modules/mail/mail-templates'),
+  ];
+  const emailsDir = candidateDirs.find((d) => fs.existsSync(d)) || candidateDirs[0];
 
   function renderTemplate(filename, placeholders) {
     const fullPath = path.join(emailsDir, filename);
@@ -169,18 +173,17 @@ describe('email templates standard and rendering', () => {
       expect(html).not.toMatch(/\{\{\w+\}\}/);
     });
 
-    it('renders jupeb-registration-withdrawn.html with dashboardUrl and leaves no unreplaced {{}}', () => {
+    it('renders jupeb-registration-withdrawn.html and leaves no unreplaced {{}}', () => {
       const html = renderTemplate('jupeb-registration-withdrawn.html', {
         appName: 'JUPEB Portal',
         firstName: 'Ibrahim',
         universityName: 'Ahmadu Bello University',
         reasonBlock: '<p>Voluntary withdrawal request</p>',
-        dashboardUrl: 'https://crp-theta.vercel.app/',
         email: 'ibrahim@example.com',
         year: '2026',
       });
       expect(html).toContain('Ibrahim');
-      expect(html).toContain('https://crp-theta.vercel.app/');
+      expect(html).toContain('Voluntary withdrawal request');
       expect(html).not.toMatch(/\{\{\w+\}\}/);
     });
 

@@ -690,7 +690,7 @@ class CatalogService {
       const attendanceProvider = attendanceProviders.get();
       if (!attendanceProvider.syncInstitutions) return;
 
-      const institutionCode = university.code || university.jupeb_prefix || body.code;
+      const institutionCode = university.jupeb_prefix || university.code || body.code;
       const institutionName = university.name || body.name;
       const address = (body.address || university.address || extractState(body, university) || 'Nigeria').trim();
 

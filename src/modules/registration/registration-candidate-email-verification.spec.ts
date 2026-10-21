@@ -16,6 +16,7 @@ import { LoggerFactory } from '../../logger';
 import { RegistrationStatus } from './entities/registration.entity';
 import { RegistrationEvent } from './constants/registration-events.enum';
 import { AuthService } from '../auth';
+import { InstitutionRegistrationLockService } from '@modules/sessions';
 
 describe('Candidate Email Update & Verification Flow', () => {
   let registrationService: RegistrationService;
@@ -75,6 +76,10 @@ describe('Candidate Email Update & Verification Flow', () => {
         { provide: EventEmitter2, useValue: mockEventEmitter },
         { provide: DataSource, useValue: mockDataSource },
         { provide: LoggerFactory, useValue: mockLoggerFactory },
+        {
+          provide: InstitutionRegistrationLockService,
+          useValue: { assertRegistrationAllowed: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 

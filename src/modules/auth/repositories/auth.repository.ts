@@ -24,6 +24,8 @@ export interface UserWithProfile extends Partial<UserEntity> {
   jupeb_university_id?: string | null;
   jupeb_university_code?: string | null;
   jupeb_university_short_name?: string | null;
+  university_name?: string | null;
+  is_institution_admin?: boolean;
 }
 
 @Injectable()

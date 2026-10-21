@@ -13,33 +13,205 @@ import {
 // Action titles live in the shared taxonomy so the write side (AuditInterceptor / @Audit)
 // and this read side cannot drift apart.
 
-function formatDetailsSummary(details: any): string {
+function formatDetailsSummary(details: any, action?: string, row?: any): string {
   if (!details) return '';
-  if (typeof details === 'string') return details;
-  if (details.summary) return String(details.summary);
-  if (details.reason) return `Reason: ${details.reason}`;
-  if (details.academic_year) return `Academic year: ${details.academic_year}`;
+  if (typeof details === 'string') {
+    try {
+      details = JSON.parse(details);
+    } catch {
+      return details.endsWith('.') ? details : `${details}.`;
+    }
+  }
+
+  const act = (action || row?.action || '').toLowerCase();
+
+  // 1. Session registration locking / unlocking
+  if (act.includes('institution_registration_lock') || act.includes('institution_registration_unlock')) {
+    const isLock = details.locked === true || (act.includes('lock') && !act.includes('unlock'));
+    const uniName = row?.university_name || row?.university_short_name;
+    const uniCount = Array.isArray(details.university_ids) ? details.university_ids.length : 1;
+    if (uniName) {
+      return `${isLock ? 'Locked' : 'Unlocked'} registration for ${uniName}.`;
+    }
+    return `${isLock ? 'Locked' : 'Unlocked'} registration for ${uniCount} institution${uniCount === 1 ? '' : 's'}.`;
+  }
+
+  if (act === 'session.lock_registration' || act === 'session.unlock_registration') {
+    const isLock = details.locked === true || act.includes('lock_registration');
+    return `${isLock ? 'Locked' : 'Unlocked'} candidate registration for the academic session.`;
+  }
+
+  if (act.startsWith('session.')) {
+    const sessionYear = details.academic_year || details.name || row?.resource_id;
+    if (act.includes('finalize_candidate_numbers')) {
+      const assigned = details.assigned ?? (Array.isArray(details.numbers) ? details.numbers.length : 0);
+      const skipped = details.skipped ?? 0;
+      return `Assigned candidate numbers to ${assigned} candidate${assigned === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} skipped)` : ''}.`;
+    }
+    if (act === 'session.open') return `Opened academic session ${sessionYear || ''} for registrations.`.replace(/\s+/g, ' ').replace(' .', '.');
+    if (act === 'session.close') return `Closed academic session ${sessionYear || ''}.`.replace(/\s+/g, ' ').replace(' .', '.');
+    if (act === 'session.reopen') return `Reopened academic session ${sessionYear || ''}.`.replace(/\s+/g, ' ').replace(' .', '.');
+    if (act === 'session.create') return `Created academic session ${sessionYear || ''}.`.replace(/\s+/g, ' ').replace(' .', '.');
+    if (act === 'session.update') return `Updated academic session ${sessionYear || ''}.`.replace(/\s+/g, ' ').replace(' .', '.');
+  }
+
+  // 2. Candidate registration actions
+  if (act === 'registration.bulk_upload') {
+    const succ = details.succeeded_count ?? details.successful ?? 0;
+    const fail = details.failed_count ?? details.failed ?? 0;
+    const skip = details.skipped_count ?? details.skipped ?? 0;
+    if (succ > 0 && fail === 0 && skip === 0) {
+      return `Bulk uploaded and registered ${succ} candidate${succ === 1 ? '' : 's'} successfully.`;
+    }
+    if (succ > 0) {
+      return `Bulk upload processed: ${succ} succeeded, ${fail} failed${skip > 0 ? `, ${skip} skipped` : ''}.`;
+    }
+    return `Bulk upload failed: ${fail} failed${skip > 0 ? `, ${skip} skipped` : ''}.`;
+  }
+
+  if (act === 'registration.create') {
+    const code = details.institution_issued_code || details.candidate_code || details.provisional_candidate_code;
+    return code
+      ? `Created candidate registration with code ${code}.`
+      : 'Created individual candidate registration.';
+  }
+
+  if (act.includes('batch_withdraw')) {
+    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
+    return `Withdrew ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  }
+  if (act.includes('batch_reject')) {
+    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
+    return `Rejected ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  }
+  if (act.includes('batch_approve')) {
+    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
+    return `Approved ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  }
+  if (act.includes('batch_delete')) {
+    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
+    return `Deleted ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  }
+
+  if (act === 'candidate.update') {
+    const parts: string[] = [];
+    if (details.email) parts.push(`email (${details.email})`);
+    if (details.phone) parts.push(`phone (${details.phone})`);
+    if (details.residential_address) parts.push('residential address');
+    if (details.subject_combination_id) parts.push('subject combination');
+    if (details.date_of_birth) parts.push('date of birth');
+    if (details.state_of_origin) parts.push('state of origin');
+    if (details.lga) parts.push('LGA');
+    if (details.next_of_kin) parts.push('next of kin');
+    if (parts.length > 0) {
+      return `Updated candidate details: ${parts.join(', ')}.`;
+    }
+    return 'Updated candidate personal information.';
+  }
+
+  // 3. Catalog actions (institutions, subject combinations, documents)
+  if (act === 'catalog.university_create') {
+    const name = details.name || row?.university_name;
+    const code = details.code || row?.university_code;
+    if (name && code) return `Created institution ${name} (${code}).`;
+    if (name) return `Created institution ${name}.`;
+    return 'Created new institution.';
+  }
+  if (act === 'catalog.university_update') {
+    const name = details.name || row?.university_name;
+    return name ? `Updated institution details for ${name}.` : 'Updated institution details.';
+  }
+  if (act.includes('university_activate') || act === 'catalog.activate') {
+    const name = details.name || row?.university_name;
+    return `Activated institution${name ? ` ${name}` : ''}.`;
+  }
+  if (act.includes('university_deactivate') || act === 'catalog.deactivate') {
+    const name = details.name || row?.university_name;
+    return `Deactivated institution${name ? ` ${name}` : ''}.`;
+  }
+  if (act.includes('subject_combination_create')) {
+    const name = details.name || details.title || details.code;
+    return `Created subject combination${name ? ` "${name}"` : ''}.`;
+  }
+  if (act.includes('subject_combination_update')) {
+    const name = details.name || details.title || details.code;
+    return `Updated subject combination${name ? ` "${name}"` : ''}.`;
+  }
+
+  // 4. Finance actions
+  if (act.includes('upload-receipt') || act.includes('upload_receipt')) {
+    const amt = details.amount ? Number(details.amount).toLocaleString() : null;
+    const item = details.payment_item_id
+      ? String(details.payment_item_id).replace(/^(fee_|payment_)/, '').replace(/_/g, ' ')
+      : null;
+    if (amt && item) return `Uploaded payment receipt of ₦${amt} for ${item}.`;
+    if (amt) return `Uploaded payment receipt of ₦${amt}.`;
+    return 'Uploaded payment receipt.';
+  }
+  if (act.includes('finance.confirm')) {
+    return 'Confirmed payment receipt.';
+  }
+
+  // 5. User & role actions
+  if (act === 'user.create_with_university' || act === 'user.create') {
+    const email = details.email;
+    const role = details.role || details.role_name;
+    if (email && role) return `Created user account for ${email} with role "${role}".`;
+    if (email) return `Created user account for ${email}.`;
+    return 'Created user account.';
+  }
+  if (act === 'user.roles_update') {
+    const roles = Array.isArray(details.roles) ? details.roles.join(', ') : details.role;
+    return roles ? `Updated user roles to ${roles}.` : 'Updated user roles.';
+  }
+  if (act.startsWith('role.')) {
+    const name = details.name || details.display_name;
+    if (act.includes('create')) return `Created role${name ? ` "${name}"` : ''}.`;
+    if (act.includes('update')) return `Updated role${name ? ` "${name}"` : ''}.`;
+    if (act.includes('delete')) return `Deleted role${name ? ` "${name}"` : ''}.`;
+    if (act.includes('permission_attach')) return `Attached permission${details.permission ? ` "${details.permission}"` : ''} to role.`;
+    if (act.includes('permission_detach')) return `Detached permission${details.permission ? ` "${details.permission}"` : ''} from role.`;
+  }
+
+  // 6. Generic properties fallback
+  if (details.summary) return String(details.summary).endsWith('.') ? String(details.summary) : `${details.summary}.`;
+  if (details.reason) return `Reason: ${details.reason}.`;
+  if (details.academic_year) return `Academic year: ${details.academic_year}.`;
   if (details.diff && typeof details.diff === 'object') {
-    return Object.entries(details.diff)
-      .map(([, v]: [string, any]) => `"${v.before || ''}" changed to "${v.after || ''}"`)
+    const diffStr = Object.entries(details.diff)
+      .map(([k, v]: [string, any]) => `"${k}" changed from "${v.before || ''}" to "${v.after || ''}"`)
       .join(', ');
+    return `Changed ${diffStr}.`;
   }
   if (details.succeeded_count !== undefined) {
-    return `${details.succeeded_count} succeeded, ${details.failed_count || 0} failed`;
+    return `${details.succeeded_count} succeeded, ${details.failed_count || 0} failed.`;
   }
   if (details.role) {
-    return `Role: ${details.role}${details.university_name ? ` (${details.university_name})` : ''}`;
+    return `Role: ${details.role}${details.university_name ? ` (${details.university_name})` : ''}.`;
   }
+
+  // Filter out request metadata and raw IDs
+  const ignoredKeys = new Set([
+    '_request', 'request_id', 'id', 'session_id', 'university_id', 'user_id',
+    'actor_user_id', 'jupeb_university_id', 'subject_combination_id', 'documents',
+  ]);
   const entries = Object.entries(details).filter(
-    ([, v]) => v !== null && v !== undefined && typeof v !== 'object',
+    ([k, v]) =>
+      !ignoredKeys.has(k) &&
+      v !== null &&
+      v !== undefined &&
+      v !== '' &&
+      typeof v !== 'object',
   );
   if (entries.length) {
-    return entries
+    const formatted = entries
       .slice(0, 3)
-      .map(([k, v]) => `${k}: ${v}`)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
       .join(', ');
+    return `${formatted.charAt(0).toUpperCase()}${formatted.slice(1)}.`;
   }
-  return JSON.stringify(details);
+
+  return '';
 }
 
 // ── Scope types ─────────────────────────────────────────────────────────────
@@ -653,7 +825,7 @@ export class AdminAuditService {
     const logs = dataResult.map((row: any) => ({
       ...row,
       action_display: formatAuditActionTitle(row.action),
-      details_display: formatDetailsSummary(row.details),
+      details_display: formatDetailsSummary(row.details, row.action, row),
     }));
 
     return { logs, total, page: safePage, limit: safeLimit };

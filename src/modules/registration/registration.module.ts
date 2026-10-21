@@ -29,6 +29,7 @@ import { RegistrationMailListener } from './listeners/registration-mail.listener
 import { SyncModule } from '../sync';
 import { MailModule } from '../mail';
 import { SessionsModule } from '../sessions';
+import { IdentityModule } from '../identity';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { SessionsModule } from '../sessions';
     SyncModule,
     MailModule,
     SessionsModule,
+    IdentityModule,
   ],
   controllers: [RegistrationController, PublicRegistrationCleanupController, NextOfKinController],
   providers: [

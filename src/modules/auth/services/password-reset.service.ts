@@ -61,9 +61,14 @@ export class PasswordResetService {
   private dispatchOtpEmail({ user, code }: { user: any; code: string }): void {
     if (!user.email) return;
     const ttlMinutes = Math.round(otpTtlMs() / 60000);
+    const greetingName =
+      (user.first_name && user.first_name.trim().toLowerCase() !== 'there' ? user.first_name.trim() : '') ||
+      (user.university_name && user.university_name.trim()) ||
+      (user.display_name && user.display_name.trim().toLowerCase() !== 'there' ? user.display_name.trim() : '') ||
+      (user.is_institution_admin ? 'Institution Administrator' : 'User');
     this.mailService.sendOtpEmail(user.email, {
       appName: appName(),
-      firstName: user.first_name || 'there',
+      firstName: greetingName,
       code,
       ttlMinutes,
       email: user.email,
@@ -98,8 +103,13 @@ export class PasswordResetService {
   private dispatchTokenEmail({ user, rawToken }: { user: any; rawToken: string }): void {
     if (!user.email) return;
     const resetUrl = `${frontendUrl()}/reset-password?token=${rawToken}`;
+    const greetingName =
+      (user.first_name && user.first_name.trim().toLowerCase() !== 'there' ? user.first_name.trim() : '') ||
+      (user.university_name && user.university_name.trim()) ||
+      (user.display_name && user.display_name.trim().toLowerCase() !== 'there' ? user.display_name.trim() : '') ||
+      (user.is_institution_admin ? 'Institution Administrator' : 'User');
     this.mailService.sendForgotPasswordEmail(user.email, {
-      name: user.first_name || user.display_name || 'User',
+      name: greetingName,
       resetUrl,
       email: user.email,
     }).catch((err: any) => {
@@ -183,10 +193,45 @@ export class PasswordResetService {
     }
 
     const r = await this.dataSource.query(
-      `SELECT first_name FROM profiles WHERE user_id = $1 LIMIT 1`,
+      `SELECT p.first_name,
+              p.last_name,
+              p.display_name,
+              COALESCE(
+                (SELECT ju.name FROM user_universities uu JOIN jupeb_universities ju ON ju.id = uu.university_id WHERE uu.user_id = u.id AND uu.deleted_at IS NULL AND ju.deleted_at IS NULL ORDER BY uu.is_primary DESC, uu.created_at ASC LIMIT 1),
+                (SELECT ju.name FROM profiles pr JOIN jupeb_universities ju ON ju.id = pr.jupeb_university_id WHERE pr.user_id = u.id AND ju.deleted_at IS NULL LIMIT 1),
+                (SELECT ju.name FROM jupeb_universities ju WHERE LOWER(ju.email) = LOWER(u.email) AND ju.deleted_at IS NULL LIMIT 1)
+              ) AS university_name
+         FROM users u
+         LEFT JOIN profiles p ON p.user_id = u.id
+        WHERE u.id = $1
+        LIMIT 1`,
       [user.id]
     );
-    user.first_name = (r[0] && r[0].first_name) || null;
+
+    const profileRow = (r && r[0]) || {};
+    const rawFirstName = profileRow.first_name ? String(profileRow.first_name).trim() : '';
+    const rawDisplayName = profileRow.display_name ? String(profileRow.display_name).trim() : '';
+    const rawUniversityName = profileRow.university_name ? String(profileRow.university_name).trim() : '';
+    const isInstitution = Boolean(institutionAccess?.is_institution_admin);
+
+    user.is_institution_admin = isInstitution;
+    user.university_name = rawUniversityName || null;
+
+    if (isInstitution) {
+      user.first_name =
+        (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') ||
+        rawUniversityName ||
+        (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') ||
+        'Institution Administrator';
+      user.display_name = user.first_name;
+    } else {
+      user.first_name =
+        (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') ||
+        (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') ||
+        'User';
+      user.display_name = rawDisplayName || user.first_name;
+    }
+
     return user;
   }
 

@@ -57,7 +57,7 @@ export class MockNinProvider implements INinProvider {
 
   async verifyNin(
     normalizedNin: string,
-    options: { provider?: string; force_fresh?: boolean } = {},
+    _options: { provider?: string; force_fresh?: boolean } = {},
   ): Promise<NinVerificationResult> {
     if (!normalizedNin || normalizedNin.length !== 11) {
       return {
@@ -66,24 +66,22 @@ export class MockNinProvider implements INinProvider {
       };
     }
 
-    if (normalizedNin === '00000000000') {
+    if (normalizedNin === '00000000000' || /^(\d)\1{10}$/.test(normalizedNin)) {
       return {
         outcome: 'failed',
-        error: { code: 'nin_not_found', message: 'NIN not found in mock database' },
+        error: { code: 'invalid_nin', message: 'Invalid NIN: repeating or dummy digits are not valid' },
       };
     }
 
-    if (this.isMockStrict() || options.provider === 'mock') {
-      if (!MOCK_TEST_POOL_RE.test(normalizedNin)) {
-        return {
-          outcome: 'failed',
-          error: {
-            code: 'nin_not_found',
-            message:
-              'Mock NIN not found. In mock test mode only 00000000001..00000000010 verify successfully.',
-          },
-        };
-      }
+    if (this.isMockStrict() && !MOCK_TEST_POOL_RE.test(normalizedNin)) {
+      return {
+        outcome: 'failed',
+        error: {
+          code: 'nin_not_found',
+          message:
+            'Mock NIN not found. In mock test mode only 00000000001..00000000010 verify successfully.',
+        },
+      };
     }
 
     return {
