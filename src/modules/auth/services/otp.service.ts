@@ -66,8 +66,8 @@ export class OtpService {
     const isInstitution = Boolean(row.is_institution_admin);
     if (isInstitution) {
       row.first_name =
-        rawUniversityName ||
         (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') ||
+        rawUniversityName ||
         (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') ||
         'Institution Administrator';
     } else {

@@ -8,7 +8,7 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AttendanceService } from '../services/attendance.service';
 import { JwtAuthGuard } from '../../../utils';
 
@@ -21,42 +21,54 @@ export class AttendanceController {
 
   @Get('home')
   @ApiOperation({ summary: 'Attendance home summary' })
+  @ApiQuery({ name: 'candidate_code', required: false, description: 'Candidate code or number' })
+  @ApiQuery({ name: 'candidate_number', required: false, description: 'Candidate code or number alias' })
   async getHome(@Query() query: any, @Req() req: any) {
-    return this.attendanceService.getHome(req.user?.user_id, query);
+    return this.attendanceService.getHome(req.user || req.user?.user_id, query);
   }
 
   @Get('summary')
   @ApiOperation({ summary: 'Attendance breakdown summary' })
+  @ApiQuery({ name: 'candidate_code', required: false, description: 'Candidate code or number' })
+  @ApiQuery({ name: 'candidate_number', required: false, description: 'Candidate code or number alias' })
   async getSummary(@Query() query: any, @Req() req: any) {
-    return this.attendanceService.getSummary(req.user?.user_id, query);
+    return this.attendanceService.getSummary(req.user || req.user?.user_id, query);
   }
 
   @Get('classes')
   @ApiOperation({ summary: 'Attendance classes' })
+  @ApiQuery({ name: 'candidate_code', required: false, description: 'Candidate code or number' })
+  @ApiQuery({ name: 'candidate_number', required: false, description: 'Candidate code or number alias' })
   async getClasses(@Query() query: any, @Req() req: any) {
-    return this.attendanceService.getClasses(req.user?.user_id, query);
+    return this.attendanceService.getClasses(req.user || req.user?.user_id, query);
   }
 
   @Get('history')
   @ApiOperation({ summary: 'Attendance history' })
+  @ApiQuery({ name: 'candidate_code', required: false, description: 'Candidate code or number' })
+  @ApiQuery({ name: 'candidate_number', required: false, description: 'Candidate code or number alias' })
   async getHistory(@Query() query: any, @Req() req: any) {
-    return this.attendanceService.getHistory(req.user?.user_id, query);
+    return this.attendanceService.getHistory(req.user || req.user?.user_id, query);
   }
 
   @Get('courses/:courseCode/sessions')
   @ApiOperation({ summary: 'Course attendance sessions' })
+  @ApiQuery({ name: 'candidate_code', required: false, description: 'Candidate code or number' })
+  @ApiQuery({ name: 'candidate_number', required: false, description: 'Candidate code or number alias' })
   async getCourseSessions(
     @Param('courseCode') courseCode: string,
     @Query() query: any,
     @Req() req: any,
   ) {
-    return this.attendanceService.getCourseSessions(req.user?.user_id, courseCode, query);
+    return this.attendanceService.getCourseSessions(req.user || req.user?.user_id, courseCode, query);
   }
 
   @Get('timetable')
   @ApiOperation({ summary: 'Student class timetable' })
+  @ApiQuery({ name: 'candidate_code', required: false, description: 'Candidate code or number' })
+  @ApiQuery({ name: 'candidate_number', required: false, description: 'Candidate code or number alias' })
   async getTimetable(@Query() query: any, @Req() req: any) {
-    return this.attendanceService.getTimetable(req.user?.user_id, query);
+    return this.attendanceService.getTimetable(req.user || req.user?.user_id, query);
   }
 
   @Post(['check-in', 'check-in/:classId'])
@@ -69,7 +81,7 @@ export class AttendanceController {
   ) {
     const payload = { ...query, ...body };
     const effectiveClassId = classId || payload.lecture_id;
-    return this.attendanceService.checkIn(req.user?.user_id, effectiveClassId, payload);
+    return this.attendanceService.checkIn(req.user || req.user?.user_id, effectiveClassId, payload);
   }
 
   @Post(['check-out', 'check-out/:classId'])
@@ -82,6 +94,6 @@ export class AttendanceController {
   ) {
     const payload = { ...query, ...body };
     const effectiveClassId = classId || payload.lecture_id;
-    return this.attendanceService.checkOut(req.user?.user_id, effectiveClassId, payload);
+    return this.attendanceService.checkOut(req.user || req.user?.user_id, effectiveClassId, payload);
   }
 }

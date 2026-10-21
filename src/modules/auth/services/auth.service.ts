@@ -962,7 +962,7 @@ const sendEmail = require('../../../utils/utils/sendEmail');
     const rawDisplayName = user.display_name ? String(user.display_name).trim() : '';
     const rawUniversityName = user.university_name ? String(user.university_name).trim() : '';
     const greetingName = user.is_institution_admin
-      ? rawUniversityName || (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || 'Institution Administrator'
+      ? (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || rawUniversityName || 'Institution Administrator'
       : (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') || 'User';
 
     setImmediate(() => {

@@ -81,14 +81,37 @@ export class MailService {
 
       if (Array.isArray(dto.placeholders)) {
         let placeholderIndex = 0;
+        const sanitized = dto.placeholders.map((val, idx) => {
+          if (idx === 0 && typeof val === 'string' && (!val.trim() || val.trim().toLowerCase() === 'there')) {
+            return 'User';
+          }
+          return val;
+        });
         htmlContent = htmlContent.replace(/%s/g, (match) => {
-          if (placeholderIndex < (dto.placeholders as any[]).length) {
-            return (dto.placeholders as any[])[placeholderIndex++];
+          if (placeholderIndex < sanitized.length) {
+            return sanitized[placeholderIndex++];
           }
           return match;
         });
       } else if (typeof dto.placeholders === 'object' && dto.placeholders !== null) {
-        const ph = dto.placeholders as Record<string, any>;
+        const ph = { ...(dto.placeholders as Record<string, any>) };
+        const rawFirst = ph.firstName ? String(ph.firstName).trim() : '';
+        const rawName = ph.name ? String(ph.name).trim() : '';
+        const rawUni = ph.universityName ? String(ph.universityName).trim() : '';
+        const rawRole = ph.role ? String(ph.role).trim() : '';
+
+        const resolvedFirstName =
+          (rawFirst && rawFirst.toLowerCase() !== 'there' ? rawFirst : '') ||
+          (rawName && rawName.toLowerCase() !== 'there' ? rawName : '') ||
+          rawUni ||
+          (rawRole ? `${rawRole.replace(/_/g, ' ')} User` : '') ||
+          'User';
+
+        ph.firstName = resolvedFirstName;
+        if (!ph.name || String(ph.name).trim().toLowerCase() === 'there') {
+          ph.name = resolvedFirstName;
+        }
+
         htmlContent = htmlContent.replace(/\{\{(\w+)\}\}/g, (match, key) => {
           return ph[key] !== undefined && ph[key] !== null ? String(ph[key]) : match;
         });
@@ -183,11 +206,17 @@ export class MailService {
    * Send OTP Code Email
    */
   async sendOtpEmail(to: string, placeholders: Record<string, any>): Promise<string | null> {
+    const rawFirst = placeholders.firstName ? String(placeholders.firstName).trim() : '';
+    const cleanFirst = rawFirst && rawFirst.toLowerCase() !== 'there' ? rawFirst : '';
+    const resolvedFirst = cleanFirst || placeholders.universityName || 'User';
     return this.sendMail({
       to,
       subject: 'Your Verification Code',
       templateFile: 'otp-code.html',
-      placeholders,
+      placeholders: {
+        ...placeholders,
+        firstName: resolvedFirst,
+      },
     });
   }
 
@@ -266,6 +295,9 @@ export class MailService {
       year?: number;
     },
   ): Promise<string | null> {
+    const rawFirst = placeholders.firstName ? String(placeholders.firstName).trim() : '';
+    const cleanFirst = rawFirst && rawFirst.toLowerCase() !== 'there' ? rawFirst : '';
+    const resolvedFirst = cleanFirst || placeholders.universityName || 'Institution Administrator';
     const appName = placeholders.appName || this.configService.get('APP_NAME', 'Registration Portal');
     const loginUrl =
       placeholders.loginUrl ||
@@ -277,6 +309,7 @@ export class MailService {
       templateFile: 'jupeb-institution-admin-credentials.html',
       placeholders: {
         ...placeholders,
+        firstName: resolvedFirst,
         appName,
         loginUrl,
         year: placeholders.year || new Date().getUTCFullYear(),
@@ -300,6 +333,9 @@ export class MailService {
       year?: number;
     },
   ): Promise<string | null> {
+    const rawFirst = placeholders.firstName ? String(placeholders.firstName).trim() : '';
+    const cleanFirst = rawFirst && rawFirst.toLowerCase() !== 'there' ? rawFirst : '';
+    const resolvedFirst = cleanFirst || placeholders.universityName || 'User';
     const appName = placeholders.appName || this.configService.get('APP_NAME', 'Registration Portal');
     const loginUrl =
       placeholders.loginUrl ||
@@ -310,6 +346,7 @@ export class MailService {
       templateFile: 'jupeb-user-credentials.html',
       placeholders: {
         ...placeholders,
+        firstName: resolvedFirst,
         appName,
         loginUrl,
         year: placeholders.year || new Date().getUTCFullYear(),

@@ -9,6 +9,7 @@ import { RegistrationEventsService } from './services/registration-events.servic
 import { RegistrationFormPdfService } from './services/registration-form-pdf.service';
 import { CandidateSyncQueueService } from '@modules/sync';
 import { InstitutionUserScopeService } from './services/institution-user-scope.service';
+import { InstitutionRegistrationLockService } from '@modules/sessions';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DataSource } from 'typeorm';
 import { LoggerFactory } from '../../logger';
@@ -65,6 +66,10 @@ describe('Next of Kin and Captured Photo in Registration Details, Lists, and Sub
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
         { provide: DataSource, useValue: mockDataSource },
         { provide: LoggerFactory, useValue: mockLoggerFactory },
+        {
+          provide: InstitutionRegistrationLockService,
+          useValue: { assertRegistrationAllowed: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 

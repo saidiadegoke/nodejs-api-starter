@@ -269,6 +269,8 @@ async function sendMatricAssigned(registrationId) {
 async function sendInstitutionAdminCredentials({ email, password, firstName, universityName }) {
   if (!email || !password) return;
   const loginUrl = `${process.env.INSTITUTION_FRONTEND_URL}`;
+  const cleanFirst = firstName && String(firstName).trim().toLowerCase() !== 'there' ? String(firstName).trim() : '';
+  const resolvedFirst = cleanFirst || universityName || 'Admin';
   return fireAndForget(
     sendEmail({
       to: email,
@@ -276,7 +278,7 @@ async function sendInstitutionAdminCredentials({ email, password, firstName, uni
       templateFile: 'jupeb-institution-admin-credentials.html',
       placeholders: {
         appName: appName(),
-        firstName: firstName || 'Admin',
+        firstName: resolvedFirst,
         universityName: universityName || 'your institution',
         email,
         password,
@@ -295,6 +297,8 @@ async function sendUserCredentials({ email, password, firstName, role, universit
   if (!email || !password) return;
   const loginUrl = `${frontendUrl()}/auth/login`;
   const roleLabel = role ? String(role).replace(/_/g, ' ') : 'portal user';
+  const cleanFirst = firstName && String(firstName).trim().toLowerCase() !== 'there' ? String(firstName).trim() : '';
+  const resolvedFirst = cleanFirst || universityName || 'User';
   return fireAndForget(
     sendEmail({
       to: email,
@@ -302,7 +306,7 @@ async function sendUserCredentials({ email, password, firstName, role, universit
       templateFile: 'jupeb-user-credentials.html',
       placeholders: {
         appName: appName(),
-        firstName: firstName || 'User',
+        firstName: resolvedFirst,
         role: roleLabel,
         universityName: universityName || '',
         email,

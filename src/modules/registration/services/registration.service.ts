@@ -715,14 +715,27 @@ export class RegistrationService {
       ninPayload.address ||
       null;
     const stateOfOrigin =
-      row.state_of_origin || ninPayload.state_of_origin || ninPayload.origin_state || ninIntake.state_of_origin || ninIntake.state || null;
-    const lga = row.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || ninIntake.lga || null;
+      row.state_of_origin ||
+      (ninStatus !== 'verified'
+        ? ninIntake.state_of_origin || ninIntake.state || ninPayload.state_of_origin || ninPayload.origin_state
+        : ninPayload.state_of_origin || ninPayload.origin_state || ninIntake.state_of_origin || ninIntake.state) ||
+      null;
+    const lga =
+      row.lga ||
+      (ninStatus !== 'verified'
+        ? ninIntake.lga || ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga
+        : ninPayload.lga || ninPayload.lga_of_origin || ninPayload.origin_lga || ninIntake.lga) ||
+      null;
     const placeOfBirth =
-      row.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place || ninIntake.place_of_birth || null;
+      row.place_of_birth ||
+      (ninStatus !== 'verified'
+        ? ninIntake.place_of_birth || ninPayload.place_of_birth || ninPayload.birth_place
+        : ninPayload.place_of_birth || ninPayload.birth_place || ninIntake.place_of_birth) ||
+      null;
     const middleName =
       ninStatus === 'verified' && (ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName)
         ? String(ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName).trim()
-        : ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName || ninIntake.middle_name || ninIntake.middlename || null;
+        : ninIntake.middle_name || ninIntake.middlename || ninPayload.middle_name || ninPayload.middlename || ninPayload.middleName || null;
 
     const firstName =
       ninStatus === 'verified' && ninPayload.first_name
@@ -753,8 +766,18 @@ export class RegistrationService {
         ninIntake.name ||
         null;
     }
-    const gender = row.gender || ninPayload.gender || ninIntake.gender || null;
-    const dateOfBirth = row.date_of_birth || ninPayload.date_of_birth || ninPayload.birthdate || ninIntake.date_of_birth || ninIntake.birthdate || null;
+    const gender =
+      row.gender ||
+      (ninStatus !== 'verified'
+        ? ninIntake.gender || ninPayload.gender
+        : ninPayload.gender || ninIntake.gender) ||
+      null;
+    const dateOfBirth =
+      row.date_of_birth ||
+      (ninStatus !== 'verified'
+        ? ninIntake.date_of_birth || ninIntake.birthdate || ninPayload.date_of_birth || ninPayload.birthdate
+        : ninPayload.date_of_birth || ninPayload.birthdate || ninIntake.date_of_birth || ninIntake.birthdate) ||
+      null;
     const email = row.email || ninIntake.email || null;
     const phone = row.phone || ninIntake.phone || ninPayload.phone || null;
     const faceBio = bioRows.find((b: any) => b.capture_type === 'face');
@@ -1231,6 +1254,62 @@ export class RegistrationService {
       actorUserId: userId,
     });
 
+    // 1. Extract and normalize DTO fields across aliases and nested info objects
+    const fields = this.extractCandidateFields(dto);
+
+    // 2. Handle optional status update if provided
+    const targetStatus = (dto as any).status ? String((dto as any).status).toLowerCase().trim() : undefined;
+    if (targetStatus && targetStatus !== reg.status) {
+      await this.regRepo.setStatus(registrationId, targetStatus, (dto as any).status_reason, userId);
+      await this.historyRepo.create({
+        registrationId,
+        fromStatus: reg.status,
+        toStatus: targetStatus,
+        reason: (dto as any).status_reason || 'Updated via candidate profile update',
+        changedBy: userId || registrationId,
+      });
+      reg.status = targetStatus as RegistrationStatus;
+    }
+
+    // 3. Update registration record fields (e.g. subject_combination_id, institution_issued_code)
+    await this.updateRegistrationRecord(registrationId, fields.subjectCombId, fields.instCode);
+
+    // 4. Update user profile and contact details
+    let emailChanged = false;
+    if (reg.userId) {
+      emailChanged = await this.updateUserAndProfile(reg.userId, registrationId, fields);
+    } else {
+      emailChanged = await this.checkIfIntakeEmailChanged(reg.ninVerificationId, fields.email);
+    }
+
+    // 5. Update jupeb_nin_verifications intake_payload (safe upsert, NO updated_at column)
+    await this.updateNinIntakePayload(reg, fields, emailChanged);
+
+    // 6. If candidate does not have a user account yet and email changed, re-emit CODE_ISSUED event
+    if (emailChanged && !reg.userId && reg.status === RegistrationStatus.CODE_ISSUED) {
+      this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
+        registrationId: reg.id,
+        userId,
+      });
+    }
+
+    // 7. Update Next of Kin
+    await this.updateNextOfKin(registrationId, fields.nok, Boolean(reg.userId));
+
+    // 8. Update attached documents
+    await this.updateAttachedDocuments(registrationId, fields.docs, Boolean(reg.userId));
+
+    // 9. Emit in-memory event for instant single candidate sync to CRMS & Attendance
+    this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
+      registrationId: reg.id,
+      userId,
+      data: dto,
+    });
+
+    return this.getRegistrationById(registrationId, userId);
+  }
+
+  private extractCandidateFields(dto: PatchCandidateDto) {
     const info = dto.info && typeof dto.info === 'object' ? dto.info : {};
     const subjectCombId =
       dto.subject_combination_id ||
@@ -1243,22 +1322,55 @@ export class RegistrationService {
       info.institution_issued_code ||
       info.institutionIssuedCode;
 
-    const firstName = dto.first_name || dto.firstName || info.first_name || info.firstName;
-    const lastName = dto.last_name || dto.lastName || info.last_name || info.lastName;
-    const middleName = dto.middle_name || dto.middleName || info.middle_name || info.middleName;
-    const title = dto.title || info.title;
-    const gender = dto.gender || info.gender;
-    const dateOfBirth = dto.date_of_birth || dto.dateOfBirth || dto.dob || info.date_of_birth || info.dateOfBirth || info.dob;
-    const stateOfOrigin = dto.state_of_origin || dto.stateOfOrigin || info.state_of_origin || info.stateOfOrigin;
-    const lga = dto.lga || info.lga;
-    const residentialAddress = dto.residential_address || dto.residentialAddress || dto.address || info.residential_address || info.residentialAddress || info.address;
-    const placeOfBirth = dto.place_of_birth || dto.placeOfBirth || info.place_of_birth || info.placeOfBirth;
-    const email = dto.email || info.email ? String(dto.email || info.email).trim() : undefined;
-    const phone = dto.phone || info.phone ? String(dto.phone || info.phone).trim() : undefined;
-    const nok = dto.next_of_kin || dto.nextOfKin || info.next_of_kin || info.nextOfKin;
-    const docs = dto.documents || info.documents;
+    const firstName = dto.first_name ?? dto.firstName ?? info.first_name ?? info.firstName;
+    const lastName = dto.last_name ?? dto.lastName ?? info.last_name ?? info.lastName;
+    const middleName = dto.middle_name ?? dto.middleName ?? info.middle_name ?? info.middleName;
+    const title = dto.title ?? info.title;
+    const gender = dto.gender ?? info.gender;
+    const dateOfBirth =
+      dto.date_of_birth ?? dto.dateOfBirth ?? dto.dob ?? info.date_of_birth ?? info.dateOfBirth ?? info.dob;
+    const stateOfOrigin = dto.state_of_origin ?? dto.stateOfOrigin ?? info.state_of_origin ?? info.stateOfOrigin;
+    const lga = dto.lga ?? info.lga;
+    const residentialAddress =
+      dto.residential_address ??
+      dto.residentialAddress ??
+      dto.address ??
+      info.residential_address ??
+      info.residentialAddress ??
+      info.address;
+    const placeOfBirth = dto.place_of_birth ?? dto.placeOfBirth ?? info.place_of_birth ?? info.placeOfBirth;
+    const email =
+      (dto.email ?? info.email) !== undefined ? String(dto.email ?? info.email).trim() : undefined;
+    const phone =
+      (dto.phone ?? info.phone) !== undefined ? String(dto.phone ?? info.phone).trim() : undefined;
+    const nok = dto.next_of_kin ?? dto.nextOfKin ?? info.next_of_kin ?? info.nextOfKin;
+    const docs = dto.documents ?? info.documents;
 
-    // 1. Update registration record fields (e.g. subject_combination_id, institution_issued_code)
+    return {
+      subjectCombId: subjectCombId ? String(subjectCombId).trim() : undefined,
+      instCode: instCode ? String(instCode).trim() : undefined,
+      firstName: firstName ? String(firstName).trim() : undefined,
+      lastName: lastName ? String(lastName).trim() : undefined,
+      middleName: middleName ? String(middleName).trim() : undefined,
+      title: title ? String(title).trim() : undefined,
+      gender: gender ? String(gender).trim() : undefined,
+      dateOfBirth: dateOfBirth ? String(dateOfBirth).trim() : undefined,
+      stateOfOrigin: stateOfOrigin ? String(stateOfOrigin).trim() : undefined,
+      lga: lga ? String(lga).trim() : undefined,
+      residentialAddress: residentialAddress ? String(residentialAddress).trim() : undefined,
+      placeOfBirth: placeOfBirth ? String(placeOfBirth).trim() : undefined,
+      email: email ? email.toLowerCase() : undefined,
+      phone: phone || undefined,
+      nok,
+      docs,
+    };
+  }
+
+  private async updateRegistrationRecord(
+    registrationId: string,
+    subjectCombId?: string,
+    instCode?: string,
+  ): Promise<void> {
     const regSets: string[] = [];
     const regVals: any[] = [];
     if (subjectCombId) {
@@ -1276,238 +1388,276 @@ export class RegistrationService {
         regVals,
       );
     }
+  }
 
-    // 2. Update user profile and contact details
+  private async updateUserAndProfile(
+    userId: string,
+    registrationId: string,
+    fields: ReturnType<typeof this.extractCandidateFields>,
+  ): Promise<boolean> {
     let emailChanged = false;
-    if (reg.userId) {
-      const profileFields: Record<string, any> = {};
-      if (firstName) profileFields.first_name = String(firstName).trim();
-      if (lastName) profileFields.last_name = String(lastName).trim();
-      if (firstName || lastName || middleName) {
-        const curProfile = (await this.dataSource.query('SELECT first_name, last_name, display_name FROM profiles WHERE user_id = $1', [reg.userId]))[0] || {};
-        const effFirst = firstName ? String(firstName).trim() : (curProfile.first_name || '');
-        const effLast = lastName ? String(lastName).trim() : (curProfile.last_name || '');
-        const effMiddle = middleName ? String(middleName).trim() : '';
-        const constructed = [effFirst, effMiddle, effLast].filter(Boolean).join(' ').trim();
-        if (constructed) profileFields.display_name = constructed;
-      }
-      if (title) profileFields.title = String(title).trim();
-      if (gender) profileFields.gender = String(gender).trim();
-      if (dateOfBirth) profileFields.date_of_birth = dateOfBirth;
-      if (stateOfOrigin) profileFields.state_of_origin = String(stateOfOrigin).trim();
-      if (lga) profileFields.lga = String(lga).trim();
-      if (residentialAddress) profileFields.residential_address = String(residentialAddress).trim();
-      if (placeOfBirth) profileFields.place_of_birth = String(placeOfBirth).trim();
+    const curProfileRows = await this.dataSource.query(
+      'SELECT first_name, last_name, display_name FROM profiles WHERE user_id = $1',
+      [userId],
+    );
+    const curProfile = curProfileRows[0] || {};
 
-      if (Object.keys(profileFields).length) {
-        const sets = Object.keys(profileFields).map((k, i) => `${k} = $${i + 2}`).join(', ');
-        await this.dataSource.query(
-          `UPDATE profiles SET ${sets}, updated_at = NOW() WHERE user_id = $1`,
-          [reg.userId, ...Object.values(profileFields)],
+    const profileFields: Record<string, any> = {};
+    if (fields.firstName) profileFields.first_name = fields.firstName;
+    if (fields.lastName) profileFields.last_name = fields.lastName;
+
+    if (fields.firstName || fields.lastName || fields.middleName) {
+      const effFirst = fields.firstName || curProfile.first_name || '';
+      const effLast = fields.lastName || curProfile.last_name || '';
+      const effMiddle = fields.middleName || '';
+      const constructed = [effFirst, effMiddle, effLast].filter(Boolean).join(' ').trim();
+      if (constructed) profileFields.display_name = constructed;
+    }
+
+    if (fields.title) profileFields.title = fields.title;
+    if (fields.gender) profileFields.gender = fields.gender;
+    if (fields.dateOfBirth) profileFields.date_of_birth = fields.dateOfBirth;
+    if (fields.stateOfOrigin) profileFields.state_of_origin = fields.stateOfOrigin;
+    if (fields.lga) profileFields.lga = fields.lga;
+    if (fields.residentialAddress) profileFields.residential_address = fields.residentialAddress;
+    if (fields.placeOfBirth) profileFields.place_of_birth = fields.placeOfBirth;
+
+    if (Object.keys(profileFields).length) {
+      const keys = Object.keys(profileFields);
+      const vals = Object.values(profileFields);
+      const valPlaceholders = keys.map((_, i) => `$${i + 2}`).join(', ');
+      const updateClauses = keys.map((k) => `${k} = EXCLUDED.${k}`).join(', ');
+      await this.dataSource.query(
+        `INSERT INTO profiles (user_id, ${keys.join(', ')}, created_at, updated_at)
+         VALUES ($1, ${valPlaceholders}, NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET ${updateClauses}, updated_at = NOW()`,
+        [userId, ...vals],
+      );
+    }
+
+    if (fields.email) {
+      const curUser = (
+        await this.dataSource.query('SELECT id, email, email_verified FROM users WHERE id = $1', [userId])
+      )[0];
+      const curEmail = curUser?.email ? String(curUser.email).trim().toLowerCase() : null;
+      if (fields.email !== curEmail) {
+        emailChanged = true;
+        const conflict = await this.dataSource.query(
+          'SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND id <> $2 AND deleted_at IS NULL LIMIT 1',
+          [fields.email, userId],
         );
-      }
-
-      if (email) {
-        const curUser = (
-          await this.dataSource.query('SELECT id, email, email_verified FROM users WHERE id = $1', [reg.userId])
-        )[0];
-        const curEmail = curUser?.email ? String(curUser.email).trim().toLowerCase() : null;
-        if (email.toLowerCase() !== curEmail) {
-          emailChanged = true;
-          const conflict = await this.dataSource.query(
-            'SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND id <> $2 AND deleted_at IS NULL LIMIT 1',
-            [email, reg.userId],
-          );
-          if (conflict.length > 0) {
-            throw new ConflictException('Email already in use');
-          }
-        }
-      }
-
-      if (email || phone) {
-        const userSets: string[] = [];
-        const userVals: any[] = [reg.userId];
-        if (email) {
-          userSets.push(`email = $${userVals.length + 1}`);
-          userVals.push(email);
-          if (emailChanged) {
-            userSets.push('email_verified = false');
-            userSets.push('email_verified_at = NULL');
-          }
-        }
-        if (phone) {
-          userSets.push(`phone = $${userVals.length + 1}`);
-          userVals.push(phone);
-        }
-        await this.dataSource.query(
-          `UPDATE users SET ${userSets.join(', ')}, updated_at = NOW() WHERE id = $1`,
-          userVals,
-        );
-      }
-
-      if (emailChanged) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const AuthService = require('../../auth/services/auth.service');
-          await AuthService.sendVerificationEmail(reg.userId);
-        } catch (err: any) {
-          this.logger.warn(`Failed to send verification email for candidate ${registrationId} (user ${reg.userId}): ${err?.message}`);
-        }
-      }
-
-      if (reg.ninVerificationId) {
-        const intakeFields: Record<string, any> = {};
-        if (email) intakeFields.email = email;
-        if (phone) intakeFields.phone = phone;
-        if (firstName) intakeFields.first_name = String(firstName).trim();
-        if (lastName) intakeFields.last_name = String(lastName).trim();
-        if (middleName) intakeFields.middle_name = String(middleName).trim();
-        if (gender) intakeFields.gender = String(gender).trim();
-        if (dateOfBirth) intakeFields.date_of_birth = dateOfBirth;
-        if (stateOfOrigin) intakeFields.state_of_origin = String(stateOfOrigin).trim();
-        if (lga) intakeFields.lga = String(lga).trim();
-        if (residentialAddress) intakeFields.residential_address = String(residentialAddress).trim();
-        if (placeOfBirth) intakeFields.place_of_birth = String(placeOfBirth).trim();
-        if (firstName || lastName || middleName) {
-          const constructed = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-          if (constructed) intakeFields.name = constructed;
-        }
-        if (Object.keys(intakeFields).length) {
-          await this.dataSource.query(
-            `UPDATE jupeb_nin_verifications
-             SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || $2::jsonb,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [reg.ninVerificationId, JSON.stringify(intakeFields)],
-          ).catch(() => {});
-        }
-      }
-    } else {
-      // Candidate does not have a linked user account yet (e.g. status code_issued)
-      if (reg.ninVerificationId) {
-        const ninRow = (
-          await this.dataSource.query('SELECT intake_payload FROM jupeb_nin_verifications WHERE id = $1', [reg.ninVerificationId])
-        )[0];
-        const curIntake = ninRow?.intake_payload || {};
-        const curEmail = curIntake.email ? String(curIntake.email).trim().toLowerCase() : null;
-        if (email && email.toLowerCase() !== curEmail) {
-          emailChanged = true;
-        }
-
-        const intakeFields: Record<string, any> = {};
-        if (email) {
-          intakeFields.email = email;
-          if (emailChanged) {
-            intakeFields.email_verified = false;
-          }
-        }
-        if (phone) intakeFields.phone = phone;
-        if (firstName) intakeFields.first_name = String(firstName).trim();
-        if (lastName) intakeFields.last_name = String(lastName).trim();
-        if (middleName) intakeFields.middle_name = String(middleName).trim();
-        if (gender) intakeFields.gender = String(gender).trim();
-        if (dateOfBirth) intakeFields.date_of_birth = dateOfBirth;
-        if (stateOfOrigin) intakeFields.state_of_origin = String(stateOfOrigin).trim();
-        if (lga) intakeFields.lga = String(lga).trim();
-        if (residentialAddress) intakeFields.residential_address = String(residentialAddress).trim();
-        if (placeOfBirth) intakeFields.place_of_birth = String(placeOfBirth).trim();
-        if (firstName || lastName || middleName) {
-          const constructed = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-          if (constructed) intakeFields.name = constructed;
-        }
-        if (Object.keys(intakeFields).length) {
-          await this.dataSource.query(
-            `UPDATE jupeb_nin_verifications
-             SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || $2::jsonb,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [reg.ninVerificationId, JSON.stringify(intakeFields)],
-          ).catch(() => {});
-        }
-
-        if (emailChanged && reg.status === RegistrationStatus.CODE_ISSUED) {
-          this.eventEmitter.emit(RegistrationEvent.CODE_ISSUED, {
-            registrationId: reg.id,
-            userId,
-          });
+        if (conflict.length > 0) {
+          throw new ConflictException('Email already in use');
         }
       }
     }
 
-    // 3. Update Next of Kin
-    if (nok && typeof nok === 'object') {
-      const nokName =
-        nok.name ||
-        [nok.first_name || nok.firstName, nok.last_name || nok.lastName].filter(Boolean).join(' ') ||
-        nok.full_name;
-      const nokRel = nok.relationship || nok.relation || 'Guardian';
-      const nokPhone = nok.phone || nok.telephone || nok.contact || nok.nok_phone;
-      const nokEmail = nok.email || nok.nok_email;
-      const nokAddress = nok.address || nok.nok_address;
+    if (fields.email || fields.phone) {
+      const userSets: string[] = [];
+      const userVals: any[] = [userId];
+      if (fields.email) {
+        userSets.push(`email = $${userVals.length + 1}`);
+        userVals.push(fields.email);
+        if (emailChanged) {
+          userSets.push('email_verified = false');
+          userSets.push('email_verified_at = NULL');
+        }
+      }
+      if (fields.phone) {
+        userSets.push(`phone = $${userVals.length + 1}`);
+        userVals.push(fields.phone);
+      }
+      await this.dataSource.query(
+        `UPDATE users SET ${userSets.join(', ')}, updated_at = NOW() WHERE id = $1`,
+        userVals,
+      );
+    }
 
-      const nokSource = nok.source || 'institution';
+    if (emailChanged) {
+      try {
+        const AuthService = require('../../auth/services/auth.service');
+        await AuthService.sendVerificationEmail(userId);
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to send verification email for candidate ${registrationId} (user ${userId}): ${err?.message}`,
+        );
+      }
+    }
 
-      if (nokName || nokPhone || nokEmail || nokAddress) {
+    return emailChanged;
+  }
+
+  private async checkIfIntakeEmailChanged(
+    ninVerificationId?: string | null,
+    newEmail?: string,
+  ): Promise<boolean> {
+    if (!ninVerificationId || !newEmail) return false;
+    const ninRow = (
+      await this.dataSource.query('SELECT intake_payload FROM jupeb_nin_verifications WHERE id = $1', [
+        ninVerificationId,
+      ])
+    )[0];
+    const curIntake = ninRow?.intake_payload || {};
+    const curEmail = curIntake.email ? String(curIntake.email).trim().toLowerCase() : null;
+    return Boolean(newEmail && newEmail !== curEmail);
+  }
+
+  private async updateNinIntakePayload(
+    reg: RegistrationEntity,
+    fields: ReturnType<typeof this.extractCandidateFields>,
+    emailChanged: boolean,
+  ): Promise<void> {
+    let existingFirst = '';
+    let existingMiddle = '';
+    let existingLast = '';
+
+    if (reg.ninVerificationId) {
+      const ninRow = (
+        await this.dataSource.query('SELECT intake_payload FROM jupeb_nin_verifications WHERE id = $1', [
+          reg.ninVerificationId,
+        ])
+      )[0];
+      const curIntake = ninRow?.intake_payload || {};
+      existingFirst = curIntake.first_name || curIntake.firstname || '';
+      existingMiddle = curIntake.middle_name || curIntake.middlename || '';
+      existingLast = curIntake.last_name || curIntake.lastname || curIntake.surname || '';
+    }
+
+    const intakeFields: Record<string, any> = {};
+    if (fields.email) {
+      intakeFields.email = fields.email;
+      if (emailChanged) {
+        intakeFields.email_verified = false;
+      }
+    }
+    if (fields.phone) intakeFields.phone = fields.phone;
+    if (fields.firstName) intakeFields.first_name = fields.firstName;
+    if (fields.lastName) intakeFields.last_name = fields.lastName;
+    if (fields.middleName) intakeFields.middle_name = fields.middleName;
+    if (fields.gender) intakeFields.gender = fields.gender;
+    if (fields.dateOfBirth) intakeFields.date_of_birth = fields.dateOfBirth;
+    if (fields.stateOfOrigin) intakeFields.state_of_origin = fields.stateOfOrigin;
+    if (fields.lga) intakeFields.lga = fields.lga;
+    if (fields.residentialAddress) intakeFields.residential_address = fields.residentialAddress;
+    if (fields.placeOfBirth) intakeFields.place_of_birth = fields.placeOfBirth;
+    if (fields.subjectCombId) intakeFields.subject_combination_id = fields.subjectCombId;
+    if (fields.instCode) intakeFields.institution_issued_code = fields.instCode;
+
+    if (fields.firstName || fields.lastName || fields.middleName) {
+      const effFirst = fields.firstName || existingFirst;
+      const effMiddle = fields.middleName || existingMiddle;
+      const effLast = fields.lastName || existingLast;
+      const constructed = [effFirst, effMiddle, effLast].filter(Boolean).join(' ').trim();
+      if (constructed) intakeFields.name = constructed;
+    }
+
+    if (!Object.keys(intakeFields).length) return;
+
+    if (reg.ninVerificationId) {
+      // NOTE: jupeb_nin_verifications does NOT have updated_at column
+      await this.dataSource.query(
+        `UPDATE jupeb_nin_verifications
+         SET intake_payload = COALESCE(intake_payload, '{}'::jsonb) || $2::jsonb
+         WHERE id = $1`,
+        [reg.ninVerificationId, JSON.stringify(intakeFields)],
+      );
+    } else if (!reg.userId) {
+      // If registration has no nin_verification_id and no user_id, create a pending verification
+      const inserted = await this.dataSource.query(
+        `INSERT INTO jupeb_nin_verifications (status, intake_payload, created_at)
+         VALUES ('pending', $1::jsonb, NOW())
+         RETURNING id`,
+        [JSON.stringify(intakeFields)],
+      );
+      if (inserted?.[0]?.id) {
+        await this.regRepo.updateById(reg.id, { ninVerificationId: inserted[0].id });
+        reg.ninVerificationId = inserted[0].id;
+      }
+    }
+  }
+
+  private async updateNextOfKin(
+    registrationId: string,
+    nok: any,
+    isCandidateUser: boolean,
+  ): Promise<void> {
+    if (!nok || typeof nok !== 'object') return;
+
+    const nokName =
+      nok.name ||
+      [nok.first_name || nok.firstName, nok.last_name || nok.lastName].filter(Boolean).join(' ') ||
+      nok.full_name;
+    const nokRel = nok.relationship || nok.relation || 'Guardian';
+    const nokPhone = nok.phone || nok.telephone || nok.contact || nok.nok_phone || null;
+    const nokEmail = nok.email || nok.nok_email || null;
+    const nokAddress = nok.address || nok.nok_address || null;
+    const nokSource = nok.source || (isCandidateUser ? 'student' : 'institution');
+
+    if (!nokName && !nokPhone && !nokEmail && !nokAddress) return;
+
+    try {
+      await this.dataSource.query(
+        `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+         ON CONFLICT (registration_id) WHERE (deleted_at IS NULL) DO UPDATE
+         SET name = EXCLUDED.name,
+             relationship = EXCLUDED.relationship,
+             phone = EXCLUDED.phone,
+             email = EXCLUDED.email,
+             address = EXCLUDED.address,
+             source = EXCLUDED.source,
+             updated_at = NOW()`,
+        [registrationId, nokName || 'Next of Kin', nokRel, nokPhone, nokEmail, nokAddress, nokSource],
+      );
+    } catch {
+      const existing = await this.dataSource
+        .query(
+          `SELECT id FROM jupeb_next_of_kin WHERE registration_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+          [registrationId],
+        )
+        .catch(() => []);
+      if (existing?.[0]?.id) {
+        await this.dataSource
+          .query(
+            `UPDATE jupeb_next_of_kin SET name = $2, relationship = $3, phone = $4, email = $5, address = $6, source = $7, updated_at = NOW() WHERE id = $1`,
+            [existing[0].id, nokName || 'Next of Kin', nokRel, nokPhone, nokEmail, nokAddress, nokSource],
+          )
+          .catch(() => {});
+      } else {
         await this.dataSource
           .query(
             `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-             ON CONFLICT (registration_id) WHERE (deleted_at IS NULL) DO UPDATE
-             SET name = EXCLUDED.name, relationship = EXCLUDED.relationship, phone = EXCLUDED.phone, email = EXCLUDED.email, address = EXCLUDED.address, source = EXCLUDED.source, updated_at = NOW()`,
-            [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null, nokSource],
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+            [registrationId, nokName || 'Next of Kin', nokRel, nokPhone, nokEmail, nokAddress, nokSource],
           )
-          .catch(async () => {
-            const existing = await this.dataSource
-              .query(
-                `SELECT id FROM jupeb_next_of_kin WHERE registration_id = $1 AND deleted_at IS NULL LIMIT 1`,
-                [registrationId],
-              )
-              .catch(() => []);
-            if (existing && existing.length > 0) {
-              await this.dataSource
-                .query(
-                  `UPDATE jupeb_next_of_kin SET name = $2, relationship = $3, phone = $4, email = $5, address = $6, source = $7, updated_at = NOW() WHERE id = $1`,
-                  [existing[0].id, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null, nokSource],
-                )
-                .catch(() => {});
-            } else {
-              await this.dataSource
-                .query(
-                  `INSERT INTO jupeb_next_of_kin (registration_id, name, relationship, phone, email, address, source, created_at, updated_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
-                  [registrationId, nokName || 'Next of Kin', nokRel, nokPhone || null, nokEmail || null, nokAddress || null, nokSource],
-                )
-                .catch(() => {});
-            }
-          });
+          .catch(() => {});
       }
     }
+  }
 
-    // 4. Update documents if attached
-    if (Array.isArray(docs) && docs.length) {
-      for (const d of docs) {
-        if (d && (d.requirement_id || d.requirementId || d.file_id || d.fileId)) {
-          await this.docRepo
-            .create({
-              registrationId,
-              requirementId: d.requirement_id || d.requirementId,
-              fileId: d.file_id || d.fileId,
-              source: d.source || 'institution',
-              sitting: d.sitting || 1,
-            })
-            .catch(() => {});
-        }
+  private async updateAttachedDocuments(
+    registrationId: string,
+    docs: any[],
+    isCandidateUser: boolean,
+  ): Promise<void> {
+    if (!Array.isArray(docs) || !docs.length) return;
+
+    for (const d of docs) {
+      const requirementId = d?.requirement_id || d?.requirementId;
+      const fileId = d?.file_id || d?.fileId;
+      if (d && (requirementId || fileId)) {
+        await this.docRepo
+          .create({
+            registrationId,
+            requirementId,
+            fileId,
+            source: d.source || (isCandidateUser ? 'student' : 'institution'),
+            sitting: d.sitting || 1,
+          })
+          .catch(() => {});
       }
     }
-
-    // Emit in-memory event for instant single candidate sync to CRMS & Attendance
-    this.eventEmitter.emit(SyncEvent.CANDIDATE_UPDATED, {
-      registrationId: reg.id,
-      userId,
-      data: dto,
-    });
-
-    return this.getRegistrationById(registrationId, userId);
   }
 
   /**
@@ -2645,13 +2795,13 @@ export class RegistrationService {
       captured_photo_url: facePhotoUrl,
       captured_photo: facePhotoUrl,
       basic_information: {
-        date_of_birth: ninPayload.date_of_birth || u.date_of_birth || null,
-        gender: ninPayload.gender || u.gender || null,
-        residential_address: u.residential_address || ninPayload.address || intake.address || null,
+        date_of_birth: u.date_of_birth || intake.date_of_birth || ninPayload.date_of_birth || null,
+        gender: u.gender || intake.gender || ninPayload.gender || null,
+        residential_address: u.residential_address || intake.residential_address || intake.address || ninPayload.address || null,
         country: geo.country || { id: 1, name: 'Nigeria' },
         state_of_origin: geo.state_of_origin || (u.state_of_origin ? { id: null, name: u.state_of_origin } : null),
         lga: geo.lga || (u.lga ? { id: null, name: u.lga } : null),
-        place_of_birth: u.place_of_birth || ninPayload.place_of_birth || null,
+        place_of_birth: u.place_of_birth || intake.place_of_birth || ninPayload.place_of_birth || null,
       },
       contact_information: {
         email: u.email || intake.email || null,

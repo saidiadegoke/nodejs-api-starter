@@ -21,6 +21,7 @@ import { RegistrationEventsService } from './registration-events.service';
 import { RegistrationFormPdfService } from './registration-form-pdf.service';
 import { CandidateSyncQueueService } from '@modules/sync';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
+import { InstitutionRegistrationLockService } from '@modules/sessions';
 
 const REG_ID = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -109,6 +110,10 @@ describe('RegistrationService.getRegistrationById bio fallbacks', () => {
           useValue: {
             create: () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }),
           },
+        },
+        {
+          provide: InstitutionRegistrationLockService,
+          useValue: { assertRegistrationAllowed: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

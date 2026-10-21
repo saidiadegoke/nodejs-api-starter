@@ -51,16 +51,40 @@ const sendEmail = async ({ to, subject, templateFile, placeholders, replyTo, fro
 
     if (Array.isArray(placeholders)) {
       let placeholderIndex = 0;
+      const sanitized = placeholders.map((val, idx) => {
+        if (idx === 0 && typeof val === 'string' && (!val.trim() || val.trim().toLowerCase() === 'there')) {
+          return 'User';
+        }
+        return val;
+      });
       htmlContent = htmlContent.replace(/%s/g, (match) => {
-        if (placeholderIndex < placeholders.length) {
-          return placeholders[placeholderIndex++];
+        if (placeholderIndex < sanitized.length) {
+          return sanitized[placeholderIndex++];
         }
         return match;
       });
     } else if (typeof placeholders === 'object' && placeholders !== null) {
+      const ph = { ...placeholders };
+      const rawFirst = ph.firstName ? String(ph.firstName).trim() : '';
+      const rawName = ph.name ? String(ph.name).trim() : '';
+      const rawUni = ph.universityName ? String(ph.universityName).trim() : '';
+      const rawRole = ph.role ? String(ph.role).trim() : '';
+
+      const resolvedFirstName =
+        (rawFirst && rawFirst.toLowerCase() !== 'there' ? rawFirst : '') ||
+        (rawName && rawName.toLowerCase() !== 'there' ? rawName : '') ||
+        rawUni ||
+        (rawRole ? `${rawRole.replace(/_/g, ' ')} User` : '') ||
+        'User';
+
+      ph.firstName = resolvedFirstName;
+      if (!ph.name || String(ph.name).trim().toLowerCase() === 'there') {
+        ph.name = resolvedFirstName;
+      }
+
       htmlContent = htmlContent.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-        return placeholders[key] !== undefined && placeholders[key] !== null
-          ? String(placeholders[key])
+        return ph[key] !== undefined && ph[key] !== null
+          ? String(ph[key])
           : match;
       });
     }

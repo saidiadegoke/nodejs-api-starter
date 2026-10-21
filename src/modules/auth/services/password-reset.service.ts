@@ -219,8 +219,8 @@ export class PasswordResetService {
 
     if (isInstitution) {
       user.first_name =
-        rawUniversityName ||
         (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') ||
+        rawUniversityName ||
         (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') ||
         'Institution Administrator';
       user.display_name = user.first_name;

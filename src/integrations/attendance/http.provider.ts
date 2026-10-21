@@ -122,7 +122,16 @@ function compactParams(obj: Record<string, any> = {}): Record<string, any> {
   );
 }
 
-const IDENTITY_PARAM_KEYS = new Set(['student_id', 'registration_id', 'candidate_code']);
+const IDENTITY_PARAM_KEYS = new Set([
+  'student_id',
+  'registration_id',
+  'candidate_code',
+  'candidate_number',
+  'candidateCode',
+  'candidateNumber',
+  'candidate_reg_number',
+  'registration_number',
+]);
 
 function filterParams(params: Record<string, any> = {}): Record<string, any> {
   return compactParams(
@@ -131,18 +140,34 @@ function filterParams(params: Record<string, any> = {}): Record<string, any> {
 }
 
 export function buildUpstreamIdentity(studentContext: Record<string, any> = {}): Record<string, any> {
-  const candidateCode = studentContext.candidate_code;
+  const candidateCode =
+    studentContext.candidate_code ||
+    studentContext.candidate_number ||
+    studentContext.candidateCode ||
+    studentContext.candidateNumber;
+
   if (candidateCode) {
     return compactParams({
       candidate_code: candidateCode,
-      student_id: studentContext.explicit_student_id,
-      registration_id: studentContext.explicit_registration_id,
+      candidate_number: studentContext.candidate_number || candidateCode,
+      student_id: studentContext.explicit_student_id || studentContext.student_id,
+      registration_id:
+        studentContext.explicit_registration_id ||
+        studentContext.attendance_registration_code ||
+        studentContext.registration_id,
     });
   }
   return compactParams({
-    student_id: studentContext.explicit_student_id || studentContext.user_id,
-    registration_id: studentContext.explicit_registration_id || studentContext.registration_id,
+    student_id:
+      studentContext.explicit_student_id ||
+      studentContext.student_id ||
+      studentContext.user_id,
+    registration_id:
+      studentContext.explicit_registration_id ||
+      studentContext.attendance_registration_code ||
+      studentContext.registration_id,
     candidate_code: studentContext.candidate_code,
+    candidate_number: studentContext.candidate_number,
   });
 }
 
