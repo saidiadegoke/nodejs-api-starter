@@ -40,6 +40,14 @@ export class CreateRegistrationDto {
   nin_verification_id?: string;
 
   @ApiPropertyOptional({
+    description: 'Candidate 11-digit National Identification Number (NIN)',
+    example: '00000000001',
+  })
+  @IsOptional()
+  @IsString()
+  nin?: string;
+
+  @ApiPropertyOptional({
     description: 'Pre-existing candidate user account UUID',
     example: 'f6b07384-d113-40f4-8a4e-379e4971c260',
   })

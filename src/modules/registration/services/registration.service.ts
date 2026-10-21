@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Optional,
   BadRequestException,
   NotFoundException,
   ConflictException,
@@ -8,6 +9,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { normalizeNin, hashNin, ninLast4 } from '../../identity/utils/identity-crypto.util';
+import { NinAdapterService } from '../../identity/services/nin-adapter.service';
 import { LoggerFactory } from '../../../logger';
 import { RegistrationRepository } from '../repositories/registration.repository';
 import { RegistrationDocumentRepository } from '../repositories/registration-document.repository';
@@ -232,6 +235,8 @@ export class RegistrationService {
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
     private readonly registrationLock: InstitutionRegistrationLockService,
+    @Optional()
+    private readonly ninAdapter?: NinAdapterService,
   ) {
     this.logger = this.loggerFactory.create(RegistrationService.name);
   }
@@ -977,7 +982,52 @@ export class RegistrationService {
       actorUserId: userId,
     });
 
-    if (dto.nin_verification_id) {
+    if (dto.nin) {
+      const normNin = normalizeNin(dto.nin);
+      if (!normNin || normNin.length !== 11 || normNin === '00000000000' || /^(\d)\1{10}$/.test(normNin)) {
+        throw new UnprocessableEntityException('Invalid NIN: NIN must be an 11-digit valid number');
+      }
+      const hashed = hashNin(normNin);
+
+      if (dto.nin_verification_id) {
+        const ninRows = await this.dataSource.query(
+          `SELECT id, status, nin_hash FROM jupeb_nin_verifications WHERE id = $1`,
+          [dto.nin_verification_id],
+        );
+        const nin = ninRows[0];
+        if (!nin) throw new NotFoundException('NIN verification record not found');
+        if (nin.nin_hash !== hashed) {
+          throw new UnprocessableEntityException('Provided NIN does not match verification record');
+        }
+        if (nin.status !== 'verified') {
+          throw new UnprocessableEntityException('NIN verification must be completed and in verified status to create candidate registration');
+        }
+      } else {
+        const ninRows = await this.dataSource.query(
+          `SELECT id, status, nin_hash FROM jupeb_nin_verifications WHERE nin_hash = $1 AND status = 'verified' ORDER BY created_at DESC LIMIT 1`,
+          [hashed],
+        );
+        let nin = ninRows[0];
+        if (!nin) {
+          if (this.ninAdapter) {
+            const { provider_name, result } = await this.ninAdapter.verifyNin(normNin);
+            if (result.outcome !== 'verified') {
+              throw new UnprocessableEntityException(result.error?.message || 'NIN verification failed or NIN is invalid');
+            }
+            const insertRes = await this.dataSource.query(
+              `INSERT INTO jupeb_nin_verifications (nin_hash, nin_last4, provider, status, response_payload, created_at, verified_at, requested_by)
+               VALUES ($1, $2, $3, 'verified', $4, NOW(), NOW(), $5)
+               RETURNING id, status, nin_hash`,
+              [hashed, ninLast4(normNin), provider_name, JSON.stringify(result.profile || {}), userId || null],
+            );
+            nin = insertRes[0];
+          } else {
+            throw new UnprocessableEntityException('NIN verification record not found');
+          }
+        }
+        dto.nin_verification_id = nin.id;
+      }
+    } else if (dto.nin_verification_id) {
       const ninRows = await this.dataSource.query(
         `SELECT id, status, nin_hash FROM jupeb_nin_verifications WHERE id = $1`,
         [dto.nin_verification_id],
@@ -989,15 +1039,28 @@ export class RegistrationService {
       if (nin.status !== 'verified') {
         throw new UnprocessableEntityException('NIN verification must be completed and in verified status to create candidate registration');
       }
+    }
+
+    if (dto.nin_verification_id) {
       const existing = await this.dataSource.query(
-        `SELECT id FROM jupeb_registrations WHERE nin_verification_id = $1 AND status NOT IN ('rejected', 'withdrawn') AND session_id = $2 LIMIT 1`,
+        `SELECT r.id FROM jupeb_registrations r
+         JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+         WHERE nv.id = $1 AND r.status NOT IN ('rejected', 'withdrawn') AND r.session_id = $2 LIMIT 1`,
         [dto.nin_verification_id, dto.session_id],
       );
       if (existing.length > 0) {
         throw new ConflictException('This NIN is already registered for this academic session');
       }
-    } else {
-      throw new UnprocessableEntityException('nin_verification_id is required to create a candidate registration');
+
+      const existingGlobal = await this.dataSource.query(
+        `SELECT r.id FROM jupeb_registrations r
+         JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+         WHERE nv.id = $1 AND r.status NOT IN ('rejected', 'withdrawn') LIMIT 1`,
+        [dto.nin_verification_id],
+      );
+      if (existingGlobal.length > 0) {
+        throw new ConflictException('This NIN is already registered with an active candidate in the system');
+      }
     }
 
     const serialRows = await this.dataSource.query(

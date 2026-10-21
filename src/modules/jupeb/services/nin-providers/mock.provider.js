@@ -95,11 +95,11 @@ async function verifyNin(normalizedNin) {
       error_message: 'NIN must be 11 digits',
     };
   }
-  if (/^0+$/.test(normalizedNin)) {
+  if (/^0+$/.test(normalizedNin) || /^(\d)\1{10}$/.test(normalizedNin)) {
     return {
       outcome: 'failed',
       error_code: 'invalid_nin',
-      error_message: 'Invalid NIN',
+      error_message: 'Invalid NIN: repeating or dummy digits are not valid',
     };
   }
   if (isMockStrict() && !MOCK_TEST_POOL_RE.test(normalizedNin)) {

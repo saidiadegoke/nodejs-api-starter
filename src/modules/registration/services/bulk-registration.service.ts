@@ -1,4 +1,4 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, Optional, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -7,6 +7,7 @@ import { normalizeNin, hashNin, ninLast4 } from '../../identity/utils/identity-c
 import { RegistrationStatus } from '../../../shared/enums';
 import { RegistrationEntity } from '../entities/registration.entity';
 import { NinVerificationEntity, NinVerificationStatus } from '../../identity/entities/nin-verification.entity';
+import { NinAdapterService } from '../../identity/services/nin-adapter.service';
 import { InstitutionUserScopeService } from './institution-user-scope.service';
 import { InstitutionRegistrationLockService } from '../../sessions/services/institution-registration-lock.service';
 import { RegistrationStatusHistoryRepository } from '../repositories/registration-status-history.repository';
@@ -39,6 +40,8 @@ export interface BulkRegistrationResult {
   failed: number;
   skipped_count?: number;
   skipped_rows?: number[];
+  skipped?: BulkRegistrationError[];
+  failed_items?: BulkRegistrationError[];
   partial?: boolean;
   errors: BulkRegistrationError[];
   registrations?: RegistrationEntity[];
@@ -225,6 +228,8 @@ export class BulkRegistrationService {
     private readonly eventEmitter: EventEmitter2,
     private readonly historyRepo: RegistrationStatusHistoryRepository,
     private readonly registrationLock: InstitutionRegistrationLockService,
+    @Optional()
+    private readonly ninAdapter?: NinAdapterService,
   ) {}
 
   async bulkUpload(
@@ -232,6 +237,7 @@ export class BulkRegistrationService {
     sessionId: string,
     universityId: string,
     userId?: string | null,
+    options: { provider?: string } = {},
   ): Promise<BulkRegistrationResult> {
     if (userId) {
       const scoped = await this.scopeService.effectiveUniversityId(userId, universityId);
@@ -508,11 +514,11 @@ export class BulkRegistrationService {
       return null;
     };
 
-    const errors: BulkRegistrationError[] = [];
+    const failedList: BulkRegistrationError[] = [];
+    const skippedList: BulkRegistrationError[] = [];
     const registrations: RegistrationEntity[] = [];
     let successful = 0;
     let validRowsCount = 0;
-    let skipped = 0;
     const skippedRows: number[] = [];
 
     const maxSerialRecord = await this.registrationRepo
@@ -523,6 +529,7 @@ export class BulkRegistrationService {
 
     let currentSerial = Number(maxSerialRecord?.max_serial || 0);
     const seenNinsInBatch = new Set<string>();
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     for (let idx = 0; idx < rows.length; idx += 1) {
       const row = rows[idx];
@@ -577,16 +584,53 @@ export class BulkRegistrationService {
 
       // Skip completely blank rows (e.g. empty template rows with default dropdown values)
       if (!rawNin && !firstName && !lastName && !email && !phone) {
-        skipped += 1;
         skippedRows.push(rowNumber);
         continue;
       }
       validRowsCount += 1;
 
+      // 1. Syntax validations: missing names, bad email, bad NIN
+      const hasLastNameCol = 'lastname' in clean || 'surname' in clean || 'last' in clean;
+      if (
+        (!firstName && (lastName || email || fullName)) ||
+        (!lastName && hasLastNameCol && firstName) ||
+        (!firstName && !lastName && !fullName)
+      ) {
+        skippedList.push({
+          row: rowNumber,
+          first_name: firstName,
+          last_name: lastName,
+          middle_name: middleName,
+          email,
+          phone,
+          nin: rawNin ? String(rawNin) : undefined,
+          combination_code: rawCombo,
+          error_code: 'missing_name',
+          error: 'First name and last name are required',
+        });
+        continue;
+      }
+
+      if (email && !EMAIL_RE.test(email)) {
+        skippedList.push({
+          row: rowNumber,
+          first_name: firstName,
+          last_name: lastName,
+          middle_name: middleName,
+          email,
+          phone,
+          nin: rawNin ? String(rawNin) : undefined,
+          combination_code: rawCombo,
+          error_code: 'invalid_email',
+          error: 'Valid email address is required',
+        });
+        continue;
+      }
+
       const normNin = normalizeNin(rawNin);
 
       if (!normNin || normNin.length !== 11) {
-        errors.push({
+        skippedList.push({
           row: rowNumber,
           first_name: firstName,
           last_name: lastName,
@@ -602,8 +646,9 @@ export class BulkRegistrationService {
         continue;
       }
 
+      // Intra-file duplicate NIN
       if (seenNinsInBatch.has(normNin)) {
-        errors.push({
+        failedList.push({
           row: rowNumber,
           first_name: firstName,
           last_name: lastName,
@@ -622,7 +667,7 @@ export class BulkRegistrationService {
 
       const matchedCombo = await resolveCombo(rawCombo);
       if (rawCombo && !matchedCombo) {
-        errors.push({
+        failedList.push({
           row: rowNumber,
           first_name: firstName,
           last_name: lastName,
@@ -638,10 +683,60 @@ export class BulkRegistrationService {
         continue;
       }
 
-      try {
-        const hashed = hashNin(normNin);
-        const last4 = ninLast4(normNin);
+      const hashed = hashNin(normNin);
+      const last4 = ninLast4(normNin);
 
+      // Pre-check 1: Is candidate's NIN already registered for this session?
+      const existingSessionReg = await this.dataSource.query(
+        `SELECT r.id FROM jupeb_registrations r
+         JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+         WHERE nv.nin_hash = $1 AND r.session_id = $2 AND r.status NOT IN ('rejected', 'withdrawn')
+         LIMIT 1`,
+        [hashed, sessionId],
+      );
+      if (existingSessionReg.length > 0) {
+        failedList.push({
+          row: rowNumber,
+          first_name: firstName,
+          last_name: lastName,
+          middle_name: middleName,
+          email,
+          phone,
+          nin: normNin,
+          nin_last4: last4,
+          combination_code: rawCombo,
+          error_code: 'already_registered',
+          error: 'This NIN is already registered for this academic session',
+        });
+        continue;
+      }
+
+      // Pre-check 2: Is candidate's NIN already registered with an active candidate globally?
+      const existingGlobalReg = await this.dataSource.query(
+        `SELECT r.id FROM jupeb_registrations r
+         JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+         WHERE nv.nin_hash = $1 AND r.status NOT IN ('rejected', 'withdrawn')
+         LIMIT 1`,
+        [hashed],
+      );
+      if (existingGlobalReg.length > 0) {
+        failedList.push({
+          row: rowNumber,
+          first_name: firstName,
+          last_name: lastName,
+          middle_name: middleName,
+          email,
+          phone,
+          nin: normNin,
+          nin_last4: last4,
+          combination_code: rawCombo,
+          error_code: 'already_registered',
+          error: 'This NIN is already registered with an active candidate in the system',
+        });
+        continue;
+      }
+
+      try {
         let ninVerification = await this.ninVerificationRepo.findOne({
           where: { ninHash: hashed },
         });
@@ -663,22 +758,96 @@ export class BulkRegistrationService {
         };
 
         if (!ninVerification) {
-          ninVerification = await this.ninVerificationRepo.save(
-            this.ninVerificationRepo.create({
-              ninHash: hashed,
-              ninLast4: last4,
-              provider: 'bulk_upload',
-              status: NinVerificationStatus.VERIFIED,
-              responsePayload: {
-                first_name: firstName || undefined,
-                last_name: lastName || undefined,
-                middle_name: middleName || undefined,
-              },
-              errorPayload: {},
-              intakePayload: verificationIntake,
-              requestedBy: userId || null,
-            }),
-          );
+          if (this.ninAdapter) {
+            const adapterOpts = { provider: options?.provider };
+            const { provider_name, result } = await this.ninAdapter.verifyNin(normNin, adapterOpts);
+
+            if (result.outcome === 'failed') {
+              failedList.push({
+                row: rowNumber,
+                first_name: firstName,
+                last_name: lastName,
+                middle_name: middleName,
+                email,
+                phone,
+                nin: normNin,
+                nin_last4: last4,
+                combination_code: rawCombo,
+                error_code: result.error?.code === 'invalid_nin' ? 'invalid_nin' : 'nin_failed',
+                error: result.error?.message || 'NIN verification failed',
+              });
+              continue;
+            }
+
+            if (result.outcome === 'pending' || (result.outcome as string) === 'unavailable') {
+              failedList.push({
+                row: rowNumber,
+                first_name: firstName,
+                last_name: lastName,
+                middle_name: middleName,
+                email,
+                phone,
+                nin: normNin,
+                nin_last4: last4,
+                combination_code: rawCombo,
+                error_code: 'nin_unavailable',
+                error: result.error?.message || 'NIN verification service unavailable',
+              });
+              continue;
+            }
+
+            if (result.outcome !== 'verified') {
+              failedList.push({
+                row: rowNumber,
+                first_name: firstName,
+                last_name: lastName,
+                middle_name: middleName,
+                email,
+                phone,
+                nin: normNin,
+                nin_last4: last4,
+                combination_code: rawCombo,
+                error_code: 'nin_failed',
+                error: result.error?.message || 'NIN verification failed',
+              });
+              continue;
+            }
+
+            ninVerification = await this.ninVerificationRepo.save(
+              this.ninVerificationRepo.create({
+                ninHash: hashed,
+                ninLast4: last4,
+                provider: provider_name,
+                status: NinVerificationStatus.VERIFIED,
+                responsePayload: (result.profile as any) || {
+                  first_name: firstName || undefined,
+                  last_name: lastName || undefined,
+                  middle_name: middleName || undefined,
+                },
+                errorPayload: {},
+                intakePayload: verificationIntake,
+                requestedBy: userId || null,
+              }),
+            );
+          } else {
+            // Fallback when ninAdapter is not injected (e.g. unit test)
+            ninVerification = await this.ninVerificationRepo.save(
+              this.ninVerificationRepo.create({
+                ninHash: hashed,
+                ninLast4: last4,
+                provider: 'bulk_upload',
+                status: NinVerificationStatus.VERIFIED,
+                responsePayload: {
+                  first_name: firstName || undefined,
+                  last_name: lastName || undefined,
+                  middle_name: middleName || undefined,
+                },
+                errorPayload: {},
+                intakePayload: verificationIntake,
+                requestedBy: userId || null,
+              }),
+            );
+          }
         } else if (ninVerification.provider === 'bulk_upload') {
           // Refresh stale bulk-typed data with the latest spreadsheet row so a
           // re-upload shows current details. Real NIMC verifications are never
@@ -757,7 +926,7 @@ export class BulkRegistrationService {
       } catch (err: any) {
         const dbCode = err?.code || err?.driverError?.code;
         const errorCode = dbCode === '23505' ? 'duplicate_registration' : 'persistence_error';
-        errors.push({
+        failedList.push({
           row: rowNumber,
           first_name: firstName,
           last_name: lastName,
@@ -765,7 +934,7 @@ export class BulkRegistrationService {
           email,
           phone,
           nin: normNin,
-          nin_last4: ninLast4(normNin),
+          nin_last4: last4,
           combination_code: rawCombo,
           error_code: errorCode,
           error:
@@ -776,40 +945,44 @@ export class BulkRegistrationService {
       }
     }
 
-    const failed = errors.length;
-    const partial = failed > 0 && successful > 0;
+    const failedCount = failedList.length;
+    const skippedCount = skippedList.length;
+    const totalSkippedCount = skippedRows.length + skippedList.length;
+    const partial = failedCount > 0 && successful > 0;
     const totalRowsCount = validRowsCount || rows.length;
+    const allErrors = [...failedList, ...skippedList];
+
     const resultData = {
       total_rows: totalRowsCount,
       totalRows: totalRowsCount,
       successful,
       succeeded_count: successful,
       succeededCount: successful,
-      failed,
-      failed_count: failed,
-      failedCount: failed,
-      skipped: skipped,
-      skipped_count: skipped,
+      failed_count: failedCount,
+      failedCount: failedCount,
+      skipped_count: skippedCount,
       skipped_rows: skippedRows,
+      failed: failedList,
+      skipped: skippedList,
       partial,
-      errors,
+      errors: allErrors,
       registrations,
     };
 
     return {
-      success: failed === 0 || successful > 0,
+      success: failedCount === 0 || successful > 0,
       total_rows: totalRowsCount,
       totalRows: totalRowsCount,
       successful,
       succeeded_count: successful,
       succeededCount: successful,
-      failed,
-      failed_count: failed,
-      failedCount: failed,
-      skipped_count: skipped,
+      failed: failedCount,
+      failed_count: failedCount,
+      failedCount: failedCount,
+      skipped_count: totalSkippedCount,
       skipped_rows: skippedRows,
       partial,
-      errors,
+      errors: allErrors,
       registrations,
       data: resultData,
     } as any;

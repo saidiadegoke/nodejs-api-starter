@@ -44,12 +44,14 @@ describe('JUPEB Bulk Candidate Upload API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send(
         buildCatalogUniversityPayload('BLK', {
-          code: nextJupebTestUniversityCode('BLK'),
           name: `Bulk Upload Test Uni ${suffix}`,
         })
       );
     if (uniRes.status === 201) {
       universityId = uniRes.body.data.id;
+    } else {
+      const existing = await pool.query(`SELECT id FROM jupeb_universities WHERE deleted_at IS NULL LIMIT 1`);
+      if (existing.rows[0]) universityId = existing.rows[0].id;
     }
 
     const scRes = await request(app)
@@ -63,6 +65,9 @@ describe('JUPEB Bulk Candidate Upload API', () => {
       });
     if (scRes.status === 201) {
       subjectCombinationCode = scRes.body.data.code;
+    } else {
+      const existing = await pool.query(`SELECT code FROM jupeb_subject_combinations WHERE deleted_at IS NULL LIMIT 1`);
+      if (existing.rows[0]) subjectCombinationCode = existing.rows[0].code;
     }
 
     const { y1, academicYear, yearShort } = nextJupebAcademicSession();
@@ -81,6 +86,9 @@ describe('JUPEB Bulk Candidate Upload API', () => {
       await request(app)
         .post(`/sessions/${sessionId}/open`)
         .set('Authorization', `Bearer ${adminToken}`);
+    } else {
+      const existing = await pool.query(`SELECT id FROM jupeb_registration_sessions WHERE status = 'open' LIMIT 1`);
+      if (existing.rows[0]) sessionId = existing.rows[0].id;
     }
   });
 
@@ -90,7 +98,7 @@ describe('JUPEB Bulk Candidate Upload API', () => {
   });
 
   it('rejects requests without a file with 422', async () => {
-    if (!registrationMigrated || !adminToken) return;
+    if (!registrationMigrated || !adminToken || !sessionId || !universityId) return;
 
     const res = await request(app)
       .post('/registration/institution/registrations/bulk-upload')
