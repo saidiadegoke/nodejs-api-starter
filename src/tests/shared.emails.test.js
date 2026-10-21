@@ -2,7 +2,11 @@ const fs = require('fs');
 const path = require('path');
 
 describe('email templates standard and rendering', () => {
-  const emailsDir = path.join(__dirname, '../shared/emails');
+  const candidateDirs = [
+    path.join(__dirname, '../shared/emails'),
+    path.join(__dirname, '../modules/mail/mail-templates'),
+  ];
+  const emailsDir = candidateDirs.find((d) => fs.existsSync(d)) || candidateDirs[0];
 
   function renderTemplate(filename, placeholders) {
     const fullPath = path.join(emailsDir, filename);

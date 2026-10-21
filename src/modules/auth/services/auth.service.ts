@@ -907,7 +907,17 @@ export class AuthService {
       await AppDataSource.initialize();
     }
     const rows = await AppDataSource.query(
-      `SELECT u.id, u.email, u.email_verified, p.first_name
+      `SELECT u.id, u.email, u.email_verified, p.first_name, p.display_name,
+              COALESCE(
+                (SELECT ju.name FROM user_universities uu JOIN jupeb_universities ju ON ju.id = uu.university_id WHERE uu.user_id = u.id AND uu.deleted_at IS NULL AND ju.deleted_at IS NULL ORDER BY uu.is_primary DESC, uu.created_at ASC LIMIT 1),
+                (SELECT ju.name FROM profiles pr JOIN jupeb_universities ju ON ju.id = pr.jupeb_university_id WHERE pr.user_id = u.id AND ju.deleted_at IS NULL LIMIT 1),
+                (SELECT ju.name FROM jupeb_universities ju WHERE LOWER(ju.email) = LOWER(u.email) AND ju.deleted_at IS NULL LIMIT 1)
+              ) AS university_name,
+              EXISTS (
+                SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                WHERE ur.user_id = u.id AND r.name = 'institution_admin'
+                  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+              ) AS is_institution_admin
          FROM users u LEFT JOIN profiles p ON p.user_id = u.id
         WHERE u.id = $1 LIMIT 1`,
       [userId]
@@ -948,6 +958,13 @@ export class AuthService {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const sendEmail = require('../../../utils/utils/sendEmail');
 
+    const rawFirstName = user.first_name ? String(user.first_name).trim() : '';
+    const rawDisplayName = user.display_name ? String(user.display_name).trim() : '';
+    const rawUniversityName = user.university_name ? String(user.university_name).trim() : '';
+    const greetingName = user.is_institution_admin
+      ? rawUniversityName || (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || 'Institution Administrator'
+      : (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') || 'User';
+
     setImmediate(() => {
       sendEmail({
         to: user.email,
@@ -955,7 +972,7 @@ const sendEmail = require('../../../utils/utils/sendEmail');
         templateFile,
         placeholders: {
           appName,
-          firstName: user.first_name || 'there',
+          firstName: greetingName,
           verifyUrl,
           ttlHours: Math.round(AuthService._verificationTtlMs() / 3600000),
           email: user.email,

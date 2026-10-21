@@ -45,6 +45,92 @@ describe('Password reset institution eligibility', () => {
     });
     expect(dataSource.query).toHaveBeenCalledTimes(2);
   });
+
+  it('resolves institution name as greeting name when institution admin profile has empty first_name', async () => {
+    const authRepo = {
+      findByIdentifier: jest.fn().mockResolvedValue({ id: 'user-hmu', email: 'hmucrp@yopmail.com' }),
+    };
+    const dataSource = {
+      query: jest.fn()
+        .mockResolvedValueOnce([{ is_institution_admin: true, has_active_institution: true }])
+        .mockResolvedValueOnce([{ first_name: '', display_name: ' ', university_name: 'Hallmark University' }]),
+    };
+    const mailService = {
+      sendOtpEmail: jest.fn().mockResolvedValue('msg-123'),
+      sendForgotPasswordEmail: jest.fn().mockResolvedValue('msg-456'),
+    };
+    const passwordResetRepo = {
+      createReset: jest.fn().mockResolvedValue({ id: 'reset-1' }),
+      invalidateActiveOtpResets: jest.fn().mockResolvedValue(true),
+    };
+    const service = new PasswordResetService(passwordResetRepo, authRepo, dataSource, mailService);
+
+    const user = await service.loadUserForReset('hmucrp@yopmail.com');
+    expect(user).toMatchObject({
+      id: 'user-hmu',
+      first_name: 'Hallmark University',
+      university_name: 'Hallmark University',
+    });
+
+    await service.issueReset({
+      user,
+      delivery: 'otp',
+      channel: 'email',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mailService.sendOtpEmail).toHaveBeenCalledWith(
+      'hmucrp@yopmail.com',
+      expect.objectContaining({
+        firstName: 'Hallmark University',
+      })
+    );
+  });
+
+  it('resolves User for regular user without first_name and never sends there', async () => {
+    const authRepo = {
+      findByIdentifier: jest.fn().mockResolvedValue({ id: 'user-regular', email: 'regular@example.com' }),
+    };
+    const dataSource = {
+      query: jest.fn()
+        .mockResolvedValueOnce([{ is_institution_admin: false, has_active_institution: false }])
+        .mockResolvedValueOnce([{ first_name: '', display_name: '', university_name: null }]),
+    };
+    const mailService = {
+      sendOtpEmail: jest.fn().mockResolvedValue('msg-123'),
+    };
+    const passwordResetRepo = {
+      createReset: jest.fn().mockResolvedValue({ id: 'reset-1' }),
+      invalidateActiveOtpResets: jest.fn().mockResolvedValue(true),
+    };
+    const service = new PasswordResetService(passwordResetRepo, authRepo, dataSource, mailService);
+
+    const user = await service.loadUserForReset('regular@example.com');
+    expect(user).toMatchObject({
+      id: 'user-regular',
+      first_name: 'User',
+    });
+
+    await service.issueReset({
+      user,
+      delivery: 'otp',
+      channel: 'email',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mailService.sendOtpEmail).toHaveBeenCalledWith(
+      'regular@example.com',
+      expect.objectContaining({
+        firstName: 'User',
+      })
+    );
+    expect(mailService.sendOtpEmail).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        firstName: 'there',
+      })
+    );
+  });
 });
 
 describe('OTP — /auth/resend-otp + /auth/verify-phone', () => {

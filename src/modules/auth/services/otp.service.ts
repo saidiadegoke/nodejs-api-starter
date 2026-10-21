@@ -43,20 +43,53 @@ export class OtpService {
   private async loadUser(userId: string): Promise<any | null> {
     const rows = await this.dataSource.query(
       `SELECT u.id, u.email, u.phone, u.email_verified, u.phone_verified,
-              p.first_name
+              p.first_name, p.last_name, p.display_name,
+              COALESCE(
+                (SELECT ju.name FROM user_universities uu JOIN jupeb_universities ju ON ju.id = uu.university_id WHERE uu.user_id = u.id AND uu.deleted_at IS NULL AND ju.deleted_at IS NULL ORDER BY uu.is_primary DESC, uu.created_at ASC LIMIT 1),
+                (SELECT ju.name FROM profiles pr JOIN jupeb_universities ju ON ju.id = pr.jupeb_university_id WHERE pr.user_id = u.id AND ju.deleted_at IS NULL LIMIT 1),
+                (SELECT ju.name FROM jupeb_universities ju WHERE LOWER(ju.email) = LOWER(u.email) AND ju.deleted_at IS NULL LIMIT 1)
+              ) AS university_name,
+              EXISTS (
+                SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                WHERE ur.user_id = u.id AND r.name = 'institution_admin'
+                  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+              ) AS is_institution_admin
          FROM users u LEFT JOIN profiles p ON p.user_id = u.id
         WHERE u.id = $1 LIMIT 1`,
       [userId]
     );
-    return rows[0] || null;
+    const row = rows[0] || null;
+    if (!row) return null;
+    const rawFirstName = row.first_name ? String(row.first_name).trim() : '';
+    const rawDisplayName = row.display_name ? String(row.display_name).trim() : '';
+    const rawUniversityName = row.university_name ? String(row.university_name).trim() : '';
+    const isInstitution = Boolean(row.is_institution_admin);
+    if (isInstitution) {
+      row.first_name =
+        rawUniversityName ||
+        (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') ||
+        (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') ||
+        'Institution Administrator';
+    } else {
+      row.first_name =
+        (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') ||
+        (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') ||
+        'User';
+    }
+    return row;
   }
 
   private dispatchEmail({ user, code }: { user: any; code: string }): void {
     if (!user.email) return;
     const ttlMinutes = Math.round(ttlMs() / 60000);
+    const greetingName =
+      (user.first_name && user.first_name.trim().toLowerCase() !== 'there' ? user.first_name.trim() : '') ||
+      (user.university_name && user.university_name.trim()) ||
+      (user.display_name && user.display_name.trim().toLowerCase() !== 'there' ? user.display_name.trim() : '') ||
+      (user.is_institution_admin ? 'Institution Administrator' : 'User');
     this.mailService.sendOtpEmail(user.email, {
       appName: appName(),
-      firstName: user.first_name || 'there',
+      firstName: greetingName,
       code,
       ttlMinutes,
       email: user.email,

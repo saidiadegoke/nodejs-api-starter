@@ -92,6 +92,21 @@ export class MailService {
         htmlContent = htmlContent.replace(/\{\{(\w+)\}\}/g, (match, key) => {
           return ph[key] !== undefined && ph[key] !== null ? String(ph[key]) : match;
         });
+        if (htmlContent.includes('%s')) {
+          const fallbackList = [
+            ph.name || ph.firstName || 'User',
+            ph.resetUrl || ph.verifyUrl || ph.url || '',
+            ph.resetUrl || ph.verifyUrl || ph.url || '',
+            ph.email || dto.to,
+          ];
+          let idx = 0;
+          htmlContent = htmlContent.replace(/%s/g, (match) => {
+            if (idx < fallbackList.length) {
+              return fallbackList[idx++];
+            }
+            return match;
+          });
+        }
       }
 
       const logoLocations = [
@@ -147,12 +162,20 @@ export class MailService {
   /**
    * Send Forgot Password Email
    */
-  async sendForgotPasswordEmail(to: string, placeholders: Record<string, any>): Promise<string | null> {
+  async sendForgotPasswordEmail(to: string, placeholders: Record<string, any> | any[]): Promise<string | null> {
+    const ph = Array.isArray(placeholders)
+      ? placeholders
+      : [
+          placeholders.name || placeholders.firstName || 'User',
+          placeholders.resetUrl || '',
+          placeholders.resetUrl || '',
+          placeholders.email || to,
+        ];
     return this.sendMail({
       to,
       subject: 'Password Reset Instructions',
       templateFile: 'forgot-password.html',
-      placeholders,
+      placeholders: ph,
     });
   }
 
