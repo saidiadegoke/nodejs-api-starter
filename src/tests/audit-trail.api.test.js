@@ -3,12 +3,16 @@ const request = require('supertest');
 const app = require('../app');
 const pool = require('../database/pool');
 let AdminAuditService;
+let formatDetailsSummary;
 try {
-  AdminAuditService = require('../modules/admin/services/admin-audit.service').AdminAuditService;
+  const mod = require('../modules/admin/services/admin-audit.service');
+  AdminAuditService = mod.AdminAuditService;
+  formatDetailsSummary = mod.formatDetailsSummary;
 } catch {
   AdminAuditService = null;
+  formatDetailsSummary = null;
 }
-const { buildCatalogUniversityPayload } = require('./jupeb-session-test-helpers');
+const { buildCatalogUniversityPayload, nextJupebTestPrefix } = require('./jupeb-session-test-helpers');
 
 describe('Audit Trail & Activity Tracking API', () => {
   let dbReady = false;
@@ -37,14 +41,21 @@ describe('Audit Trail & Activity Tracking API', () => {
   }
 
   async function createUniversity(adminToken, suffix) {
-    const res = await request(app)
-      .post('/catalog/universities')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send(
-        buildCatalogUniversityPayload(String(suffix).slice(-3), {
-          name: `Audit Test Uni ${suffix}`,
-        })
-      );
+    let res;
+    for (let i = 0; i < 5; i += 1) {
+      const code = nextJupebTestPrefix();
+      res = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(
+          buildCatalogUniversityPayload(String(suffix).slice(-3), {
+            code,
+            jupeb_prefix: code,
+            name: `Audit Test Uni ${suffix}-${i}`,
+          })
+        );
+      if (res.status === 201) break;
+    }
     expect(res.status).toBe(201);
     return res.body.data.id;
   }
@@ -340,6 +351,166 @@ describe('Audit Trail & Activity Tracking API', () => {
     expect(regActions).toContain(admin2Action);
     // Should NOT see institution admin's action
     expect(regActions).not.toContain(instAction);
+  });
+
+  describe('Audit details_display and sensitive PII / NIN protection', () => {
+    it('never exposes candidate NIN in details_display for identity.verify', () => {
+      if (!formatDetailsSummary) return;
+
+      const rawDetails = {
+        nin: '54106629714',
+        idempotency_key: '23e87e8f-950c-401f-b7c3-f03e985bf479',
+      };
+
+      const summary = formatDetailsSummary(rawDetails, 'identity.verify');
+      expect(summary).toBe('Verified candidate identity.');
+      expect(summary).not.toContain('54106629714');
+      expect(summary.toLowerCase()).not.toContain('nin');
+      expect(summary.toLowerCase()).not.toContain('idempotency');
+    });
+
+    it('displays candidate name when available without revealing NIN', () => {
+      if (!formatDetailsSummary) return;
+
+      const details = {
+        nin: '54106629714',
+        first_name: 'John',
+        last_name: 'Doe',
+      };
+
+      const summary = formatDetailsSummary(details, 'identity.verify');
+      expect(summary).toBe('Verified candidate identity for John Doe.');
+      expect(summary).not.toContain('54106629714');
+    });
+
+    it('handles failed identity verification cleanly without revealing NIN', () => {
+      if (!formatDetailsSummary) return;
+
+      const details = {
+        nin: '54106629714',
+        status: 'failed',
+        error_message: 'NIMC record not found',
+      };
+
+      const summary = formatDetailsSummary(details, 'identity.verify');
+      expect(summary).toBe('Candidate identity verification failed: NIMC record not found.');
+      expect(summary).not.toContain('54106629714');
+    });
+
+    it('formats registration.resend_code details with candidate code', () => {
+      if (!formatDetailsSummary) return;
+
+      expect(
+        formatDetailsSummary({ institution_issued_code: '9KS8GN' }, 'registration.resend_code')
+      ).toBe('Resent provisional registration code 9KS8GN to candidate.');
+
+      expect(formatDetailsSummary({}, 'registration.resend_code')).toBe(
+        'Resent provisional registration code to candidate.'
+      );
+    });
+
+    it('formats single candidate approve, reject, withdraw, lock, unlock', () => {
+      if (!formatDetailsSummary) return;
+
+      expect(formatDetailsSummary({}, 'registration.approve')).toBe(
+        'Approved candidate registration.'
+      );
+      expect(
+        formatDetailsSummary({ reason: 'Incomplete bio' }, 'registration.reject')
+      ).toBe('Rejected candidate registration. Reason: Incomplete bio.');
+      expect(
+        formatDetailsSummary({ reason: 'Transfer request' }, 'registration.withdraw')
+      ).toBe('Withdrew candidate registration. Reason: Transfer request.');
+      expect(formatDetailsSummary({}, 'registration.lock')).toBe(
+        'Locked candidate registration.'
+      );
+      expect(formatDetailsSummary({}, 'registration.unlock')).toBe(
+        'Unlocked candidate registration.'
+      );
+    });
+
+    it('filters out nin, bvn, and idempotency_key in generic fallback entries', () => {
+      if (!formatDetailsSummary) return;
+
+      const details = {
+        nin: '54106629714',
+        bvn: '22233344455',
+        idempotency_key: 'abc-123',
+        status: 'completed',
+        units: 4,
+      };
+
+      const summary = formatDetailsSummary(details, 'custom.operation');
+      expect(summary).not.toContain('54106629714');
+      expect(summary).not.toContain('22233344455');
+      expect(summary).not.toContain('abc-123');
+      expect(summary).toContain('Status: completed');
+      expect(summary).toContain('units: 4');
+    });
+
+    it('formats batch registration actions and handles 0 executed with failure count', () => {
+      if (!formatDetailsSummary) return;
+
+      // 0 actions executed, with failures
+      expect(
+        formatDetailsSummary({ accepted_count: 0, rejected_count: 1 }, 'registration.reject')
+      ).toBe('No candidate registrations were rejected (1 failed).');
+
+      expect(
+        formatDetailsSummary({ accepted_count: 0, rejected_count: 1 }, 'registration.batch_reject')
+      ).toBe('No candidate registrations were rejected (1 failed).');
+
+      expect(
+        formatDetailsSummary({ accepted_count: 0, rejected_count: 2 }, 'registration.approve')
+      ).toBe('No candidate registrations were approved (2 failed).');
+
+      expect(
+        formatDetailsSummary({ accepted_count: 0, rejected_count: 3 }, 'registration.batch_approve')
+      ).toBe('No candidate registrations were approved (3 failed).');
+
+      // 0 actions executed, no failures
+      expect(
+        formatDetailsSummary({ accepted_count: 0, rejected_count: 0 }, 'registration.reject')
+      ).toBe('No candidate registrations were rejected.');
+
+      // Positive executions
+      expect(
+        formatDetailsSummary({ accepted_count: 1, rejected_count: 0 }, 'registration.withdraw')
+      ).toBe('Withdrew 1 candidate registration.');
+
+      expect(
+        formatDetailsSummary({ accepted_count: 2, rejected_count: 1 }, 'registration.reject')
+      ).toBe('Rejected 2 candidate registrations (1 failed).');
+    });
+
+    it('formatAuditActionTitle does not include Batch in title for batch actions', () => {
+      const { formatAuditActionTitle } = require('../utils/constants/audit-actions');
+      expect(formatAuditActionTitle('registration.approve')).toBe('Approved registration');
+      expect(formatAuditActionTitle('registration.batch_approve')).toBe('Approved registration');
+      expect(formatAuditActionTitle('registration.batch_reject')).toBe('Rejected registration');
+      expect(formatAuditActionTitle('registration.batch_withdraw')).toBe('Withdrew registration');
+      expect(formatAuditActionTitle('registration.batch_delete')).toBe('Deleted registration');
+      expect(formatAuditActionTitle('registration.batch_lock')).toBe('Locked candidate registration');
+      expect(formatAuditActionTitle('registration.batch_unlock')).toBe('Unlocked candidate registration');
+    });
+
+    it('GET /audit returns detail_display alias alongside details_display', async () => {
+      if (!dbReady) return;
+      const adminToken = await getAdminToken();
+      if (!adminToken) return;
+
+      const res = await request(app)
+        .get('/audit?limit=5')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      if (res.body.data.length > 0) {
+        const row = res.body.data[0];
+        expect(row).toHaveProperty('detail_display');
+        expect(row).toHaveProperty('details_display');
+        expect(row.detail_display).toBe(row.details_display);
+      }
+    });
   });
 });
 

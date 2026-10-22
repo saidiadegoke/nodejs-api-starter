@@ -26,6 +26,7 @@ import { RegistrationModule } from '../registration/registration.module';
 import { CoursesModule } from '../courses/courses.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { UsersModule } from '../users/users.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { UsersModule } from '../users/users.module';
     CoursesModule,
     SessionsModule,
     UsersModule,
+    AuthModule,
   ],
   controllers: [
     AcademicController,

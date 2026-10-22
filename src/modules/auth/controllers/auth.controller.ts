@@ -10,6 +10,7 @@ import {
   HttpException,
   Ip,
   Headers,
+  Req,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -36,6 +37,8 @@ import { ResendOtpDto } from "../dto/resend-otp.dto";
 import { ForgotPasswordDto } from "../dto/forgot-password.dto";
 import { ResetPasswordDto } from "../dto/reset-password.dto";
 import { ChangePasswordDto } from "../dto/change-password.dto";
+import { ResendVerificationDto } from "../dto/resend-verification.dto";
+import { Public } from "../../../utils/decorators/public.decorator";
 import {
   LoginResponseDto,
   RefreshTokenResponseDto,
@@ -269,6 +272,10 @@ export class AuthController {
       };
       if (claimed) {
         const active = row.account_status === "active";
+        const canLogin =
+          active ||
+          row.account_status === "rejected" ||
+          row.status === "rejected";
         out.account = {
           exists: true,
           active,
@@ -276,7 +283,7 @@ export class AuthController {
           phone_masked: maskRecipient(row.account_phone),
           email_verified: !!row.account_email_verified,
           phone_verified: !!row.account_phone_verified,
-          can_login: active,
+          can_login: canLogin,
         };
       }
       return out;
@@ -408,21 +415,69 @@ export class AuthController {
     return safe;
   }
 
+  @Public()
   @Post("resend-verification")
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth("JWT-auth")
   @ApiOperation({
     summary: "Resend email verification",
     description:
-      "Resends a fresh email verification link to the logged-in user.",
+      "Resends a fresh email verification link. Accepts an optional email in body if unauthenticated, or uses the logged-in user session.",
   })
   @ApiOkResponse({ description: "Verification email resent" })
-  async resendVerification(@CurrentUser() user: any) {
-    const result = await this.authService.resendVerificationEmail(user.user_id);
-    const safe: any = { sent: true };
-    if (process.env.NODE_ENV === "test") safe.token = result.token;
-    return safe;
+  async resendVerification(
+    @CurrentUser() user: any,
+    @Body() body: ResendVerificationDto,
+    @Req() req: any,
+  ) {
+    let targetUserId = user?.user_id;
+
+    if (!targetUserId && req?.headers?.authorization) {
+      try {
+        const rawToken = String(req.headers.authorization).replace(/^(Bearer\s+)+/i, '').trim();
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const jwt = require('jsonwebtoken');
+        const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'secret';
+        const payload: any = jwt.verify(rawToken, secret);
+        targetUserId = payload?.sub || payload?.user_id || payload?.id;
+      } catch {
+        // ignore invalid token
+      }
+    }
+
+    if (!targetUserId && body?.email) {
+      const email = String(body.email).trim().toLowerCase();
+      const rows = await this.dataSource.query(
+        'SELECT id, email, email_verified FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1',
+        [email]
+      );
+      if (rows[0]) {
+        targetUserId = rows[0].id;
+      }
+    }
+
+    if (!targetUserId && !body?.email) {
+      throw new HttpException(
+        'Email is required to resend verification link when not logged in',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (!targetUserId) {
+      // User not found by email - return sent: true so we don't leak account existence
+      return { sent: true };
+    }
+
+    try {
+      const result = await this.authService.resendVerificationEmail(targetUserId);
+      const safe: any = { sent: true };
+      if (process.env.NODE_ENV === "test") safe.token = result.token;
+      return safe;
+    } catch (err: any) {
+      if (err?.error_code === 'email_already_verified' || err?.message?.includes('already verified')) {
+        return { sent: true, already_verified: true, message: 'Email is already verified' };
+      }
+      throw err;
+    }
   }
 
   @Get("verify-email")

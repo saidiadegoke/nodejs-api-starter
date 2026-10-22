@@ -31,7 +31,7 @@ import {
   BiometricResponseDto,
 } from '../dto';
 import { RegistrationPhotoResponseDto } from '../dto/biometric-response.dto';
-import { JwtAuthGuard, PermissionsGuard, RequirePermission } from '../../../utils';
+import { JwtAuthGuard, PermissionsGuard, RequirePermission, Audit } from '../../../utils';
 
 @ApiTags('Identity & Biometrics')
 @ApiBearerAuth('JWT')
@@ -43,6 +43,14 @@ export class IdentityController {
   @Post('nin/verify')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('jupeb.identity.verify')
+  @Audit('identity.verify', {
+    resourceType: 'identity',
+    details: ({ result }) => ({
+      status: result?.status || 'verified',
+      verification_id: result?.id,
+      matched: result?.matched ?? true,
+    }),
+  })
   @ApiOperation({
     summary: 'Verify National Identification Number (NIN)',
     description: 'Executes lookup against NIMC / SpeedySMS gateway and returns structured demographic payload.',

@@ -35,6 +35,9 @@ export class AuthUserDto {
   @ApiProperty({ example: true, description: 'Whether email and phone are verified' })
   verified!: boolean;
 
+  @ApiPropertyOptional({ example: 'active', description: 'Account status (active, rejected, inactive, etc.)' })
+  status?: string;
+
   @ApiProperty({ example: '2026-09-29T12:00:00.000Z', description: 'Account creation timestamp' })
   created_at!: Date | string;
 }
@@ -45,6 +48,9 @@ export class AuthRegistrationDto {
 
   @ApiProperty({ example: 'claimed', description: 'Registration status' })
   status!: string;
+
+  @ApiPropertyOptional({ example: 'Incomplete Documentation', description: 'Reason for status if rejected or flagged' })
+  status_reason?: string | null;
 
   @ApiPropertyOptional({ example: '1234567', description: '7-digit provisional candidate code' })
   provisional_candidate_code?: string;

@@ -287,4 +287,55 @@ describe('email templates standard and rendering', () => {
       expect(html).not.toMatch(/\{\{\w+\}\}/);
     });
   });
+
+  describe('sendEmail.renderEmailHtml object placeholders compatibility with %s templates', () => {
+    const sendEmail = require('../utils/utils/sendEmail');
+    const { renderEmailHtml } = sendEmail;
+
+    it('renders email-verification.html when given an object with firstName and verifyUrl', () => {
+      const verifyUrl = 'https://crp-admin.morgengreen.com/auth/verify-email?token=testtoken123';
+      const html = renderEmailHtml('email-verification.html', {
+        appName: 'Registration Portal',
+        firstName: 'Emmanuel',
+        name: 'Emmanuel',
+        verifyUrl,
+        ttlHours: 24,
+        email: 'emma.onoja82@yopmail.com',
+        year: 2026,
+      }, 'emma.onoja82@yopmail.com');
+
+      expect(html).toContain('Dear Emmanuel,');
+      expect(html).toContain(`href="${verifyUrl}"`);
+      expect(html).toContain(verifyUrl);
+      expect(html).not.toContain('%s');
+      expect(html).not.toContain('https://null/%25s');
+    });
+
+    it('renders resend-verification.html when given an object with firstName and verifyUrl', () => {
+      const verifyUrl = 'https://crp-admin.morgengreen.com/auth/verify-email?token=resendtoken456';
+      const html = renderEmailHtml('resend-verification.html', {
+        appName: 'Registration Portal',
+        firstName: 'Emmanuel',
+        verifyUrl,
+        email: 'emma.onoja82@yopmail.com',
+      }, 'emma.onoja82@yopmail.com');
+
+      expect(html).toContain('Dear Emmanuel,');
+      expect(html).toContain(`href="${verifyUrl}"`);
+      expect(html).not.toContain('%s');
+    });
+
+    it('renders forgot-password.html when given an object with resetUrl', () => {
+      const resetUrl = 'https://crp-admin.morgengreen.com/auth/reset-password?token=reset789';
+      const html = renderEmailHtml('forgot-password.html', {
+        firstName: 'Emmanuel',
+        resetUrl,
+        email: 'emma.onoja82@yopmail.com',
+      }, 'emma.onoja82@yopmail.com');
+
+      expect(html).toContain('Dear Emmanuel,');
+      expect(html).toContain(`href="${resetUrl}"`);
+      expect(html).not.toContain('%s');
+    });
+  });
 });

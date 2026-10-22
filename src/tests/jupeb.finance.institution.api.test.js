@@ -91,6 +91,26 @@ describe('JUPEB institution finance API', () => {
     return res.body.data?.access_token || null;
   }
 
+  async function createTestUniversity(adminToken, suffix, baseName) {
+    let res;
+    for (let i = 0; i < 5; i += 1) {
+      const code = nextJupebTestPrefix();
+      res = await request(app)
+        .post('/catalog/universities')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(
+          buildCatalogUniversityPayload(String(suffix).slice(-3), {
+            code,
+            jupeb_prefix: code,
+            name: `${baseName} ${suffix}-${i}`,
+          })
+        );
+      if (res.status === 201) break;
+    }
+    expect(res.status).toBe(201);
+    return res;
+  }
+
   it('GET /finance/institution/overview requires auth', async () => {
     const res = await request(app).get('/finance/institution/overview');
     expect(res.status).toBe(401);
@@ -102,25 +122,8 @@ describe('JUPEB institution finance API', () => {
     if (!adminToken) return;
 
     const suffix = Date.now();
-    const uniA = await request(app)
-      .post('/catalog/universities')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send(
-        buildCatalogUniversityPayload(String(suffix).slice(-3), {
-          name: `Inst Fin A ${suffix}`,
-        })
-      );
-    expect(uniA.status).toBe(201);
-
-    const uniB = await request(app)
-      .post('/catalog/universities')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send(
-        buildCatalogUniversityPayload(String(suffix + 1).slice(-3), {
-          name: `Inst Fin B ${suffix}`,
-        })
-      );
-    expect(uniB.status).toBe(201);
+    const uniA = await createTestUniversity(adminToken, suffix, 'Inst Fin A');
+    const uniB = await createTestUniversity(adminToken, suffix + 1, 'Inst Fin B');
 
     const scRes = await request(app)
       .post('/catalog/subject-combinations')
@@ -221,6 +224,28 @@ describe('JUPEB institution finance API', () => {
     expect(history.body.data.length).toBeGreaterThanOrEqual(1);
     expect(history.body.data[0].transaction_id).toBeDefined();
 
+    // Reject payment via confirm endpoint and verify rejection reason is returned in history
+    const rejectRes = await request(app)
+      .post(`/finance/payments/${checkout.body.data.payment.payment_id}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        status: 'rejected',
+        reason: 'Invalid receipt uploaded for affiliation fee',
+      });
+    expect(rejectRes.status).toBe(200);
+
+    const historyAfterReject = await request(app)
+      .get(`/finance/institution/payments?session_id=${sessionId}&payment_item=affiliation_fee`)
+      .set('Authorization', `Bearer ${instToken}`);
+    expect(historyAfterReject.status).toBe(200);
+    const rejectedItem = historyAfterReject.body.data.find(
+      (p) => p.payment_id === checkout.body.data.payment.payment_id
+    );
+    expect(rejectedItem).toBeDefined();
+    expect(rejectedItem.status).toBe('rejected');
+    expect(rejectedItem.rejection_reason).toBe('Invalid receipt uploaded for affiliation fee');
+    expect(rejectedItem.reason).toBe('Invalid receipt uploaded for affiliation fee');
+
     const receipt = await request(app)
       .get(`/finance/institution/payments/${checkout.body.data.payment.payment_id}/receipt`)
       .set('Authorization', `Bearer ${instToken}`);
@@ -247,15 +272,7 @@ describe('JUPEB institution finance API', () => {
     if (!adminToken) return;
 
     const suffix = Date.now();
-    const uni = await request(app)
-      .post('/catalog/universities')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send(
-        buildCatalogUniversityPayload(String(suffix).slice(-3), {
-          name: `Exam Pending Uni ${suffix}`,
-        })
-      );
-    expect(uni.status).toBe(201);
+    const uni = await createTestUniversity(adminToken, suffix, 'Exam Pending Uni');
 
     const { y1, academicYear, yearShort } = nextJupebAcademicSession();
     const sessRes = await request(app)
@@ -354,15 +371,7 @@ describe('JUPEB institution finance API', () => {
     if (!adminToken) return;
 
     const suffix = Date.now();
-    const uni = await request(app)
-      .post('/catalog/universities')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send(
-        buildCatalogUniversityPayload(String(suffix).slice(-3), {
-          name: `Foundation Fin Uni ${suffix}`,
-        })
-      );
-    expect(uni.status).toBe(201);
+    const uni = await createTestUniversity(adminToken, suffix, 'Foundation Fin Uni');
 
     const scRes = await request(app)
       .post('/catalog/subject-combinations')

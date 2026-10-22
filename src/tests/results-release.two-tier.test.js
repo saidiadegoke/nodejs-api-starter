@@ -79,11 +79,11 @@ describe('Two-Tier Result Release Workflow (Registrar -> Institutions -> Student
         .post('/catalog/universities')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
-          code: nextJupebTestUniversityCode(tag),
-          name: `${tag} Release Uni`,
+          code: nextJupebTestPrefix(),
+          name: `${tag} Release Uni ${Date.now()}`,
           short_name: `${tag}RU`,
           jupeb_prefix: nextJupebTestPrefix(),
-          email: `${tag.toLowerCase()}-${Date.now()}@release-test.edu.ng`,
+          email: `${tag.toLowerCase()}-${Date.now()}-${i}@release-test.edu.ng`,
         });
       if (uniRes.status === 201) break;
     }
