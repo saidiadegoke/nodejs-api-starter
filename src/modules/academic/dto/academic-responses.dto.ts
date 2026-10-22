@@ -167,3 +167,26 @@ export class ReleaseToStudentsResponseDto {
   @ApiPropertyOptional({ example: '2026-09-29T12:00:00.000Z' })
   students_results_released_at?: string;
 }
+
+export class RequestReleaseOtpResponseDto {
+  @ApiProperty({ example: true })
+  success: boolean;
+
+  @ApiProperty({ example: 'OTP authorization code sent successfully' })
+  message: string;
+
+  @ApiProperty({ example: 'd3b07384-d113-40f4-8a4e-379e4971c260' })
+  otp_id: string;
+
+  @ApiProperty({ example: ['email'] })
+  channels: string[];
+
+  @ApiPropertyOptional({ example: '2026-10-22T13:30:00.000Z' })
+  expires_at?: Date | string;
+
+  @ApiPropertyOptional({
+    description: 'Dev/test only raw OTP code when environment allows',
+    example: '123456',
+  })
+  code?: string;
+}

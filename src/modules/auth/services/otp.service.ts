@@ -79,7 +79,7 @@ export class OtpService {
     return row;
   }
 
-  private dispatchEmail({ user, code }: { user: any; code: string }): void {
+  private dispatchEmail({ user, code, purpose }: { user: any; code: string; purpose?: string }): void {
     if (!user.email) return;
     const ttlMinutes = Math.round(ttlMs() / 60000);
     const greetingName =
@@ -87,25 +87,34 @@ export class OtpService {
       (user.university_name && user.university_name.trim()) ||
       (user.display_name && user.display_name.trim().toLowerCase() !== 'there' ? user.display_name.trim() : '') ||
       (user.is_institution_admin ? 'Institution Administrator' : 'User');
-    this.mailService.sendOtpEmail(user.email, {
-      appName: appName(),
-      firstName: greetingName,
-      code,
-      ttlMinutes,
-      email: user.email,
-      year: new Date().getUTCFullYear(),
-    }).catch((err: any) => {
+
+    const subject = purpose === 'results_release'
+      ? `Results Release Authorization Code - ${appName()}`
+      : 'Your Verification Code';
+
+    Promise.resolve(
+      this.mailService.sendOtpEmail(user.email, {
+        appName: appName(),
+        firstName: greetingName,
+        code,
+        ttlMinutes,
+        email: user.email,
+        year: new Date().getUTCFullYear(),
+        subject,
+      })
+    ).catch((err: any) => {
       // eslint-disable-next-line no-console
       console.warn('[otp.dispatchEmail] send failed:', err && err.message);
     });
   }
 
-  private dispatchSms({ user, code }: { user: any; code: string }): void {
+  private dispatchSms({ user, code, purpose }: { user: any; code: string; purpose?: string }): void {
     if (!user.phone) return;
     const providerName = resolveName();
     const provider = getProvider(providerName);
     const ttlMinutes = Math.round(ttlMs() / 60000);
-    const message = `${appName()}: your verification code is ${code}. Expires in ${ttlMinutes} minutes.`;
+    const codeDesc = purpose === 'results_release' ? 'results release authorization code' : 'verification code';
+    const message = `${appName()}: your ${codeDesc} is ${code}. Expires in ${ttlMinutes} minutes.`;
     Promise.resolve(provider.sendSms({ phone: user.phone, message }))
       .then((result) => {
         if (result && result.outcome !== 'sent') {
@@ -123,7 +132,12 @@ export class OtpService {
 
   async issueOtp(
     userId: string,
-    { channel, ipAddress, userAgent }: { channel?: string; ipAddress?: string; userAgent?: string } = {}
+    {
+      channel,
+      ipAddress,
+      userAgent,
+      purpose,
+    }: { channel?: string; ipAddress?: string; userAgent?: string; purpose?: string } = {}
   ): Promise<{ otp_id: string; channels: string[]; expires_at: Date; code?: string }> {
     const user = await this.loadUser(userId);
     if (!user) {
@@ -173,8 +187,8 @@ export class OtpService {
 
     setImmediate(() => {
       for (const t of targets) {
-        if (t === 'email') this.dispatchEmail({ user, code });
-        else this.dispatchSms({ user, code });
+        if (t === 'email') this.dispatchEmail({ user, code, purpose });
+        else this.dispatchSms({ user, code, purpose });
       }
     });
 
@@ -187,7 +201,11 @@ export class OtpService {
     return out;
   }
 
-  async verifyOtp(userId: string, rawCode: string): Promise<{ verified: boolean; channel: string }> {
+  async verifyOtp(
+    userId: string,
+    rawCode: string,
+    options: { purpose?: string; skipUserVerificationFlip?: boolean } = {}
+  ): Promise<{ verified: boolean; channel: string }> {
     if (!rawCode || typeof rawCode !== 'string') {
       const err: any = new HttpException('OTP is required', HttpStatus.UNPROCESSABLE_ENTITY);
       err.error_code = 'otp_required';
@@ -231,18 +249,21 @@ export class OtpService {
 
     await this.otpCodeRepo.markVerified(row.id);
 
-    const flips: string[] = [];
-    if (row.channel === 'email' || row.channel === 'both') {
-      flips.push('email_verified = TRUE, email_verified_at = COALESCE(email_verified_at, NOW())');
-    }
-    if (row.channel === 'sms' || row.channel === 'both') {
-      flips.push('phone_verified = TRUE');
-    }
-    if (flips.length) {
-      await this.dataSource.query(
-        `UPDATE users SET ${flips.join(', ')}, updated_at = NOW() WHERE id = $1`,
-        [userId]
-      );
+    const shouldSkipFlip = options.skipUserVerificationFlip || options.purpose === 'results_release';
+    if (!shouldSkipFlip) {
+      const flips: string[] = [];
+      if (row.channel === 'email' || row.channel === 'both') {
+        flips.push('email_verified = TRUE, email_verified_at = COALESCE(email_verified_at, NOW())');
+      }
+      if (row.channel === 'sms' || row.channel === 'both') {
+        flips.push('phone_verified = TRUE');
+      }
+      if (flips.length) {
+        await this.dataSource.query(
+          `UPDATE users SET ${flips.join(', ')}, updated_at = NOW() WHERE id = $1`,
+          [userId]
+        );
+      }
     }
 
     return { verified: true, channel: row.channel };

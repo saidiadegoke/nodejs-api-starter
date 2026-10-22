@@ -9,11 +9,12 @@ import {
   AUDIT_ACTION_TITLES,
   formatAuditActionTitle,
 } from '../../../utils/constants/audit-actions';
+import { redactSensitive } from '../../../utils/utils/redact';
 
 // Action titles live in the shared taxonomy so the write side (AuditInterceptor / @Audit)
 // and this read side cannot drift apart.
 
-function formatDetailsSummary(details: any, action?: string, row?: any): string {
+export function formatDetailsSummary(details: any, action?: string, row?: any): string {
   if (!details) return '';
   if (typeof details === 'string') {
     try {
@@ -55,7 +56,36 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     if (act === 'session.update') return `Updated academic session ${sessionYear || ''}.`.replace(/\s+/g, ' ').replace(' .', '.');
   }
 
-  // 2. Candidate registration actions
+  // 2. Identity actions (never reveal candidate NIN!)
+  if (act === 'identity.verify' || act.startsWith('identity.') || act.includes('identity') || act.includes('nin_verify')) {
+    if (details.status === 'failed') {
+      const reason = details.error?.message || details.error_message || details.reason;
+      return reason
+        ? `Candidate identity verification failed: ${reason}.`
+        : 'Candidate identity verification failed.';
+    }
+    if (details.status === 'pending') {
+      return 'Candidate identity verification queued.';
+    }
+    const candidateName =
+      details.candidate_name ||
+      (details.first_name && details.last_name
+        ? `${details.first_name} ${details.last_name}`
+        : null);
+    if (candidateName) {
+      return `Verified candidate identity for ${candidateName}.`;
+    }
+    return 'Verified candidate identity.';
+  }
+
+  // 3. Candidate registration actions
+  if (act === 'registration.resend_code') {
+    const code = details.institution_issued_code || details.candidate_code || details.code;
+    return code
+      ? `Resent provisional registration code ${code} to candidate.`
+      : 'Resent provisional registration code to candidate.';
+  }
+
   if (act === 'registration.bulk_upload') {
     const succ = details.succeeded_count ?? details.successful ?? 0;
     const fail = details.failed_count ?? details.failed ?? 0;
@@ -76,21 +106,66 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
       : 'Created individual candidate registration.';
   }
 
-  if (act.includes('batch_withdraw')) {
-    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
-    return `Withdrew ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  // Batch / multi-candidate actions
+  const isMultiRegAction =
+    act.includes('batch_') ||
+    details.accepted_count !== undefined ||
+    details.rejected_count !== undefined ||
+    Array.isArray(details.ids) ||
+    Array.isArray(details.registration_ids);
+
+  if (isMultiRegAction) {
+    const succ =
+      details.accepted_count ??
+      details.total ??
+      (Array.isArray(details.ids)
+        ? details.ids.length
+        : Array.isArray(details.registration_ids)
+          ? details.registration_ids.length
+          : 0);
+    const fail = details.rejected_count ?? details.failed ?? 0;
+    const failSuffix = fail > 0 ? ` (${fail} failed)` : '';
+
+    const actionKey = act.replace(/^registration\./, '').replace(/^batch_/, '');
+
+    const verbs: Record<string, { active: string; passive: string }> = {
+      reject: { active: 'Rejected', passive: 'rejected' },
+      approve: { active: 'Approved', passive: 'approved' },
+      withdraw: { active: 'Withdrew', passive: 'withdrawn' },
+      delete: { active: 'Deleted', passive: 'deleted' },
+      lock: { active: 'Locked', passive: 'locked' },
+      unlock: { active: 'Unlocked', passive: 'unlocked' },
+    };
+
+    const verbInfo = verbs[actionKey] || { active: 'Updated', passive: 'updated' };
+
+    if (succ === 0) {
+      return `No candidate registrations were ${verbInfo.passive}${failSuffix}.`;
+    }
+    return `${verbInfo.active} ${succ} candidate registration${succ === 1 ? '' : 's'}${failSuffix}.`;
   }
-  if (act.includes('batch_reject')) {
-    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
-    return `Rejected ${count} candidate registration${count === 1 ? '' : 's'}.`;
+
+  if (act === 'registration.approve') {
+    return 'Approved candidate registration.';
   }
-  if (act.includes('batch_approve')) {
-    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
-    return `Approved ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  if (act === 'registration.reject') {
+    return details.reason
+      ? `Rejected candidate registration. Reason: ${details.reason}.`
+      : 'Rejected candidate registration.';
   }
-  if (act.includes('batch_delete')) {
-    const count = details.accepted_count ?? details.total ?? (Array.isArray(details.ids) ? details.ids.length : 1);
-    return `Deleted ${count} candidate registration${count === 1 ? '' : 's'}.`;
+  if (act === 'registration.withdraw') {
+    return details.reason
+      ? `Withdrew candidate registration. Reason: ${details.reason}.`
+      : 'Withdrew candidate registration.';
+  }
+  if (act === 'registration.lock') {
+    return 'Locked candidate registration.';
+  }
+  if (act === 'registration.unlock') {
+    return 'Unlocked candidate registration.';
+  }
+  if (act === 'registration.delete') {
+    return 'Deleted candidate registration.';
   }
 
   if (act === 'candidate.update') {
@@ -109,7 +184,34 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     return 'Updated candidate personal information.';
   }
 
-  // 3. Catalog actions (institutions, subject combinations, documents)
+  // 4. Document review actions
+  if (act === 'document.review_accept') {
+    const docType = details.document_type || details.type || details.name;
+    return `Accepted candidate document${docType ? ` (${docType})` : ''}.`;
+  }
+  if (act === 'document.review_reject') {
+    const docType = details.document_type || details.type || details.name;
+    return details.reason
+      ? `Rejected candidate document${docType ? ` (${docType})` : ''}. Reason: ${details.reason}.`
+      : `Rejected candidate document${docType ? ` (${docType})` : ''}.`;
+  }
+
+  // 5. Results release actions
+  if (act.includes('results.release_to_institutions')) {
+    const sessionYear = details.academic_year || row?.academic_year;
+    return sessionYear
+      ? `Released examination results to institutions for session ${sessionYear}.`
+      : 'Released examination results to institutions.';
+  }
+  if (act.includes('results.release_to_students')) {
+    const count = details.released_count;
+    if (count !== undefined) {
+      return `Released examination results to ${count} candidate${count === 1 ? '' : 's'}.`;
+    }
+    return 'Released examination results to candidates.';
+  }
+
+  // 6. Catalog actions (institutions, subject combinations, documents)
   if (act === 'catalog.university_create') {
     const name = details.name || row?.university_name;
     const code = details.code || row?.university_code;
@@ -138,7 +240,7 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     return `Updated subject combination${name ? ` "${name}"` : ''}.`;
   }
 
-  // 4. Finance actions
+  // 7. Finance actions
   if (act.includes('upload-receipt') || act.includes('upload_receipt')) {
     const amt = details.amount ? Number(details.amount).toLocaleString() : null;
     const item = details.payment_item_id
@@ -152,7 +254,7 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     return 'Confirmed payment receipt.';
   }
 
-  // 5. User & role actions
+  // 8. User & role actions
   if (act === 'user.create_with_university' || act === 'user.create') {
     const email = details.email;
     const role = details.role || details.role_name;
@@ -173,7 +275,7 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     if (act.includes('permission_detach')) return `Detached permission${details.permission ? ` "${details.permission}"` : ''} from role.`;
   }
 
-  // 6. Generic properties fallback
+  // 9. Generic properties fallback
   if (details.summary) return String(details.summary).endsWith('.') ? String(details.summary) : `${details.summary}.`;
   if (details.reason) return `Reason: ${details.reason}.`;
   if (details.academic_year) return `Academic year: ${details.academic_year}.`;
@@ -190,17 +292,22 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     return `Role: ${details.role}${details.university_name ? ` (${details.university_name})` : ''}.`;
   }
 
-  // Filter out request metadata and raw IDs
+  // Filter out request metadata, security/credentials, and raw IDs
   const ignoredKeys = new Set([
     '_request', 'request_id', 'id', 'session_id', 'university_id', 'user_id',
     'actor_user_id', 'jupeb_university_id', 'subject_combination_id', 'documents',
+    'nin', 'bvn', 'idempotency_key', 'idempotencykey', 'method', 'path',
+    'status_code', 'duration_ms', 'password', 'token', 'access_token',
+    'refresh_token', 'otp', 'pin', 'cvv', 'secret', 'authorization',
+    'hash', 'code_hash', 'salt', 'fingerprint_data', 'face_template',
   ]);
   const entries = Object.entries(details).filter(
     ([k, v]) =>
-      !ignoredKeys.has(k) &&
+      !ignoredKeys.has(k.toLowerCase()) &&
       v !== null &&
       v !== undefined &&
       v !== '' &&
+      v !== '[REDACTED]' &&
       typeof v !== 'object',
   );
   if (entries.length) {
@@ -211,7 +318,8 @@ function formatDetailsSummary(details: any, action?: string, row?: any): string 
     return `${formatted.charAt(0).toUpperCase()}${formatted.slice(1)}.`;
   }
 
-  return '';
+  const actionTitle = formatAuditActionTitle(act);
+  return actionTitle && actionTitle !== 'Action' ? `${actionTitle}.` : '';
 }
 
 // ── Scope types ─────────────────────────────────────────────────────────────
@@ -822,11 +930,17 @@ export class AdminAuditService {
       [...params, safeLimit, offset],
     );
 
-    const logs = dataResult.map((row: any) => ({
-      ...row,
-      action_display: formatAuditActionTitle(row.action),
-      details_display: formatDetailsSummary(row.details, row.action, row),
-    }));
+    const logs = dataResult.map((row: any) => {
+      const sanitizedDetails = row.details ? redactSensitive(row.details) : row.details;
+      const detailsSummary = formatDetailsSummary(row.details, row.action, row);
+      return {
+        ...row,
+        details: sanitizedDetails,
+        action_display: formatAuditActionTitle(row.action),
+        details_display: detailsSummary,
+        detail_display: detailsSummary,
+      };
+    });
 
     return { logs, total, page: safePage, limit: safeLimit };
   }
@@ -873,6 +987,7 @@ export class AdminAuditService {
         escapeCsv(log.action_display || log.action || ''),
         escapeCsv(
           log.details_display ||
+            log.detail_display ||
             (log.details ? JSON.stringify(log.details) : ''),
         ),
       ].join(',');

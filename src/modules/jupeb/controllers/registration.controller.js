@@ -261,7 +261,7 @@ class RegistrationController {
 
       AdminAuditService.log({
         actorUserId: req.user.user_id,
-        action: `registration.batch_${action || 'action'}`,
+        action: `registration.${action || 'action'}`,
         resourceType: 'registration',
         details: { action, total, accepted_count, rejected_count, ids: req.body?.ids },
         req,

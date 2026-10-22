@@ -146,6 +146,14 @@ export class ReleaseToInstitutionsDto {
   @IsOptional()
   @IsBoolean()
   release?: boolean;
+
+  @ApiPropertyOptional({
+    description: '6-digit OTP authorization code',
+    example: '123456',
+  })
+  @IsOptional()
+  @IsString()
+  otp?: string;
 }
 
 export class ReleaseToStudentsDto {
@@ -177,6 +185,36 @@ export class ReleaseToStudentsDto {
   @IsArray()
   @IsUUID('4', { each: true })
   registration_ids?: string[];
+
+  @ApiPropertyOptional({
+    description: '6-digit OTP authorization code',
+    example: '123456',
+  })
+  @IsOptional()
+  @IsString()
+  otp?: string;
+}
+
+export class RequestReleaseOtpDto {
+  @ApiPropertyOptional({ example: 'd3b07384-d113-40f4-8a4e-379e4971c260' })
+  @IsOptional()
+  @IsUUID('4')
+  session_id?: string;
+
+  @ApiPropertyOptional({ example: '2025/2026' })
+  @IsOptional()
+  @IsString()
+  academic_year?: string;
+
+  @ApiPropertyOptional({
+    enum: ['email', 'sms', 'both'],
+    default: 'email',
+    description: 'Channel to dispatch OTP code to',
+    example: 'email',
+  })
+  @IsOptional()
+  @IsString()
+  channel?: string;
 }
 
 export class InstitutionResultsQueryDto {
