@@ -10,10 +10,12 @@ import { SessionRepository } from '../../sessions/repositories/session.repositor
 import { InstitutionSessionResultRepository } from '../repositories/institution-session-result.repository';
 import { RegistrationRepository } from '../../registration/repositories/registration.repository';
 import { InstitutionUserScopeService } from '../../registration/services/institution-user-scope.service';
+import { OtpService } from '../../auth/services/otp.service';
 import {
   ReleaseToInstitutionsDto,
   ReleaseToStudentsDto,
   InstitutionResultsQueryDto,
+  RequestReleaseOtpDto,
 } from '../dto';
 
 @Injectable()
@@ -25,10 +27,46 @@ export class ResultsReleaseService {
     private readonly instSessionRepo: InstitutionSessionResultRepository,
     private readonly regRepo: RegistrationRepository,
     private readonly scopeService: InstitutionUserScopeService,
+    private readonly otpService: OtpService,
     private readonly dataSource: DataSource,
     private readonly loggerFactory: LoggerFactory,
   ) {
     this.logger = this.loggerFactory.create(ResultsReleaseService.name);
+  }
+
+  async requestReleaseOtp(
+    userId: string,
+    payload: RequestReleaseOtpDto,
+    options?: { ipAddress?: string; userAgent?: string },
+  ) {
+    const session = payload.session_id
+      ? await this.sessionRepo.findById(payload.session_id)
+      : payload.academic_year
+      ? await this.sessionRepo.findByAcademicYear(payload.academic_year)
+      : await this.sessionRepo.findActive();
+
+    if (!session) {
+      throw new NotFoundException({
+        message: 'Academic session not found',
+        error_code: 'session_not_found',
+      });
+    }
+
+    const result = await this.otpService.issueOtp(userId, {
+      channel: payload.channel || 'email',
+      ipAddress: options?.ipAddress,
+      userAgent: options?.userAgent,
+      purpose: 'results_release',
+    });
+
+    return {
+      success: true,
+      message: 'OTP authorization code sent successfully',
+      otp_id: result.otp_id,
+      channels: result.channels,
+      expires_at: result.expires_at,
+      ...(result.code ? { code: result.code } : {}),
+    };
   }
 
   async releaseToInstitutions(userId: string, payload: ReleaseToInstitutionsDto) {
@@ -42,6 +80,22 @@ export class ResultsReleaseService {
       throw new NotFoundException({
         message: 'Academic session not found',
         error_code: 'session_not_found',
+      });
+    }
+
+    const isOtpRequired =
+      process.env.REQUIRE_RELEASE_OTP === 'true' ||
+      (process.env.NODE_ENV !== 'test' && !process.env.TEST_BYPASS_RELEASE_OTP);
+
+    if (payload.otp) {
+      await this.otpService.verifyOtp(userId, payload.otp, {
+        purpose: 'results_release',
+        skipUserVerificationFlip: true,
+      });
+    } else if (isOtpRequired) {
+      throw new BadRequestException({
+        message: 'OTP authorization code is required to release results to institutions.',
+        error_code: 'OTP_REQUIRED',
       });
     }
 
@@ -170,6 +224,22 @@ export class ResultsReleaseService {
       throw new NotFoundException({
         message: 'Academic session not found',
         error_code: 'session_not_found',
+      });
+    }
+
+    const isOtpRequired =
+      process.env.REQUIRE_RELEASE_OTP === 'true' ||
+      (process.env.NODE_ENV !== 'test' && !process.env.TEST_BYPASS_RELEASE_OTP);
+
+    if (payload.otp) {
+      await this.otpService.verifyOtp(userId, payload.otp, {
+        purpose: 'results_release',
+        skipUserVerificationFlip: true,
+      });
+    } else if (isOtpRequired) {
+      throw new BadRequestException({
+        message: 'OTP authorization code is required to release results to students.',
+        error_code: 'OTP_REQUIRED',
       });
     }
 

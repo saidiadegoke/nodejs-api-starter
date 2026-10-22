@@ -8,6 +8,7 @@ import {
   UseGuards,
   HttpStatus,
   HttpCode,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -25,6 +26,8 @@ import {
   InstitutionResultsQueryDto,
   ReleaseToInstitutionsResponseDto,
   ReleaseToStudentsResponseDto,
+  RequestReleaseOtpDto,
+  RequestReleaseOtpResponseDto,
 } from '../dto';
 
 @ApiTags('Results Release (Two-Tier)')
@@ -34,11 +37,60 @@ import {
 export class ResultsReleaseController {
   constructor(private readonly resultsReleaseService: ResultsReleaseService) {}
 
+  @Post('sessions/:sessionId/request-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request OTP authorization code to release examination results',
+    description: 'Dispatches a 6-digit OTP code to the administrator before releasing results.',
+  })
+  @ApiParam({ name: 'sessionId', type: String })
+  @ApiOkResponse({ type: RequestReleaseOtpResponseDto })
+  async requestReleaseOtp(
+    @CurrentUser('user_id') userId: string,
+    @Param('sessionId') sessionId: string,
+    @Body() body: RequestReleaseOtpDto,
+    @Req() req: any,
+  ) {
+    return this.resultsReleaseService.requestReleaseOtp(
+      userId,
+      {
+        ...body,
+        session_id: sessionId,
+      },
+      {
+        ipAddress: req?.ip || req?.headers?.['x-forwarded-for'],
+        userAgent: req?.headers?.['user-agent'],
+      },
+    );
+  }
+
+  @Post('request-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request OTP authorization code to release examination results (session_id in body)',
+    description: 'Dispatches a 6-digit OTP code to the administrator before releasing results.',
+  })
+  @ApiOkResponse({ type: RequestReleaseOtpResponseDto })
+  async requestReleaseOtpBody(
+    @CurrentUser('user_id') userId: string,
+    @Body() body: RequestReleaseOtpDto,
+    @Req() req: any,
+  ) {
+    return this.resultsReleaseService.requestReleaseOtp(
+      userId,
+      body,
+      {
+        ipAddress: req?.ip || req?.headers?.['x-forwarded-for'],
+        userAgent: req?.headers?.['user-agent'],
+      },
+    );
+  }
+
   @Post('sessions/:sessionId/release-institutions')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Tier 1: Central JUPEB release of examination results to institutions',
-    description: 'Central registrar triggers release of computed examination results to all participating universities.',
+    summary: 'Tier 1: Central JUPEB release of examination results to institutions (OTP gated)',
+    description: 'Central registrar triggers release of computed examination results to all participating universities with OTP authorization.',
   })
   @ApiParam({ name: 'sessionId', type: String })
   @ApiOkResponse({ type: ReleaseToInstitutionsResponseDto })
@@ -74,8 +126,8 @@ export class ResultsReleaseController {
   @Post('sessions/:sessionId/release-students')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Tier 2: Institution release of results to enrolled students',
-    description: 'Institution administrator publishes results to all candidates or selected cleared candidate registrations.',
+    summary: 'Tier 2: Institution release of results to enrolled students (OTP gated)',
+    description: 'Institution administrator publishes results to all candidates or selected cleared candidate registrations with OTP authorization.',
   })
   @ApiParam({ name: 'sessionId', type: String })
   @ApiOkResponse({ type: ReleaseToStudentsResponseDto })

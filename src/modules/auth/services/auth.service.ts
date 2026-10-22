@@ -584,9 +584,19 @@ export class AuthService {
       throw err;
     }
 
-    if (user.status !== 'active') {
-      const err: any = new HttpException('Account is not active', HttpStatus.FORBIDDEN);
-      throw err;
+    const userStatus = String(user.status || '').toLowerCase().trim();
+    if (userStatus !== 'active' && userStatus !== 'rejected') {
+      const [rejectedReg] = await this.dataSource
+        .query(
+          `SELECT 1 FROM jupeb_registrations WHERE user_id = $1 AND status = 'rejected' LIMIT 1`,
+          [user.id]
+        )
+        .catch(() => []);
+
+      if (!rejectedReg) {
+        const err: any = new HttpException('Account is not active', HttpStatus.FORBIDDEN);
+        throw err;
+      }
     }
 
     const roles = await this.authRepo.getUserRoles(user.id);
@@ -603,7 +613,7 @@ export class AuthService {
     let registration: any = null;
     try {
       const regRes = await this.dataSource.query(
-        `SELECT id, status, provisional_candidate_code, jupeb_candidate_number,
+        `SELECT id, status, status_reason, provisional_candidate_code, jupeb_candidate_number,
                 claimed_at, submitted_at, approved_at, dashboard_unlocked_at,
                 university_id
            FROM jupeb_registrations
@@ -657,6 +667,7 @@ export class AuthService {
         registration = {
           id: r.id,
           status: r.status,
+          status_reason: r.status_reason || null,
           provisional_candidate_code: r.provisional_candidate_code,
           jupeb_candidate_number: r.jupeb_candidate_number,
           claimed_at: r.claimed_at,
@@ -698,6 +709,7 @@ export class AuthService {
         rating: null,
         verified: Boolean(user.email_verified),
         email_verified: Boolean(user.email_verified),
+        status: user.status,
         created_at: user.created_at,
       },
       university,
@@ -907,7 +919,36 @@ export class AuthService {
       await AppDataSource.initialize();
     }
     const rows = await AppDataSource.query(
-      `SELECT u.id, u.email, u.email_verified, p.first_name, p.display_name,
+      `SELECT u.id, u.email, u.email_verified,
+              COALESCE(
+                p.first_name,
+                (
+                  SELECT NULLIF(TRIM(COALESCE(
+                    nv.response_payload->>'first_name',
+                    nv.intake_payload->>'first_name',
+                    split_part(nv.intake_payload->>'name', ' ', 1)
+                  )), '')
+                  FROM jupeb_registrations jr
+                  LEFT JOIN jupeb_nin_verifications nv ON nv.id = jr.nin_verification_id
+                  WHERE jr.user_id = u.id
+                  ORDER BY jr.created_at DESC
+                  LIMIT 1
+                )
+              ) AS first_name,
+              COALESCE(
+                p.display_name,
+                (
+                  SELECT NULLIF(TRIM(COALESCE(
+                    nv.intake_payload->>'name',
+                    concat_ws(' ', nv.response_payload->>'first_name', nv.response_payload->>'last_name')
+                  )), '')
+                  FROM jupeb_registrations jr
+                  LEFT JOIN jupeb_nin_verifications nv ON nv.id = jr.nin_verification_id
+                  WHERE jr.user_id = u.id
+                  ORDER BY jr.created_at DESC
+                  LIMIT 1
+                )
+              ) AS display_name,
               COALESCE(
                 (SELECT ju.name FROM user_universities uu JOIN jupeb_universities ju ON ju.id = uu.university_id WHERE uu.user_id = u.id AND uu.deleted_at IS NULL AND ju.deleted_at IS NULL ORDER BY uu.is_primary DESC, uu.created_at ASC LIMIT 1),
                 (SELECT ju.name FROM profiles pr JOIN jupeb_universities ju ON ju.id = pr.jupeb_university_id WHERE pr.user_id = u.id AND ju.deleted_at IS NULL LIMIT 1),
@@ -958,12 +999,25 @@ export class AuthService {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const sendEmail = require('../../../utils/utils/sendEmail');
 
-    const rawFirstName = user.first_name ? String(user.first_name).trim() : '';
-    const rawDisplayName = user.display_name ? String(user.display_name).trim() : '';
+    const formatName = (n: string) => {
+      if (!n) return '';
+      const trimmed = n.trim();
+      if (trimmed.length > 1 && trimmed === trimmed.toUpperCase() && /^[A-Z\s'-]+$/.test(trimmed)) {
+        return trimmed
+          .split(/\s+/)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+          .join(' ');
+      }
+      return trimmed;
+    };
+
+    const rawFirstName = formatName(user.first_name ? String(user.first_name).trim() : '');
+    const rawDisplayName = formatName(user.display_name ? String(user.display_name).trim() : '');
     const rawUniversityName = user.university_name ? String(user.university_name).trim() : '';
+    const effectiveFirstName = rawFirstName || (rawDisplayName ? rawDisplayName.split(/\s+/)[0] : '');
     const greetingName = user.is_institution_admin
-      ? (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || rawUniversityName || 'Institution Administrator'
-      : (rawFirstName && rawFirstName.toLowerCase() !== 'there' ? rawFirstName : '') || (rawDisplayName && rawDisplayName.toLowerCase() !== 'there' ? rawDisplayName : '') || 'User';
+      ? (effectiveFirstName && effectiveFirstName.toLowerCase() !== 'there' ? effectiveFirstName : '') || rawUniversityName || 'Institution Administrator'
+      : (effectiveFirstName && effectiveFirstName.toLowerCase() !== 'there' ? effectiveFirstName : '') || 'User';
 
     setImmediate(() => {
       sendEmail({
@@ -973,6 +1027,7 @@ const sendEmail = require('../../../utils/utils/sendEmail');
         placeholders: {
           appName,
           firstName: greetingName,
+          name: greetingName,
           verifyUrl,
           ttlHours: Math.round(AuthService._verificationTtlMs() / 3600000),
           email: user.email,

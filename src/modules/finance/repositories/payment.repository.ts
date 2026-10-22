@@ -11,7 +11,11 @@ export class PaymentRepository {
   ) {}
 
   async findById(id: string): Promise<PaymentEntity | null> {
-    return this.repo.findOne({ where: { id } });
+    try {
+      return await this.repo.findOne({ where: { id } });
+    } catch {
+      return null;
+    }
   }
 
   async findByPaymentId(paymentId: string): Promise<PaymentEntity | null> {

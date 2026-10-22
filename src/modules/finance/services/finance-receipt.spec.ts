@@ -235,5 +235,73 @@ describe('FinanceService - Receipt Upload and Confirmation', () => {
         }),
       );
     });
+
+    it('should store rejection_reason and notes when rejecting a payment', async () => {
+      mockPaymentRepo.findById.mockResolvedValue({
+        id: 'pay-uuid-4',
+        paymentId: 'PAY-REJ-1',
+        amount: 100000,
+        currency: Currency.NGN,
+        status: PaymentStatus.PENDING_VERIFICATION,
+        jupebUniversityId: 'uni-1',
+        metadata: {
+          receipt_url: 'https://example.com/receipt.pdf',
+        },
+      });
+
+      const dto: ConfirmPaymentDto = {
+        status: PaymentStatus.REJECTED,
+        reason: 'Invalid receipt uploaded',
+      };
+
+      const res = await service.confirmPayment('pay-uuid-4', dto, 'admin-user-1');
+      expect(res.success).toBe(true);
+      expect(res.data.status).toBe(PaymentStatus.REJECTED);
+      expect(res.data.rejection_reason).toBe('Invalid receipt uploaded');
+      expect(res.data.reason).toBe('Invalid receipt uploaded');
+      expect(mockPaymentRepo.updateById).toHaveBeenCalledWith(
+        'pay-uuid-4',
+        expect.objectContaining({
+          status: PaymentStatus.REJECTED,
+          notes: 'Invalid receipt uploaded',
+          metadata: expect.objectContaining({
+            rejection_reason: 'Invalid receipt uploaded',
+            reason: 'Invalid receipt uploaded',
+            confirmation_notes: 'Invalid receipt uploaded',
+          }),
+        }),
+      );
+    });
+
+    it('listAdminPayments should return rejection_reason and reason at top level and inside metadata', async () => {
+      mockDataSource.query = jest.fn()
+        .mockResolvedValueOnce([{ total: 1 }]) // count query
+        .mockResolvedValueOnce([ // rows query
+          {
+            id: 'pay-uuid-rej',
+            payment_id: 'PAY-REJ-2',
+            amount: 500000,
+            currency: 'NGN',
+            status: 'rejected',
+            created_at: new Date(),
+            notes: null,
+            metadata: {
+              confirmation_notes: 'I dont like the price',
+              payment_item_code: 'affiliation_fee',
+            },
+            item_code: 'affiliation_fee',
+            item_name: 'Affiliation Fee',
+          },
+        ]);
+
+      const res = await service.listAdminPayments({ payment_item: 'affiliation_fee' } as any, 'admin-user-1');
+      expect(res.rows).toHaveLength(1);
+      const row = res.rows[0];
+      expect(row.status).toBe('rejected');
+      expect(row.rejection_reason).toBe('I dont like the price');
+      expect(row.reason).toBe('I dont like the price');
+      expect(row.notes).toBe('I dont like the price');
+      expect(row.metadata.rejection_reason).toBe('I dont like the price');
+    });
   });
 });

@@ -5,8 +5,8 @@
  * and the audit writer (whose `details` frequently carry the same bodies).
  */
 
-const SENSITIVE_KEY_PATTERN = /password|passwd|secret|token|authorization|api[_-]?key|credential/i;
-const SENSITIVE_EXACT_KEYS = ['pin', 'otp', 'cvv'];
+const SENSITIVE_KEY_PATTERN = /password|passwd|secret|token|authorization|api[_-]?key|credential|national[_-]?id/i;
+const SENSITIVE_EXACT_KEYS = ['pin', 'otp', 'cvv', 'nin', 'bvn'];
 
 const REDACTED = '[REDACTED]';
 const MAX_DEPTH = 5;

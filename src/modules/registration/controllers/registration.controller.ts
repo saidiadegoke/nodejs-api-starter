@@ -359,14 +359,14 @@ export class RegistrationController {
 
   @Post('institution/registrations/batch')
   @RequirePermission('candidate.update', 'jupeb.registration.manage')
-  @Audit(({ req }) => `registration.batch_${req.body?.action || 'action'}`, {
+  @Audit(({ req }) => `registration.${req.body?.action || 'action'}`, {
     resourceType: 'registration',
     details: ({ req, result }) => ({
       action: req.body?.action,
       total: result?.total,
       accepted_count: result?.accepted_count,
       rejected_count: result?.rejected_count,
-      ids: req.body?.ids,
+      ids: req.body?.ids || req.body?.registration_ids,
     }),
   })
   @ApiOperation({

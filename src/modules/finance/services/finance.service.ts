@@ -3,8 +3,10 @@ import {
   NotFoundException,
   ForbiddenException,
   UnprocessableEntityException,
+  ConflictException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { PaymentEntity } from '../entities/payment.entity';
 import { LoggerFactory } from '../../../logger';
 import { RegistrationRepository } from '../../registration/repositories/registration.repository';
 import { SessionRepository } from '../../sessions/repositories/session.repository';
@@ -69,9 +71,28 @@ export class FinanceService {
 
   async listPaymentMethods() {
     const rows = await this.dataSource.query(
-      `SELECT id, name, type, description, is_active FROM payment_methods WHERE is_active = true ORDER BY name ASC`,
+      `SELECT * FROM payment_methods WHERE is_active = true ORDER BY name ASC`,
     );
-    return rows;
+    const groupFor = (code: string) => {
+      if (code === 'direct_transfer') return 'bank_transfer';
+      if (code === 'remita') return 'pay_at_bank';
+      return 'online';
+    };
+    const paymentMethodGroupUi: Record<string, any> = {
+      bank_transfer: { label: 'Bank Transfer', subtitle: 'Transfer to JUPEB account' },
+      online: { label: 'Online Payment', subtitle: 'Pay with Card or USSD' },
+      pay_at_bank: { label: 'Pay at Bank', subtitle: 'Generate payment Teller' },
+    };
+    return rows.map((m: any) => {
+      const code = m.code || m.type || m.name;
+      const group = groupFor(code);
+      return {
+        ...m,
+        code,
+        group,
+        ...(paymentMethodGroupUi[group] || {}),
+      };
+    });
   }
 
   async resolveRegistrationForCheckout(userId: string, registrationIdOpt?: string) {
@@ -189,11 +210,65 @@ export class FinanceService {
     return { rows, page, limit, total };
   }
 
+  private async findPaymentByIdOrRef(paymentIdOrUuid: string): Promise<PaymentEntity | null> {
+    if (paymentIdOrUuid.startsWith('PAY-')) {
+      const byPaymentId = await this.paymentRepo.findByPaymentId(paymentIdOrUuid);
+      if (byPaymentId) return byPaymentId;
+    }
+    let payment: PaymentEntity | null = null;
+    try {
+      payment = await this.paymentRepo.findById(paymentIdOrUuid);
+    } catch {
+      payment = null;
+    }
+    if (!payment) {
+      payment = await this.paymentRepo.findByPaymentId(paymentIdOrUuid);
+    }
+    return payment;
+  }
+
   async getPaymentReceipt(paymentId: string, userId: string) {
-    const payment = await this.paymentRepo.findById(paymentId);
+    const payment = await this.findPaymentByIdOrRef(paymentId);
     if (!payment) throw new NotFoundException('Payment not found');
 
     const user = await this.userRepo.findById(userId);
+
+    const rejectionReason =
+      payment.metadata?.rejection_reason ||
+      payment.metadata?.reason ||
+      payment.metadata?.confirmation_notes ||
+      payment.metadata?.notes ||
+      payment.notes ||
+      null;
+
+    const notes =
+      payment.notes ||
+      payment.metadata?.confirmation_notes ||
+      payment.metadata?.notes ||
+      payment.metadata?.rejection_reason ||
+      null;
+
+    let uni: any = null;
+    const uniId = payment.jupebUniversityId;
+    if (uniId) {
+      uni = await this.universityRepo.findById(uniId);
+    } else if (payment.registrationId) {
+      const reg = await this.regRepo.findById(payment.registrationId);
+      if (reg?.universityId) {
+        uni = await this.universityRepo.findById(reg.universityId);
+      }
+    }
+
+    const institutionObj = uni
+      ? {
+          id: uni.id,
+          name: uni.name,
+          code: uni.code,
+          address: uni.address || null,
+          phone: uni.phone || null,
+          email: uni.email || null,
+        }
+      : null;
 
     return {
       id: payment.id,
@@ -205,6 +280,17 @@ export class FinanceService {
       paid_at: payment.updatedAt?.toISOString(),
       payer_name: user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : null,
       payer_email: user?.email || null,
+      receipt_url: payment.receiptUrl || payment.metadata?.receipt_url || null,
+      notes,
+      rejection_reason: rejectionReason,
+      reason: rejectionReason,
+      institution: institutionObj,
+      university_name: institutionObj?.name || null,
+      metadata: {
+        ...(payment.metadata || {}),
+        ...(rejectionReason ? { rejection_reason: rejectionReason, reason: rejectionReason } : {}),
+        ...(notes ? { notes } : {}),
+      },
     };
   }
 
@@ -324,6 +410,22 @@ export class FinanceService {
         paymentTypeObj = { code: p.type, name: p.type.replace(/_/g, ' ') };
       }
 
+      const rejectionReason =
+        p.metadata?.rejection_reason ||
+        p.metadata?.reason ||
+        p.metadata?.confirmation_notes ||
+        p.metadata?.notes ||
+        p.notes ||
+        null;
+
+      const notes =
+        p.notes ||
+        p.metadata?.confirmation_notes ||
+        p.metadata?.notes ||
+        p.metadata?.rejection_reason ||
+        p.metadata?.reason ||
+        null;
+
       return {
         id: p.id,
         payment_id: p.payment_id,
@@ -340,9 +442,21 @@ export class FinanceService {
         created_at: p.created_at,
         paid_at: p.paid_at,
         status: p.status,
+        notes,
+        rejection_reason: rejectionReason,
+        reason: rejectionReason,
+        rejection_notes: rejectionReason,
+        confirmed_by: p.metadata?.confirmed_by_name || p.metadata?.confirmed_by || null,
+        confirmed_at: p.metadata?.confirmed_at || null,
+        receipt_url: p.receipt_url || p.metadata?.receipt_url || null,
+        receipt_file_id: p.receipt_file_id || p.metadata?.receipt_file_id || null,
         user_email: p.user_email,
         university_name: p.university_name,
-        metadata: p.metadata || {},
+        metadata: {
+          ...(p.metadata || {}),
+          ...(rejectionReason ? { rejection_reason: rejectionReason, reason: rejectionReason } : {}),
+          ...(notes ? { notes } : {}),
+        },
       };
     });
 
@@ -976,6 +1090,17 @@ export class FinanceService {
     const alreadyPaid = isAffiliation ? current.collected.affiliation_fee : current.collected.examination_fee;
     const outstanding = Math.max(0, fullFee - alreadyPaid);
 
+    const pendingRows = await this.dataSource.query(
+      `SELECT * FROM payments
+       WHERE jupeb_university_id = $1
+         AND (jupeb_session_id = $2 OR jupeb_session_id IS NULL)
+         AND (payment_item_id = $3 OR type ILIKE $4 OR payment_type ILIKE $4 OR (metadata->>'payment_item_code') ILIKE $4)
+         AND status IN ('pending', 'pending_verification')
+       ORDER BY created_at DESC LIMIT 1`,
+      [universityId, session.id, item.id, `%${item.code}%`],
+    );
+    const pendingPayment = pendingRows[0] || null;
+
     return {
       session_id: session.id,
       university_id: universityId,
@@ -985,17 +1110,29 @@ export class FinanceService {
       already_paid: alreadyPaid,
       outstanding,
       fully_paid: outstanding <= 0,
+      pending_payment: pendingPayment
+        ? {
+            id: pendingPayment.id,
+            payment_id: pendingPayment.payment_id,
+            status: pendingPayment.status,
+            amount: Number(pendingPayment.amount),
+          }
+        : null,
     };
   }
 
   async createInstitutionCheckout(userId: string, dto: CreateInstitutionCheckoutDto) {
-    await this.scopeService.assertUniversityAccess(userId, dto.university_id);
+    const universityId = await this.scopeService.effectiveUniversityId(userId, dto.university_id);
+    if (!universityId) {
+      throw new UnprocessableEntityException('university_id is required');
+    }
+    await this.scopeService.assertUniversityAccess(userId, universityId);
 
     const paymentId = generatePaymentId();
     const transactionRef = `TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const amount = dto.amount || 500000;
 
-    const rawPaymentItemKey = (dto.payment_item_id || '').trim();
+    const rawPaymentItemKey = (dto.payment_item_id || dto.payment_item || '').trim();
     let paymentItem: any = null;
     if (rawPaymentItemKey) {
       if (UUID_REGEX.test(rawPaymentItemKey)) {
@@ -1006,7 +1143,7 @@ export class FinanceService {
       }
     }
 
-    const rawPaymentStructureKey = (dto.payment_structure_id || '').trim();
+    const rawPaymentStructureKey = (dto.payment_structure_id || dto.payment_structure || '').trim();
     let paymentStructure: any = null;
     if (rawPaymentStructureKey) {
       if (UUID_REGEX.test(rawPaymentStructureKey)) {
@@ -1026,6 +1163,46 @@ export class FinanceService {
         ? rawPaymentStructureKey
         : null);
 
+    const itemKey = paymentItem?.code || rawPaymentItemKey || '';
+    const pendingParams: any[] = [universityId];
+    let pendingItemClause = '';
+    if (resolvedPaymentItemId || itemKey) {
+      pendingParams.push(resolvedPaymentItemId || null);
+      pendingParams.push(`%${itemKey}%`);
+      pendingItemClause = `AND (payment_item_id = $${pendingParams.length - 1} OR type ILIKE $${pendingParams.length} OR payment_type ILIKE $${pendingParams.length} OR (metadata->>'payment_item_code') ILIKE $${pendingParams.length} OR (metadata->>'payment_item_key') ILIKE $${pendingParams.length})`;
+    }
+    let pendingSessionClause = '';
+    if (dto.session_id) {
+      pendingParams.push(dto.session_id);
+      pendingSessionClause = `AND (jupeb_session_id = $${pendingParams.length} OR jupeb_session_id IS NULL)`;
+    }
+
+    const pendingRows = await this.dataSource.query(
+      `SELECT * FROM payments
+       WHERE jupeb_university_id = $1
+         ${pendingSessionClause}
+         ${pendingItemClause}
+         AND status IN ('pending', 'pending_verification')
+       ORDER BY created_at DESC LIMIT 1`,
+      pendingParams,
+    );
+
+    if (pendingRows.length > 0) {
+      const existing = pendingRows[0];
+      throw new ConflictException({
+        message: 'A pending payment transaction already exists for this fee',
+        details: {
+          error_code: 'pending_payment_exists',
+          pending_payment: {
+            id: existing.id,
+            payment_id: existing.payment_id,
+            status: existing.status,
+            amount: Number(existing.amount),
+          },
+        },
+      });
+    }
+
     const payment = await this.paymentRepo.create({
       paymentId,
       amount,
@@ -1039,7 +1216,7 @@ export class FinanceService {
       userId,
       paymentItemId: resolvedPaymentItemId,
       paymentStructureId: resolvedPaymentStructureId,
-      jupebUniversityId: dto.university_id,
+      jupebUniversityId: universityId,
       jupebSessionId: dto.session_id || null,
       metadata: {
         processor: dto.processor || 'direct_transfer',
@@ -1047,10 +1224,11 @@ export class FinanceService {
         payment_item_code: paymentItem?.code || rawPaymentItemKey || null,
         payment_structure_key: rawPaymentStructureKey || null,
         payment_structure_code: paymentStructure?.code || rawPaymentStructureKey || null,
+        description: dto.description || null,
       },
     });
 
-    return {
+    const paymentObj = {
       id: payment.id,
       payment_id: payment.paymentId,
       amount: payment.amount,
@@ -1060,15 +1238,20 @@ export class FinanceService {
       account_number: '0123456789',
       bank_name: 'Wema Bank (JUPEB Central)',
     };
+
+    return {
+      ...paymentObj,
+      payment: paymentObj,
+    };
   }
 
   async cancelInstitutionPayment(paymentId: string, userId: string) {
-    const payment = await this.paymentRepo.findById(paymentId);
+    const payment = await this.findPaymentByIdOrRef(paymentId);
     if (!payment) throw new NotFoundException('Payment not found');
     if (payment.jupebUniversityId) {
       await this.scopeService.assertUniversityAccess(userId, payment.jupebUniversityId);
     }
-    return this.paymentRepo.updateById(paymentId, { status: PaymentStatus.CANCELLED });
+    return this.paymentRepo.updateById(payment.id, { status: PaymentStatus.CANCELLED });
   }
 
   async listInstitutionPayments(query: ListInstitutionPaymentsQueryDto, userId: string) {
@@ -1082,7 +1265,11 @@ export class FinanceService {
     return this.getPaymentReceipt(paymentId, userId);
   }
 
-  async foundationOverview(_query: AnalyticsQueryDto, _actorUserId: string) {
+  async foundationOverview(query: AnalyticsQueryDto, actorUserId: string) {
+    if (query?.university_id) {
+      return this.institutionOverview(query, actorUserId);
+    }
+
     const rows = await this.dataSource.query(
       `SELECT
          COUNT(DISTINCT ju.id)::int as participating_institutions_count,
@@ -1106,29 +1293,21 @@ export class FinanceService {
   }
 
   async foundationInstitutionFees(query: AnalyticsQueryDto, actorUserId: string) {
+    if (query?.university_id) {
+      return this.institutionFees(query, actorUserId);
+    }
     return this.institutionFeeRecords(query, actorUserId);
   }
 
   async foundationInstitutionFeesByUniversity(
     universityId: string,
-    _query: AnalyticsQueryDto,
-    _actorUserId: string,
+    query: AnalyticsQueryDto,
+    actorUserId: string,
   ) {
-    const rows = await this.dataSource.query(
-      `SELECT
-         ju.id as university_id,
-         ju.code as university_code,
-         ju.name as university_name,
-         COALESCE(SUM(p.amount), 0)::numeric as collected_amount,
-         COUNT(DISTINCT r.id)::numeric * 25000 as projected_amount
-       FROM jupeb_universities ju
-       LEFT JOIN jupeb_registrations r ON r.university_id = ju.id
-       LEFT JOIN payments p ON p.jupeb_university_id = ju.id AND p.status = 'successful'
-       WHERE ju.id = $1 AND ju.deleted_at IS NULL
-       GROUP BY ju.id, ju.code, ju.name`,
-      [universityId],
+    return this.foundationInstitutionFees(
+      { ...query, university_id: universityId },
+      actorUserId,
     );
-    return rows[0] || null;
   }
 
   async listFoundationInstitutionPayments(
@@ -1269,10 +1448,7 @@ export class FinanceService {
     dto: ConfirmPaymentDto,
     actorUserId: string,
   ) {
-    let payment = await this.paymentRepo.findById(paymentIdOrUuid);
-    if (!payment) {
-      payment = await this.paymentRepo.findByPaymentId(paymentIdOrUuid);
-    }
+    const payment = await this.findPaymentByIdOrRef(paymentIdOrUuid);
     if (!payment) {
       throw new NotFoundException(`Payment not found for identifier: ${paymentIdOrUuid}`);
     }
@@ -1290,22 +1466,47 @@ export class FinanceService {
       ? `${actor.first_name || ''} ${actor.last_name || ''}`.trim() || actor.email
       : actorUserId;
 
+    const notesValue = dto.notes || dto.reason || dto.rejection_reason || null;
+    const isRejectedOrFailed =
+      targetStatus === PaymentStatus.REJECTED ||
+      targetStatus === 'rejected' ||
+      targetStatus === PaymentStatus.FAILED ||
+      targetStatus === 'failed';
+
+    const rejectionReason = isRejectedOrFailed
+      ? (dto.reason || dto.rejection_reason || dto.notes || null)
+      : null;
+
     const updatedMetadata = {
       ...(payment.metadata || {}),
       confirmed_by: actorUserId,
       confirmed_by_name: actorName,
       confirmed_at: new Date().toISOString(),
-      confirmation_notes: dto.notes || null,
+      confirmation_notes: notesValue,
+      notes: notesValue,
+      rejection_reason:
+        rejectionReason ||
+        (isRejectedOrFailed
+          ? (payment.metadata?.rejection_reason || payment.metadata?.reason || payment.metadata?.confirmation_notes || payment.notes)
+          : null),
+      reason:
+        rejectionReason ||
+        (isRejectedOrFailed
+          ? (payment.metadata?.reason || payment.metadata?.rejection_reason || payment.metadata?.confirmation_notes || payment.notes)
+          : null),
       reconciliation_ref: dto.reconciliation_ref || null,
       original_amount: Number(payment.amount),
       verified_amount: confirmedAmount,
     };
 
-    const updatedPayment = await this.paymentRepo.updateById(payment.id, {
+    const updateFields: any = {
       status: targetStatus,
       amount: confirmedAmount,
       metadata: updatedMetadata,
-    });
+      notes: notesValue,
+    };
+
+    const updatedPayment = await this.paymentRepo.updateById(payment.id, updateFields);
 
     if (targetStatus === PaymentStatus.SUCCESSFUL) {
       try {
@@ -1340,7 +1541,9 @@ export class FinanceService {
         currency: updatedPayment?.currency || payment.currency,
         status: targetStatus,
         transaction_ref: updatedPayment?.transactionRef || payment.transactionRef,
-        notes: dto.notes || null,
+        notes: notesValue,
+        rejection_reason: rejectionReason,
+        reason: rejectionReason,
         reconciliation_ref: dto.reconciliation_ref || null,
         confirmed_by: actorName,
         confirmed_at: updatedMetadata.confirmed_at,

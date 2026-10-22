@@ -73,13 +73,13 @@ export class CreateCheckoutDto {
 }
 
 export class CreateInstitutionCheckoutDto {
-  @ApiProperty({
-    description: 'Institution UUID',
+  @ApiPropertyOptional({
+    description: 'Institution UUID (inferred from user if omitted)',
     example: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d',
   })
+  @IsOptional()
   @IsUUID('4')
-  @IsNotEmpty()
-  university_id: string;
+  university_id?: string;
 
   @ApiPropertyOptional({
     description: 'Academic session UUID',
@@ -94,16 +94,32 @@ export class CreateInstitutionCheckoutDto {
     example: 'd3b07384-d113-40f4-8a4e-379e4971c260',
   })
   @IsOptional()
-  @IsUUID('4')
+  @IsString()
   payment_item_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Payment item code or UUID (e.g. affiliation_fee, examination_fee)',
+    example: 'affiliation_fee',
+  })
+  @IsOptional()
+  @IsString()
+  payment_item?: string;
 
   @ApiPropertyOptional({
     description: 'Payment structure UUID',
     example: 'd3b07384-d113-40f4-8a4e-379e4971c260',
   })
   @IsOptional()
-  @IsUUID('4')
+  @IsString()
   payment_structure_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Payment structure code or UUID (e.g. full, partial)',
+    example: 'partial',
+  })
+  @IsOptional()
+  @IsString()
+  payment_structure?: string;
 
   @ApiPropertyOptional({
     description: 'Payment amount',
@@ -114,6 +130,14 @@ export class CreateInstitutionCheckoutDto {
   @Min(0)
   @Type(() => Number)
   amount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Payment description',
+    example: 'Q1 test payment',
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
 
   @ApiPropertyOptional({
     description: 'Payment method name/slug',
@@ -308,6 +332,22 @@ export class ConfirmPaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Reason for payment rejection',
+    example: 'Invalid bank teller receipt uploaded',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'Rejection reason alias',
+    example: 'Invalid bank teller receipt uploaded',
+  })
+  @IsOptional()
+  @IsString()
+  rejection_reason?: string;
 
   @ApiPropertyOptional({
     description: 'Actual verified amount (if different from initiated receipt amount)',

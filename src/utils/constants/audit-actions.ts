@@ -53,15 +53,33 @@ export const AUDIT_ACTION_TITLES: Record<string, string> = {
   'role.create': 'Created role',
   'role.update': 'Updated role',
   'role.delete': 'Deleted role',
+  'registration.lock': 'Locked candidate registration',
+  'registration.unlock': 'Unlocked candidate registration',
+  'registration.resend_code': 'Registration Resend Code',
+  'identity.verify': 'Identity Verify',
+  'identity.retry': 'Retry Identity Verify',
   'platform_setting.upsert': 'Updated platform setting',
+  // Historical/legacy batch keys mapped without 'Batch'
+  'registration.batch_approve': 'Approved registration',
+  'registration.batch_reject': 'Rejected registration',
+  'registration.batch_withdraw': 'Withdrew registration',
+  'registration.batch_delete': 'Deleted registration',
+  'registration.batch_lock': 'Locked candidate registration',
+  'registration.batch_unlock': 'Unlocked candidate registration',
 };
 
 /** Fallback title for an action that has no explicit entry in {@link AUDIT_ACTION_TITLES}. */
 export function formatAuditActionTitle(action: string | null | undefined): string {
   if (!action) return 'Action';
   if (AUDIT_ACTION_TITLES[action]) return AUDIT_ACTION_TITLES[action];
-  return action
-    .replace(/[._]/g, ' ')
+
+  // Strip 'batch' if present so batch actions never display 'Batch' in action titles
+  const normalized = action.replace(/\bbatch[._]?/gi, '');
+  if (AUDIT_ACTION_TITLES[normalized]) return AUDIT_ACTION_TITLES[normalized];
+
+  return normalized
+    .replace(/[._]+/g, ' ')
+    .trim()
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
