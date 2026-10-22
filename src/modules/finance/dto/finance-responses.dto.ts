@@ -73,6 +73,28 @@ export class PaymentReceiptResponseDto {
 
   @ApiPropertyOptional({ example: 'john@example.com' })
   payer_email?: string;
+
+  @ApiPropertyOptional({ example: 'Invalid bank teller receipt uploaded' })
+  rejection_reason?: string;
+
+  @ApiPropertyOptional({ example: 'Invalid bank teller receipt uploaded' })
+  reason?: string;
+
+  @ApiPropertyOptional({ example: 'Receipt remarks from finance officer' })
+  notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Institution details',
+    example: { id: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d', name: 'University of Lagos' },
+  })
+  institution?: {
+    id: string;
+    name: string;
+    code?: string;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+  };
 }
 
 export class FeePreviewResponseDto {

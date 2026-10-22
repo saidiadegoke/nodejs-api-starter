@@ -61,6 +61,15 @@ export class PaymentEntity {
   @Column({ name: 'jupeb_session_id', type: 'uuid', nullable: true })
   jupebSessionId: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  notes: string | null;
+
+  @Column({ name: 'receipt_url', type: 'text', nullable: true })
+  receiptUrl: string | null;
+
+  @Column({ name: 'receipt_file_id', type: 'uuid', nullable: true })
+  receiptFileId: string | null;
+
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
