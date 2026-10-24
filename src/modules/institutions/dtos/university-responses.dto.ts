@@ -57,17 +57,26 @@ export class UniversityResponseDto {
   @ApiPropertyOptional({ example: 342, description: 'Number of candidates enrolled in current session' })
   enrolled_count?: number;
 
-  @ApiPropertyOptional({ example: false, description: 'Whether registration is locked for this institution in the current/effective session' })
+  @ApiPropertyOptional({ example: false, description: 'Whether registration is locked (individual OR global session lock)' })
   locked?: boolean;
 
   @ApiPropertyOptional({ example: false, description: 'Alias for locked' })
   is_locked?: boolean;
 
+  @ApiPropertyOptional({ example: false, description: 'True when the whole session is globally locked (affects all institutions)' })
+  session_locked?: boolean;
+
+  @ApiPropertyOptional({ example: false, description: 'True when this institution is individually locked for the session' })
+  institution_locked?: boolean;
+
   @ApiPropertyOptional({ example: 'Quota reached', description: 'Reason for institution registration lock' })
   lock_reason?: string | null;
 
-  @ApiPropertyOptional({ example: '2026-01-15T10:00:00.000Z', description: 'When the lock was applied' })
+  @ApiPropertyOptional({ example: '2026-01-15T10:00:00.000Z', description: 'When the individual lock was applied' })
   locked_at?: Date | string | null;
+
+  @ApiPropertyOptional({ example: false, description: 'Whether this institution is new to JUPEB (just started participating this session)' })
+  is_new_to_jupeb?: boolean;
 
   @ApiPropertyOptional({ type: InstitutionAdminSummaryDto })
   institution_admin?: InstitutionAdminSummaryDto;
