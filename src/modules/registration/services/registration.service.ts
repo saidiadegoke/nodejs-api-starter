@@ -856,6 +856,18 @@ export class RegistrationService {
       resultsByExam[key].push(r);
     }
 
+    // Derive result_types from actual result_entries when the stored column is empty.
+    // This covers manual-entry students who never went through the academic-intake
+    // PATCH endpoint that populates result_types.
+    let effectiveResultTypes: string[] = Array.isArray(row.result_types) ? row.result_types : [];
+    if (effectiveResultTypes.length === 0 && resultRows.length > 0) {
+      const sourceSet = new Set<string>();
+      for (const r of resultRows) {
+        if (r.source) sourceSet.add(String(r.source).toLowerCase());
+      }
+      if (sourceSet.size > 0) effectiveResultTypes = Array.from(sourceSet);
+    }
+
     const candidateId =
       row.jupeb_candidate_number ||
       row.provisional_candidate_code ||
@@ -979,6 +991,7 @@ export class RegistrationService {
       bucket: statusBucket(row.status),
       status_reason: row.status_reason || null,
       next_of_kin: nextOfKin,
+      result_types: effectiveResultTypes,
       result_entries: resultRows,
       results_by_examination: resultsByExam,
       documents,
@@ -1647,13 +1660,28 @@ export class RegistrationService {
       const requirementId = d?.requirement_id || d?.requirementId;
       const fileId = d?.file_id || d?.fileId;
       if (d && (requirementId || fileId)) {
+        const source = d.source || (isCandidateUser ? 'student' : 'institution');
+        const sitting = d.sitting || 1;
+
+        // If an existing submitted/accepted document exists for this source+sitting,
+        // mark it as REPLACED so the new upload truly replaces it (handles resubmit
+        // after rejection).
+        try {
+          const existing = await this.docRepo.findCurrentBySourceSitting(registrationId, source, sitting);
+          if (existing && existing.id) {
+            await this.docRepo.markReplaced(existing.id);
+          }
+        } catch {
+          // Non-fatal — proceed to create the new document record
+        }
+
         await this.docRepo
           .create({
             registrationId,
             requirementId,
             fileId,
-            source: d.source || (isCandidateUser ? 'student' : 'institution'),
-            sitting: d.sitting || 1,
+            source,
+            sitting,
           })
           .catch(() => {});
       }
@@ -2430,7 +2458,7 @@ export class RegistrationService {
    */
   async previewCandidateNumbering(sessionId: string) {
     const unfinalized = await this.dataSource.query(
-      `SELECT r.id, u.jupeb_prefix, s.year_short,
+      `SELECT r.id, u.code, u.jupeb_prefix, s.year_short,
               ROW_NUMBER() OVER (PARTITION BY r.university_id ORDER BY r.approved_at ASC, r.created_at ASC) AS seq
        FROM jupeb_registrations r
        JOIN jupeb_universities u ON u.id = r.university_id
@@ -2441,9 +2469,13 @@ export class RegistrationService {
 
     const previews = unfinalized.map((u: any) => {
       const serial = String(u.seq).padStart(4, '0');
+      const institutionCode = String(u.code ?? u.jupeb_prefix ?? '')
+        .replace(/\D/g, '')
+        .slice(0, 3)
+        .padStart(3, '0');
       return {
         id: u.id,
-        candidate_number: `${u.year_short}${u.jupeb_prefix}${serial}`,
+        candidate_number: `${u.year_short}${institutionCode}${serial}`,
       };
     });
 
@@ -2459,7 +2491,7 @@ export class RegistrationService {
    */
   async finalizeCandidateNumbers(sessionId: string, userId?: string | null) {
     const unfinalized = await this.dataSource.query(
-      `SELECT r.id, u.jupeb_prefix, s.year_short,
+      `SELECT r.id, u.code, u.jupeb_prefix, s.year_short,
               ROW_NUMBER() OVER (PARTITION BY r.university_id ORDER BY r.approved_at ASC, r.created_at ASC) AS seq
        FROM jupeb_registrations r
        JOIN jupeb_universities u ON u.id = r.university_id
@@ -2470,7 +2502,11 @@ export class RegistrationService {
 
     for (const u of unfinalized) {
       let serial = Number(u.seq) || 1;
-      let candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
+      const institutionCode = String(u.code ?? u.jupeb_prefix ?? '')
+        .replace(/\D/g, '')
+        .slice(0, 3)
+        .padStart(3, '0');
+      let candidateNumber = `${u.year_short}${institutionCode}${String(serial).padStart(4, '0')}`;
       let isDuplicate = true;
       while (isDuplicate) {
         const existing = await this.dataSource.query(
@@ -2485,7 +2521,7 @@ export class RegistrationService {
           isDuplicate = false;
         } else {
           serial += 1;
-          candidateNumber = `${u.year_short}${u.jupeb_prefix}${String(serial).padStart(4, '0')}`;
+          candidateNumber = `${u.year_short}${institutionCode}${String(serial).padStart(4, '0')}`;
         }
       }
 

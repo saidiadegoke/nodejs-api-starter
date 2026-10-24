@@ -72,7 +72,7 @@ export class InstitutionSyncProcessor extends WorkerHost {
       try {
         const attPayload = {
           institutions: universities.map((u) => ({
-            institutionCode: u.jupebPrefix || u.code,
+            institutionCode: u.code || u.jupebPrefix,
             institutionName: u.name,
             address: u.address || 'Nigeria',
             coordinates: {
@@ -102,9 +102,9 @@ export class InstitutionSyncProcessor extends WorkerHost {
             ? u.universityType.charAt(0).toUpperCase() + u.universityType.slice(1).toLowerCase()
             : null;
           return {
-            code: u.jupebPrefix || u.code,
+            code: u.code || u.jupebPrefix,
             name: u.name,
-            shortCode: u.shortName || u.code,
+            shortCode: u.shortName || u.jupebPrefix || u.code,
             category,
             state: u.metadata?.state || null,
           };
