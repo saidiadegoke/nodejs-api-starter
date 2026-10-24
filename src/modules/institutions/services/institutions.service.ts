@@ -213,15 +213,33 @@ export class InstitutionsService {
       ),
     ]);
 
+    // Fetch the session-level global lock so it is also reflected on each
+    // institution row (individual lock OR global session lock = locked).
+    let sessionGloballyLocked = false;
+    if (effectiveSessionId) {
+      try {
+        const { resolveEffectiveSession: _res } = require('../../jupeb/services/session-context.service');
+        const sess = await _res(null, effectiveSessionId);
+        sessionGloballyLocked = Boolean(sess?.registration_locked);
+      } catch {
+        // Non-fatal — default to false
+      }
+    }
+
     const enriched = rows.map((row) => {
       const lock = locksMap.get(row.id);
+      const individuallyLocked = Boolean(lock?.locked);
+      const isLocked = individuallyLocked || sessionGloballyLocked;
       return {
         ...row,
+        is_new_to_jupeb: Boolean(row.metadata?.is_new_to_jupeb),
         enrolled_count: enrolledMap.get(row.id) || 0,
-        locked: Boolean(lock?.locked),
-        is_locked: Boolean(lock?.locked),
-        lock_reason: lock?.locked ? lock.reason : null,
-        locked_at: lock?.locked ? lock.locked_at : null,
+        locked: isLocked,
+        is_locked: isLocked,
+        session_locked: sessionGloballyLocked,
+        institution_locked: individuallyLocked,
+        lock_reason: individuallyLocked ? lock?.reason : (sessionGloballyLocked ? 'Global session lock' : null),
+        locked_at: individuallyLocked ? lock?.locked_at : null,
       };
     });
 
@@ -232,7 +250,10 @@ export class InstitutionsService {
     if (!id) throw new UnprocessableEntityException('Invalid university id');
     const row = await this.universityRepo.findById(id);
     if (!row) throw new NotFoundException('University not found');
-    return row;
+    return {
+      ...row,
+      is_new_to_jupeb: Boolean(row.metadata?.is_new_to_jupeb),
+    } as any;
   }
 
   async create(dto: CreateUniversityDto, createdBy?: string | null): Promise<any> {
@@ -282,7 +303,10 @@ export class InstitutionsService {
         phone: dto.phone ? dto.phone.trim() : null,
         expectedCandidateCount: dto.expected_candidate_count != null ? Number(dto.expected_candidate_count) : null,
         description: dto.description ? dto.description.trim() : null,
-        metadata: dto.metadata || {},
+        metadata: {
+          ...(dto.metadata || {}),
+          ...(dto.is_new_to_jupeb !== undefined ? { is_new_to_jupeb: Boolean(dto.is_new_to_jupeb) } : {}),
+        },
         status: 'active',
       });
     } catch (err: any) {
@@ -322,6 +346,7 @@ export class InstitutionsService {
         short_name: university.shortName,
         university_type: university.universityType,
         expected_candidate_count: university.expectedCandidateCount,
+        is_new_to_jupeb: Boolean(university.metadata?.is_new_to_jupeb),
         institution_admin: admin.institution_admin,
       };
     } catch (err) {
@@ -333,12 +358,18 @@ export class InstitutionsService {
   }
 
   async patch(id: string, dto: PatchUniversityDto, userId?: string | null): Promise<UniversityEntity> {
-    await this.getById(id);
+    const existing = await this.getById(id);
 
     const fields: Partial<UniversityEntity> = {};
     if (dto.name !== undefined) fields.name = dto.name;
     if (dto.short_name !== undefined) fields.shortName = dto.short_name;
-    if (dto.metadata !== undefined) fields.metadata = dto.metadata;
+    if (dto.metadata !== undefined || dto.is_new_to_jupeb !== undefined) {
+      fields.metadata = {
+        ...(existing.metadata || {}),
+        ...(dto.metadata || {}),
+        ...(dto.is_new_to_jupeb !== undefined ? { is_new_to_jupeb: Boolean(dto.is_new_to_jupeb) } : {}),
+      };
+    }
     if (dto.code !== undefined) {
       const cleanedCode = cleanUniversityCode(dto.code);
       const codeVal = validateUniversityCode(cleanedCode);
@@ -375,7 +406,10 @@ export class InstitutionsService {
       data: fields,
     });
 
-    return updated;
+    return {
+      ...updated,
+      is_new_to_jupeb: Boolean(updated.metadata?.is_new_to_jupeb),
+    } as any;
   }
 
   async setStatus(id: string, status: 'active' | 'inactive', userId?: string | null): Promise<UniversityEntity> {
@@ -441,6 +475,9 @@ export class InstitutionsService {
       const rawDescription = (row.description || '').trim();
       const rawAdminFirstName = (row.admin_first_name || row.first_name || row.admin_firstname || '').trim();
       const rawAdminLastName = (row.admin_last_name || row.last_name || row.admin_lastname || '').trim();
+      // Parse is_new_to_jupeb: accept truthy strings like '1', 'true', 'yes'
+      const rawIsNew = (row.is_new_to_jupeb || row.is_new || row.new_to_jupeb || '').trim().toLowerCase();
+      const parsedIsNewToJupeb = ['1', 'true', 'yes', 'y'].includes(rawIsNew);
 
       // Smart resolution for code, jupeb_prefix, and short_name:
       // Inverted detection: If rawCode has letters (non-digits) and rawPrefix has digits, swap them!
@@ -665,6 +702,7 @@ export class InstitutionsService {
             expected_candidate_count: parsedExpectedCount,
             description: rawDescription || undefined,
             metadata: rawState ? { state: rawState } : {},
+            is_new_to_jupeb: parsedIsNewToJupeb || undefined,
           },
           createdBy,
         );

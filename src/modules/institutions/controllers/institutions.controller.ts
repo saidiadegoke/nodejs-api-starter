@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   Req,
+  Res,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -199,8 +200,28 @@ export class InstitutionsController {
   @ApiBearerAuth("JWT")
   @ApiOperation({
     summary: "Bulk upload universities via CSV",
-    description:
+    description: [
       "Processes CSV text to onboard multiple institutions and provision admins.",
+      "",
+      "**Supported CSV columns** (flexible aliases accepted):",
+      "| Column | Required | Notes |",
+      "|---|---|---|",
+      "| `name` | ✅ | Full institution name |",
+      "| `code` | ✅ | 3-digit numeric code e.g. `029` |",
+      "| `jupeb_prefix` | ✅ | Acronym used in JUPEB e.g. `LASU` |",
+      "| `email` | ✅ | Admin account email |",
+      "| `short_name` | optional | Display abbreviation |",
+      "| `university_type` | optional | `federal`, `state`, or `private` |",
+      "| `phone` | optional | Contact phone |",
+      "| `address` | optional | Physical address |",
+      "| `state` | optional | Nigerian state |",
+      "| `expected_candidate_count` | optional | Intake quota |",
+      "| `admin_first_name` | optional | Admin given name |",
+      "| `admin_last_name` | optional | Admin surname |",
+      "| `is_new_to_jupeb` | optional | `true`/`1`/`yes` — flags institutions just starting JUPEB |",
+      "",
+      "Download a ready-to-use template from `GET /institutions/bulk/template`.",
+    ].join("\n"),
   })
   @ApiConsumes("text/csv", "application/json")
   @ApiBody({
@@ -221,6 +242,53 @@ export class InstitutionsController {
       data: result,
       ...result,
     };
+  }
+
+  @Get(["catalog/universities/bulk/template", "institutions/bulk/template"])
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermission("institutions.create")
+  @ApiBearerAuth("JWT")
+  @ApiOperation({
+    summary: "Download CSV template for bulk institution upload",
+    description: "Returns a pre-formatted CSV file with all supported column headers and one example row. Use this as the starting point for bulk institution onboarding.",
+  })
+  async bulkTemplate(@Res() res: any) {
+    const headers = [
+      "name",
+      "code",
+      "jupeb_prefix",
+      "short_name",
+      "email",
+      "university_type",
+      "phone",
+      "address",
+      "state",
+      "expected_candidate_count",
+      "admin_first_name",
+      "admin_last_name",
+      "is_new_to_jupeb",
+      "description",
+    ];
+    const example = [
+      "University of Example",
+      "099",
+      "UNIEX",
+      "UniEx",
+      "admin@uniex.edu.ng",
+      "federal",
+      "+2348012345678",
+      "Example City, Lagos",
+      "Lagos",
+      "500",
+      "Jane",
+      "Doe",
+      "false",
+      "Sample institution description",
+    ];
+    const csv = [headers.join(","), example.join(",")].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="institutions-bulk-template.csv"');
+    res.status(HttpStatus.OK).send(csv);
   }
 
   @Post([

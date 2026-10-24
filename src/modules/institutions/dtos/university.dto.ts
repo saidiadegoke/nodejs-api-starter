@@ -9,8 +9,9 @@ import {
   Min,
   IsObject,
   IsUUID,
+  IsBoolean,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export enum UniversityTypeEnum {
   FEDERAL = 'federal',
@@ -94,6 +95,12 @@ export class CreateUniversityDto {
   @IsString()
   @IsOptional()
   admin_last_name?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'Whether this institution is new to JUPEB (just started participating)' })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true || value === 1 || value === '1')
+  is_new_to_jupeb?: boolean;
 }
 
 export class PatchUniversityDto {
@@ -161,6 +168,12 @@ export class PatchUniversityDto {
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   is_active?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Whether this institution is new to JUPEB (just started participating)' })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true || value === 1 || value === '1')
+  is_new_to_jupeb?: boolean;
 }
 
 export class ListUniversitiesQueryDto {

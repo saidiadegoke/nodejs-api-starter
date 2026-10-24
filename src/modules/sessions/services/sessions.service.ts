@@ -363,7 +363,11 @@ export class SessionsService {
 
       for (const reg of pending) {
         let next = (counters.get(reg.universityId) ?? 0) + 1;
-        let candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
+        const institutionCode = String(reg.code ?? reg.jupebPrefix ?? '')
+          .replace(/\D/g, '')
+          .slice(0, 3)
+          .padStart(3, '0');
+        let candidateNumber = `${session.yearShort}${institutionCode}${String(next).padStart(4, '0')}`;
 
         let isDuplicate = true;
         while (isDuplicate) {
@@ -379,7 +383,7 @@ export class SessionsService {
             isDuplicate = false;
           } else {
             next += 1;
-            candidateNumber = `${session.yearShort}${reg.jupebPrefix}${String(next).padStart(4, '0')}`;
+            candidateNumber = `${session.yearShort}${institutionCode}${String(next).padStart(4, '0')}`;
           }
         }
 

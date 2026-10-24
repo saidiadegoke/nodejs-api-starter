@@ -85,13 +85,14 @@ export class SessionRegistrationRepository {
   async findApprovedWithoutCandidateNumber(
     sessionId: string,
     manager?: EntityManager,
-  ): Promise<Array<{ id: string; universityId: string; jupebPrefix: string }>> {
+  ): Promise<Array<{ id: string; universityId: string; jupebPrefix: string; code: string }>> {
     return this.repoFor(manager)
       .createQueryBuilder('r')
       .innerJoin(UniversityEntity, 'u', 'u.id = r.universityId')
       .select([
         'r.id AS id',
         'r.universityId AS "universityId"',
+        'u.code AS "code"',
         'u.jupebPrefix AS "jupebPrefix"',
       ])
       .where('r.sessionId = :sessionId', { sessionId })
@@ -99,7 +100,7 @@ export class SessionRegistrationRepository {
       .andWhere('r.jupebCandidateNumber IS NULL')
       .orderBy('r.approvedAt', 'ASC')
       .addOrderBy('r.createdAt', 'ASC')
-      .getRawMany<{ id: string; universityId: string; jupebPrefix: string }>();
+      .getRawMany<{ id: string; universityId: string; jupebPrefix: string; code: string }>();
   }
 
   /** How many candidate numbers each university already has in this session. */
