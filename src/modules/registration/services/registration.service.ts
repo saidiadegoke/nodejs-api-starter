@@ -907,7 +907,12 @@ export class RegistrationService {
       next_of_kin: nextOfKin,
     };
 
-    const hasFace = bioRows.some((b: any) => b.capture_type === 'face') || Boolean(row.face_skipped_at);
+    const hasFace =
+      bioRows.some((b: any) => b.capture_type === 'face') ||
+      Boolean(row.face_skipped_at) ||
+      Boolean(row.profile_photo_url) ||
+      Boolean(ninPayload.photo_url) ||
+      Boolean(ninPayload.photo);
     const hasFingerprint =
       bioRows.some((b: any) => b.capture_type === 'fingerprint') || Boolean(row.fingerprint_skipped_at);
     const biometricSkips = {
@@ -1866,6 +1871,10 @@ export class RegistrationService {
     if (!ids.length) {
       throw new UnprocessableEntityException('registration_ids array is required');
     }
+    const validActions = ['approve', 'reject', 'withdraw', 'delete', 'unlock', 'lock'];
+    if (!validActions.includes(rawAction)) {
+      throw new UnprocessableEntityException(`action must be one of ${validActions.join(', ')}`);
+    }
     if (rawAction === 'reject' && !reason) {
       throw new UnprocessableEntityException('reason is required when action is reject');
     }
@@ -1994,7 +2003,25 @@ export class RegistrationService {
               (reg as any).faceSkippedAt ||
               (reg as any).fingerprintSkippedAt,
           );
+          let hasPhoto = false;
           if (bioCount === 0 && !skipped) {
+            const photoRows = await this.dataSource.query(
+              `SELECT p.profile_photo_url,
+                      nv.response_payload->>'photo_url' AS nin_photo_url,
+                      nv.response_payload->>'photo' AS nin_photo
+                 FROM jupeb_registrations r
+                 LEFT JOIN profiles p ON p.user_id = r.user_id
+                 LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+                WHERE r.id = $1`,
+              [id],
+            );
+            hasPhoto = Boolean(
+              photoRows[0]?.profile_photo_url ||
+                photoRows[0]?.nin_photo_url ||
+                photoRows[0]?.nin_photo,
+            );
+          }
+          if (bioCount === 0 && !skipped && !hasPhoto) {
             rejected.push({
               id,
               error_code: 'biometrics_incomplete',
@@ -2148,7 +2175,25 @@ export class RegistrationService {
         (reg as any).faceSkippedAt ||
         (reg as any).fingerprintSkippedAt,
     );
+    let hasPhoto = false;
     if (bioCount === 0 && !skipped) {
+      const photoRows = await this.dataSource.query(
+        `SELECT p.profile_photo_url,
+                nv.response_payload->>'photo_url' AS nin_photo_url,
+                nv.response_payload->>'photo' AS nin_photo
+           FROM jupeb_registrations r
+           LEFT JOIN profiles p ON p.user_id = r.user_id
+           LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+          WHERE r.id = $1`,
+        [registrationId],
+      );
+      hasPhoto = Boolean(
+        photoRows[0]?.profile_photo_url ||
+          photoRows[0]?.nin_photo_url ||
+          photoRows[0]?.nin_photo,
+      );
+    }
+    if (bioCount === 0 && !skipped && !hasPhoto) {
       throw new UnprocessableEntityException('Biometric capture must be completed or explicitly skipped before approving candidate registration');
     }
 
