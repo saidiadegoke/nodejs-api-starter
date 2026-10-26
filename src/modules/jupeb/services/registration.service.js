@@ -1576,7 +1576,25 @@ class RegistrationService {
       `SELECT COUNT(*)::int AS count FROM jupeb_biometric_captures WHERE registration_id = $1`,
       [reg.id]
     );
-    const hasBiometrics = Number(bioRows.rows[0]?.count) > 0 || Boolean(reg.face_skipped_at || reg.fingerprint_skipped_at);
+    let hasPhoto = false;
+    if ((Number(bioRows.rows[0]?.count) || 0) === 0 && !reg.face_skipped_at && !reg.fingerprint_skipped_at) {
+      const photoRows = await pool.query(
+        `SELECT p.profile_photo_url,
+                nv.response_payload->>'photo_url' AS nin_photo_url,
+                nv.response_payload->>'photo' AS nin_photo
+           FROM jupeb_registrations r
+           LEFT JOIN profiles p ON p.user_id = r.user_id
+           LEFT JOIN jupeb_nin_verifications nv ON nv.id = r.nin_verification_id
+          WHERE r.id = $1`,
+        [reg.id]
+      );
+      hasPhoto = Boolean(
+        photoRows.rows[0]?.profile_photo_url ||
+        photoRows.rows[0]?.nin_photo_url ||
+        photoRows.rows[0]?.nin_photo
+      );
+    }
+    const hasBiometrics = Number(bioRows.rows[0]?.count) > 0 || Boolean(reg.face_skipped_at || reg.fingerprint_skipped_at) || hasPhoto;
     if (!hasBiometrics) {
       throw httpError(422, 'Biometric capture must be completed or skipped before approving candidate registration', {
         error_code: 'biometrics_incomplete',

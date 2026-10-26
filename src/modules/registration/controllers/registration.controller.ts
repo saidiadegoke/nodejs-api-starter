@@ -13,6 +13,7 @@ import {
   UseInterceptors,
   UploadedFile,
   HttpStatus,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -378,6 +379,17 @@ export class RegistrationController {
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.user_id;
     const result = await this.registrationService.batchUpdateRegistrationStatus(dto, userId);
+
+    if (result.accepted_count === 0 && result.rejected_count > 0) {
+      const verb = (dto.action || 'action') === 'delete' ? 'deleted' : `${dto.action || 'action'}d`;
+      const firstError = result.rejected?.[0]?.message || 'Operation failed';
+      throw new UnprocessableEntityException({
+        message: `${result.accepted_count} of ${result.total} registrations ${verb}: ${firstError}`,
+        details: result,
+        ...result,
+      });
+    }
+
     return {
       success: true,
       message: `Batch ${dto.action || 'action'} completed`,

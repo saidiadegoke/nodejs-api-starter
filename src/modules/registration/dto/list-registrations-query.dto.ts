@@ -6,6 +6,7 @@ import {
   IsInt,
   Min,
   IsNotEmpty,
+  IsIn,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -141,6 +142,7 @@ export class BatchRegistrationActionDto {
     example: 'approve',
   })
   @IsString()
+  @IsIn(['approve', 'reject', 'withdraw', 'delete', 'unlock', 'lock'])
   action: string;
 
   @ApiPropertyOptional({
