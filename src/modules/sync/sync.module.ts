@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PgBossModule } from '../../infra/pg-boss/pg-boss.module';
 import { BullMQModule } from '../../infra/bullmq/bullmq.module';
+import { bullmqEnabled } from '../../infra/bullmq/bullmq-enabled';
 import { SyncLogEntity } from './entities/sync-log.entity';
 import { SubjectEntity } from '../subjects/entities/subject.entity';
 import { UniversityEntity } from '../institutions/entities/university.entity';
@@ -21,7 +22,7 @@ import { SyncController } from './controllers/sync.controller';
 @Module({
   imports: [
     PgBossModule,
-    BullMQModule,
+    ...(bullmqEnabled() ? [BullMQModule] : []),
     TypeOrmModule.forFeature([
       SyncLogEntity,
       SubjectEntity,
@@ -38,9 +39,8 @@ import { SyncController } from './controllers/sync.controller';
     SyncExecutorService,
     PgBossSyncWorkerService,
     SyncEventListener,
-    CandidateSyncProcessor,
-    SubjectSyncProcessor,
-    InstitutionSyncProcessor,
+    // BullMQ workers: each holds a Redis connection, so only with Redis configured.
+    ...(bullmqEnabled() ? [CandidateSyncProcessor, SubjectSyncProcessor, InstitutionSyncProcessor] : []),
   ],
   exports: [
     CandidateSyncQueueService,

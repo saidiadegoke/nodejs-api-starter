@@ -47,6 +47,7 @@ import { AttendanceModule } from './modules/attendance';
 import { CrmsModule } from './modules/crms';
 import { OcrModule } from './modules/ocr';
 import { BullMQModule } from './infra/bullmq/bullmq.module';
+import { bullmqEnabled } from './infra/bullmq/bullmq-enabled';
 import { PgBossModule } from './infra/pg-boss/pg-boss.module';
 import { SyncModule } from './modules/sync';
 
@@ -69,7 +70,8 @@ import { SyncModule } from './modules/sync';
     DatabaseModule,
     EventEmitterModule.forRoot({ wildcard: true }),
     PgBossModule,
-    BullMQModule,
+    // Redis-backed queues only when Redis is configured (infra/bullmq/bullmq-enabled).
+    ...(bullmqEnabled() ? [BullMQModule] : []),
     SharedModule,
     SyncModule,
 
